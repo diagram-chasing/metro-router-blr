@@ -300,6 +300,12 @@ def _build():
         timer1.par.cycle = True
     except Exception:
         pass
+    # IMPORTANT: default Cycle Limit is On with Max Cycles=4. That stops the timer
+    # after 4 cycles and polling silently dies. Turn the limit off so it loops forever.
+    try:
+        timer1.par.cyclelimit = False
+    except Exception:
+        pass
     try:
         timer1.par.callbacks = timer_cb
     except Exception:
