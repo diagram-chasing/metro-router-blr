@@ -1,7 +1,6 @@
 import maplibre from 'maplibre-gl';
 import { stations } from '$lib/config/stations';
 import { JourneyCalculator } from './JourneyCalculator';
-import { ZOOM_BREAKPOINTS } from '$lib/config/constants';
 
 // Calculate distance between two points
 export const calculateDistance = (point1: [number, number], point2: [number, number]) => {
@@ -86,148 +85,12 @@ export const determineLineColor = (sourceStation: string, destinationStation: st
 	return '#951A74';
 };
 
-// Helper function to get stations between two points based on sequence in stations array
-const getStationsBetween = (start: any, end: any, lineColor: string) => {
-	const lineStations = stations.filter((s) => s.color === lineColor);
-	const startIndex = lineStations.findIndex((s) => s.name === start.name);
-	const endIndex = lineStations.findIndex((s) => s.name === end.name);
-
-	if (startIndex === -1 || endIndex === -1) {
-		console.error('Could not find start or end station in sequence');
-		return [];
-	}
-
-	if (startIndex <= endIndex) {
-		return lineStations.slice(startIndex, endIndex + 1);
-	} else {
-		return lineStations.slice(endIndex, startIndex + 1).reverse();
-	}
-};
-
-// Helper function to add station markers
-const addStationMarkers = (
-	map: maplibre.Map,
-	stationsOnRoute: any[],
-	origin: any,
-	destination: any
-) => {
-	if (!map) return;
-
-	const stationFeatures = stationsOnRoute.map((station) => ({
-		type: 'Feature' as const,
-		properties: {
-			name: station.name,
-			color: station.color
-		},
-		geometry: {
-			type: 'Point' as const,
-			coordinates: station.coordinates
-		}
-	}));
-
-	// Check if the source already exists
-	if (map.getSource('station-markers-source')) {
-		(map.getSource('station-markers-source') as maplibre.GeoJSONSource).setData({
-			type: 'FeatureCollection',
-			features: stationFeatures
-		});
-	} else {
-		// Add the source if it doesn't exist
-		map.addSource('station-markers-source', {
-			type: 'geojson',
-			data: {
-				type: 'FeatureCollection',
-				features: stationFeatures
-			}
-		});
-	}
-
-	// Check if the layer already exists
-	if (map.getLayer('station-markers')) {
-		map.removeLayer('station-markers');
-	}
-	// Create a new symbol layer with the metro.svg icon
-	map.addLayer({
-		id: 'station-markers',
-		type: 'symbol',
-		source: 'station-markers-source',
-		layout: {
-			'icon-image': 'metro-icon',
-			'icon-size': 0.8,
-			'icon-allow-overlap': true,
-			'icon-ignore-placement': true
-		},
-		maxzoom: ZOOM_BREAKPOINTS.AREA,
-		minzoom: ZOOM_BREAKPOINTS.CITY
-	});
-};
-
-// Helper function to process a line and create the segment
-const processLine = (
-	map: maplibre.Map,
+// Pure helper: extract the coordinates of a metro line between two stations
+const extractSegmentCoordinates = (
 	lineFeature: any,
-	colorName: string,
-	startStation: any,
-	endStation: any
-) => {
-	if (!map) return;
-
-	const colorHex = colorName === 'purple' ? '#951A74' : '#0F883B';
-	const borderColor = colorName === 'purple' ? '#4E0A3C' : '#0D381D';
-	const layerId = `route-highlight-${colorName}`;
-	const borderLayerId = `route-highlight-border-${colorName}`;
-	const sourceId = `${layerId}-source`;
-
-	if (map.getSource(sourceId)) {
-		if (map.getLayer(layerId)) {
-			map.removeLayer(layerId);
-		}
-		if (map.getLayer(borderLayerId)) {
-			map.removeLayer(borderLayerId);
-		}
-		map.removeSource(sourceId);
-	}
-
-	map.addSource(sourceId, {
-		type: 'geojson',
-		data: {
-			type: 'FeatureCollection',
-			features: []
-		}
-	});
-
-	// Add border layer first (underneath)
-	map.addLayer({
-		id: borderLayerId,
-		type: 'line',
-		source: sourceId,
-		layout: {
-			'line-join': 'round',
-			'line-cap': 'round'
-		},
-		paint: {
-			'line-color': borderColor,
-			'line-width': 12,
-			'line-opacity': 0.9
-		}
-	});
-
-	// Add main line layer on top
-	map.addLayer({
-		id: layerId,
-		type: 'line',
-		source: sourceId,
-		layout: {
-			'line-join': 'round',
-			'line-cap': 'round'
-		},
-		paint: {
-			'line-color': colorHex,
-			'line-width': 8,
-			'line-opacity': 0.9
-		}
-	});
-
+	startStation: { coordinates: [number, number] },
+	endStation: { coordinates: [number, number] }
+): [number, number][] => {
 	let lineCoordinates = lineFeature.geometry.coordinates;
 	if (lineCoordinates.length > 0 && Array.isArray(lineCoordinates[0][0])) {
 		lineCoordinates = lineCoordinates.flat();
@@ -241,35 +104,19 @@ const processLine = (
 	const startIndex = Math.min(startResult.segmentIndex, endResult.segmentIndex);
 	const endIndex = Math.max(startResult.segmentIndex, endResult.segmentIndex) + 1;
 
-	const segmentCoordinates = lineCoordinates.slice(startIndex, endIndex + 2);
-
-	if (map.getSource(sourceId)) {
-		(map.getSource(sourceId) as maplibre.GeoJSONSource).setData({
-			type: 'Feature',
-			properties: {},
-			geometry: {
-				type: 'LineString',
-				coordinates: segmentCoordinates
-			}
-		});
-	}
+	return lineCoordinates.slice(startIndex, endIndex + 2);
 };
 
-// Render full line with lower opacity
+// Render full metro line as a faint grey reference
 const renderFullLine = (map: maplibre.Map, lineFeature: any, colorName: string) => {
 	if (!map) return;
 
-	const colorHex = colorName === 'purple' ? '#951A74' : '#0F883B';
 	const layerId = `route-full-${colorName}`;
-	const borderLayerId = `route-full-border-${colorName}`;
 	const sourceId = `${layerId}-source`;
 
 	if (map.getSource(sourceId)) {
 		if (map.getLayer(layerId)) {
 			map.removeLayer(layerId);
-		}
-		if (map.getLayer(borderLayerId)) {
-			map.removeLayer(borderLayerId);
 		}
 		map.removeSource(sourceId);
 	}
@@ -279,23 +126,6 @@ const renderFullLine = (map: maplibre.Map, lineFeature: any, colorName: string) 
 		data: lineFeature
 	});
 
-	// Add white border layer first (underneath)
-	map.addLayer({
-		id: borderLayerId,
-		type: 'line',
-		source: sourceId,
-		layout: {
-			'line-join': 'round',
-			'line-cap': 'round'
-		},
-		paint: {
-			'line-color': '#FFFFFF',
-			'line-width': 4,
-			'line-opacity': 0.9
-		}
-	});
-
-	// Add main line layer on top
 	map.addLayer({
 		id: layerId,
 		type: 'line',
@@ -305,147 +135,87 @@ const renderFullLine = (map: maplibre.Map, lineFeature: any, colorName: string) 
 			'line-cap': 'round'
 		},
 		paint: {
-			'line-color': colorHex,
-			'line-width': 2,
-			'line-opacity': 0.9
+			'line-color': '#D8D8D8',
+			'line-width': 1.5
 		}
 	});
 };
 
-// Highlight the relevant segments of the metro lines
-export const highlightRelevantSegments = async (
-	map: maplibre.Map,
-	origin: any,
-	destination: any
-) => {
-	if (!map || !origin || !destination) return;
-
-	// Remove existing layers and sources
-	[
-		'route-highlight-purple',
-		'route-highlight-green',
-		'route-highlight-border-purple',
-		'route-highlight-border-green'
-	].forEach((layerId) => {
-		if (map.getLayer(layerId)) {
-			map.removeLayer(layerId);
-		}
-	});
-
-	// Remove sources (only need to remove main sources as they're shared between main and border layers)
-	['route-highlight-purple-source', 'route-highlight-green-source'].forEach((sourceId) => {
-		if (map.getSource(sourceId)) {
-			map.removeSource(sourceId);
-		}
-	});
-
-	if (map.getLayer('station-markers')) {
-		map.removeLayer('station-markers');
-	}
-	if (map.getSource('station-markers-source')) {
-		map.removeSource('station-markers-source');
-	}
-
+// Pure: compute the metro segment(s) between two arbitrary coordinates as GeoJSON.
+// Returns null if the nearest stations can't be determined.
+export const computeMetroSegments = async (
+	origin: { coordinates: [number, number] },
+	destination: { coordinates: [number, number] }
+): Promise<GeoJSON.FeatureCollection | null> => {
 	const journeyCalculator = new JourneyCalculator(true);
 	await journeyCalculator.loadVoronoiData();
 
-	const [sourceStation, sourceStationRef] = journeyCalculator.findNearestStation(
-		origin.coordinates
-	) || ['', ''];
-	const [destinationStation, destinationStationRef] = journeyCalculator.findNearestStation(
-		destination.coordinates
-	) || ['', ''];
+	const [sourceStation] = journeyCalculator.findNearestStation(origin.coordinates) || ['', ''];
+	const [destinationStation] = journeyCalculator.findNearestStation(destination.coordinates) || [
+		'',
+		''
+	];
 
-	if (!sourceStation || !destinationStation) {
-		return;
-	}
+	if (!sourceStation || !destinationStation) return null;
 
-	const lineColor = determineLineColor(sourceStation, destinationStation);
 	const sourceStationData = stations.find((s) => s.code === sourceStation);
 	const destStationData = stations.find((s) => s.code === destinationStation);
+	if (!sourceStationData?.coordinates || !destStationData?.coordinates) return null;
 
-	if (!sourceStationData?.coordinates || !destStationData?.coordinates) {
-		return;
-	}
-
+	const lineColor = determineLineColor(sourceStation, destinationStation);
 	const interchangeStation = stations.find(
 		(s) => s.name === 'Nadaprabhu Kempegowda Station, Majestic'
 	);
 
-	const bounds = new maplibre.LngLatBounds();
-	bounds.extend(sourceStationData.coordinates);
-	bounds.extend(destStationData.coordinates);
-	if (interchangeStation) bounds.extend(interchangeStation.coordinates);
+	try {
+		const data = await fetch('/bmrcl.geojson').then((r) => r.json());
+		const purpleLineFeatures = data.features.filter(
+			(f: any) => f.properties.colour === 'purple'
+		);
+		const greenLineFeatures = data.features.filter((f: any) => f.properties.colour === 'green');
 
-	let stationsOnRoute: any[] = [];
+		const segments: [number, number][][] = [];
 
-	fetch('/bmrcl.geojson')
-		.then((response) => response.json())
-		.then((data) => {
-			// Filter line features once
-			const purpleLineFeatures = data.features.filter(
-				(feature: any) => feature.properties.colour === 'purple'
-			);
-
-			const greenLineFeatures = data.features.filter(
-				(feature: any) => feature.properties.colour === 'green'
-			);
-
-			// Now handle the journey-specific highlighting
-			if (lineColor === 'both' && interchangeStation) {
-				const firstLineStations = getStationsBetween(
-					sourceStationData,
-					interchangeStation,
-					sourceStationData.color
-				);
-				const secondLineStations = getStationsBetween(
-					interchangeStation,
-					destStationData,
-					destStationData.color
-				);
-				stationsOnRoute = [...firstLineStations, ...secondLineStations];
-
-				if (sourceStationData.color === 'purple' || destStationData.color === 'purple') {
-					if (purpleLineFeatures.length > 0) {
-						const purpleStart =
-							sourceStationData.color === 'purple' ? sourceStationData : interchangeStation;
-						const purpleEnd =
-							destStationData.color === 'purple' ? destStationData : interchangeStation;
-						processLine(map, purpleLineFeatures[0], 'purple', purpleStart, purpleEnd);
-					}
-				}
-
-				if (sourceStationData.color === 'green' || destStationData.color === 'green') {
-					if (greenLineFeatures.length > 0) {
-						const greenStart =
-							sourceStationData.color === 'green' ? sourceStationData : interchangeStation;
-						const greenEnd =
-							destStationData.color === 'green' ? destStationData : interchangeStation;
-						processLine(map, greenLineFeatures[0], 'green', greenStart, greenEnd);
-					}
-				}
-			} else {
-				stationsOnRoute = getStationsBetween(
-					sourceStationData,
-					destStationData,
-					sourceStationData.color
-				);
-
-				const colorName = sourceStationData.color;
-				const lineFeatures = data.features.filter(
-					(feature: any) => feature.properties.colour === colorName
-				);
-
-				if (lineFeatures.length > 0) {
-					processLine(map, lineFeatures[0], colorName, sourceStationData, destStationData);
+		if (lineColor === 'both' && interchangeStation) {
+			// Build legs in journey order so animation reads start → interchange → end.
+			const legs: Array<{
+				start: typeof sourceStationData;
+				end: typeof sourceStationData;
+				color: string;
+			}> = [
+				{ start: sourceStationData, end: interchangeStation, color: sourceStationData.color },
+				{ start: interchangeStation, end: destStationData, color: destStationData.color }
+			];
+			for (const leg of legs) {
+				const features = leg.color === 'purple' ? purpleLineFeatures : greenLineFeatures;
+				if (features.length > 0) {
+					segments.push(extractSegmentCoordinates(features[0], leg.start, leg.end));
 				}
 			}
+		} else {
+			const colorName = sourceStationData.color;
+			const lineFeatures = data.features.filter(
+				(f: any) => f.properties.colour === colorName
+			);
+			if (lineFeatures.length > 0) {
+				segments.push(
+					extractSegmentCoordinates(lineFeatures[0], sourceStationData, destStationData)
+				);
+			}
+		}
 
-			addStationMarkers(map, stationsOnRoute, sourceStationData, destStationData);
-		})
-		.catch((error) => {
-			console.error('Error fetching or processing GeoJSON:', error);
-		});
+		return {
+			type: 'FeatureCollection',
+			features: segments.map((coords) => ({
+				type: 'Feature',
+				properties: {},
+				geometry: { type: 'LineString', coordinates: coords }
+			}))
+		};
+	} catch (error) {
+		console.error('Error computing metro segments:', error);
+		return null;
+	}
 };
 
 // Create a new function to render all station icons and metro lines
@@ -473,9 +243,6 @@ export const renderAllStationsAndLines = async (map: maplibre.Map) => {
 		if (greenLineFeatures.length > 0) {
 			renderFullLine(map, greenLineFeatures[0], 'green');
 		}
-
-		// Render all station markers
-		addStationMarkers(map, stations, null, null);
 	} catch (error) {
 		console.error('Error fetching or processing GeoJSON:', error);
 	}

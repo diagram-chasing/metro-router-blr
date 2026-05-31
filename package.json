@@ -11,7 +11,8 @@
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"format": "prettier --write .",
-		"lint": "prettier --check . && eslint ."
+		"lint": "prettier --check . && eslint .",
+		"deploy": "vite build && netlify deploy --prod --dir=build"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^1.2.5",
@@ -20,7 +21,6 @@
 		"@sveltejs/kit": "^2.16.0",
 		"@sveltejs/vite-plugin-svelte": "^5.0.0",
 		"@types/geojson": "^7946.0.16",
-		"@types/google.maps": "^3.58.1",
 		"autoprefixer": "^10.4.20",
 		"eslint": "^9.18.0",
 		"eslint-config-prettier": "^10.0.1",
@@ -37,12 +37,7 @@
 		"vite": "^6.0.0"
 	},
 	"dependencies": {
-		"@googlemaps/js-api-loader": "^1.16.8",
 		"@mapbox/polyline": "^1.2.1",
-		"@types/gtag.js": "^0.0.20",
-		"carbon-components": "^10.58.15",
-		"carbon-components-svelte": "^0.88.4",
-		"carbon-icons-svelte": "^13.3.0",
 		"maplibre-gl": "^5.1.0"
 	}
 }
