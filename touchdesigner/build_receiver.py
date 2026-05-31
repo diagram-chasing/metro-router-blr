@@ -10,16 +10,31 @@
 #
 # WHAT IT BUILDS
 #   /project1/bmrcl_vector/
-#     ├── request1        webclientDAT          — GETs the vector-journey JSON
-#     ├── response        textDAT               — last response body (mirrored from request1)
-#     ├── status          textDAT               — last parser status (diagnostic)
-#     ├── request_cb      textDAT               — onResponse callback for request1
-#     ├── param_exec      parameterexecuteDAT   — re-fetches when origin/dest params change
-#     ├── geo1            geometryCOMP          — contains parser SOP + cook callback
-#     │     ├── parser       scriptSOP          — JSON → polyline with per-point Cd/segid/t
-#     │     └── parser_cb    textDAT            — cook callback for parser
-#     ├── mat1            lineMAT               — line rendering, uses point colors (Cd)
-#     └── cam1, light1, render1, out1           — minimal render chain
+#     ├── request1            webclientDAT          — GETs the vector-journey JSON
+#     ├── response            textDAT               — last response body
+#     ├── status              textDAT               — last parser status (diagnostic)
+#     ├── request_cb          textDAT               — onResponse callback for request1
+#     ├── param_exec          parameterexecuteDAT   — re-fetches or re-cooks on param change
+#     ├── timer1, timer_cb                          — polls Url every Pollsec seconds
+#     ├── geo1                geometryCOMP
+#     │     ├── parser           scriptSOP          — JSON → one Poly per segment, with
+#     │     │                                         primitive groups "walks" & "metros",
+#     │     │                                         per-point Cd/segid/t/kind attributes
+#     │     ├── parser_cb        textDAT
+#     │     ├── apply_walks_mat  materialSOP        — assigns walks_mat to group "walks"
+#     │     └── apply_metros_mat materialSOP        — assigns metros_mat to group "metros"
+#     ├── walks_mat           lineMAT (linewidth ← parent().par.Walkthickness)
+#     ├── metros_mat          lineMAT (linewidth ← parent().par.Metrothickness)
+#     └── cam1, light1, render1, out1               — render chain
+#
+# THE PARAMETER PAGE ("the only thing the visuals person should touch"):
+#   Walk page   : Thickness, Brightness, Alpha
+#   Metro page  : Thickness, Brightness, Alpha
+#   Vector page : Url, Pollsec, Scale, Refreshnow
+#
+# Thickness drives the corresponding lineMAT's pixel width (live).
+# Brightness multiplies per-point Cd; Alpha sets Cd alpha. Both re-cook the parser
+# automatically when changed.
 #
 # CUSTOM PARAMETERS (on the container)
 #   Url        : full URL of the JSON endpoint (default
@@ -46,8 +61,9 @@ PARENT = op('/project1') or root
 # ---------- callback source bodies (written verbatim into textDATs) ----------
 
 PARAM_EXEC_SCRIPT = """# Callback script for parameterexecuteDAT. Watches the container's custom params
-# and refetches whenever URL changes or Refreshnow is pulsed.
-WATCH = {"Url", "Refreshnow"}
+# and either re-fetches (URL/Refreshnow) or re-cooks the parser (brightness/alpha/scale).
+FETCH_PARAMS = {"Url", "Refreshnow"}
+RECOOK_PARAMS = {"Walkbrightness", "Walkalpha", "Metrobrightness", "Metroalpha", "Scale"}
 
 def _fetch_now():
     comp = parent()
@@ -60,9 +76,16 @@ def _fetch_now():
     except Exception as e:
         print("[bmrcl_vector] fetch failed:", e)
 
+def _recook_parser():
+    p = parent().op("geo1/parser")
+    if p is not None:
+        p.cook(force=True)
+
 def onValueChange(par, prev):
-    if par.name in WATCH:
+    if par.name in FETCH_PARAMS:
         _fetch_now()
+    elif par.name in RECOOK_PARAMS:
+        _recook_parser()
     return
 
 def onPulse(par):
@@ -132,9 +155,12 @@ def onResponse(webClientDAT, statusCode, headerDict, data):
     return
 """
 
-PARSER_CB = """# Reads JSON from op("../response") and emits a polyline with per-point
-# Cd (color), segid (segment index), and t (0..1 progress) attributes.
-# Parser lives inside geo1, so paths use ../ and parent(2).
+PARSER_CB = """# Reads JSON from op("../response") and emits the journey as multiple polylines:
+#   - one Poly per segment (so downstream SOPs can target individual hops)
+#   - two primitive groups: "walks" and "metros" (so Material SOPs can route)
+#   - per-point Cd (modulated by the container's per-kind Brightness/Alpha),
+#     segid (int), t (float, 0..1 across whole journey), kind (0=walk,1=metro)
+# Parser lives inside geo1 → paths use ../ for response and parent(2) for container params.
 import json
 
 def _hex_to_rgb(h):
@@ -150,8 +176,7 @@ def _status(msg):
     print("[bmrcl_vector parser]", msg)
 
 def _emit_test_square(scriptOp):
-    # Diagnostic: bright magenta square in the XY plane, ~10 units across,
-    # so we can confirm rendering works even without JSON data.
+    # Diagnostic: magenta square ~10 units across in the XY plane.
     scriptOp.pointAttribs.create("Cd")
     coords = [(-5.0, -5.0), (5.0, -5.0), (5.0, 5.0), (-5.0, 5.0), (-5.0, -5.0)]
     pts = []
@@ -163,6 +188,24 @@ def _emit_test_square(scriptOp):
     poly = scriptOp.appendPoly(len(pts), addPoints=False, closed=False)
     for i, vertex in enumerate(poly):
         vertex.point = pts[i]
+
+def _param(name, default):
+    try:
+        return float(parent(2).par[name].eval())
+    except Exception:
+        return default
+
+def _get_prim_group(scriptOp, name):
+    # createPrimGroup() return value is inconsistent across TD versions: some
+    # return the Group, some return None. Either way, primGroups[name] resolves it.
+    try:
+        scriptOp.createPrimGroup(name)
+    except Exception:
+        pass  # already exists from a previous cook (scriptOp.clear may not purge groups)
+    try:
+        return scriptOp.primGroups[name]
+    except Exception:
+        return None
 
 def cook(scriptOp):
     scriptOp.clear()
@@ -184,24 +227,29 @@ def cook(scriptOp):
 
     points = data.get("points", [])
     segments = data.get("segments", [])
-    if not points:
-        _status("JSON had no points — drawing test square")
+    if not points or not segments:
+        _status("JSON had no points/segments — drawing test square")
         _emit_test_square(scriptOp)
         return
 
-    seg_colors = [_hex_to_rgb(s.get("lineColor", "#FFFFFF")) for s in segments]
-    try:
-        scale = float(parent(2).par.Scale.eval())
-    except Exception:
-        scale = 1000.0
-    if scale == 0:
-        scale = 1.0
+    scale = _param("Scale", 1000.0) or 1.0
+    walk_bright  = _param("Walkbrightness", 1.0)
+    walk_alpha   = _param("Walkalpha",      1.0)
+    metro_bright = _param("Metrobrightness", 1.0)
+    metro_alpha  = _param("Metroalpha",      1.0)
 
-    # Standard attributes (Cd, N, uv, T, v) are created without a default.
+    seg_colors = [_hex_to_rgb(s.get("lineColor", "#FFFFFF")) for s in segments]
+    seg_kinds  = [str(s.get("kind", "metro")) for s in segments]
+
     scriptOp.pointAttribs.create("Cd")
     scriptOp.pointAttribs.create("segid", 0)
     scriptOp.pointAttribs.create("t", 0.0)
+    scriptOp.pointAttribs.create("kind", 0)  # 0=walk, 1=metro
 
+    walks_group  = _get_prim_group(scriptOp, "walks")
+    metros_group = _get_prim_group(scriptOp, "metros")
+
+    # Allocate all points first; record per-segment point index ranges.
     pts = []
     minx = miny = float("inf")
     maxx = maxy = float("-inf")
@@ -212,19 +260,37 @@ def cook(scriptOp):
         if x > maxx: maxx = x
         if y < miny: miny = y
         if y > maxy: maxy = y
+        seg_idx = int(pt_data.get("seg", 0))
+        is_walk = (seg_idx < len(seg_kinds) and seg_kinds[seg_idx] == "walk")
+        base = seg_colors[seg_idx] if 0 <= seg_idx < len(seg_colors) else (1.0, 1.0, 1.0)
+        bright = walk_bright if is_walk else metro_bright
+        alpha  = walk_alpha  if is_walk else metro_alpha
         pt = scriptOp.appendPoint()
         pt.P = (x, y, 0.0)
-        seg_idx = int(pt_data.get("seg", 0))
-        color = seg_colors[seg_idx] if 0 <= seg_idx < len(seg_colors) else (1.0, 1.0, 1.0)
-        pt.Cd = (color[0], color[1], color[2], 1.0)
+        pt.Cd = (base[0] * bright, base[1] * bright, base[2] * bright, alpha)
         pt.segid = seg_idx
         pt.t = float(pt_data.get("t", 0.0))
+        pt.kind = 0 if is_walk else 1
         pts.append(pt)
 
-    if len(pts) >= 2:
-        poly = scriptOp.appendPoly(len(pts), addPoints=False, closed=False)
-        for i, vertex in enumerate(poly):
-            vertex.point = pts[i]
+    # Emit one Poly per segment using its [fromIndex, toIndex) range.
+    for s_idx, seg in enumerate(segments):
+        a = int(seg.get("fromIndex", 0))
+        b = int(seg.get("toIndex", 0))
+        if b - a < 2:
+            continue
+        poly = scriptOp.appendPoly(b - a, addPoints=False, closed=False)
+        for i in range(b - a):
+            poly[i].point = pts[a + i]
+        target = walks_group if str(seg.get("kind", "metro")) == "walk" else metros_group
+        if target is not None:
+            try:
+                target.add(poly)
+            except Exception:
+                try:
+                    target.add(poly.index)
+                except Exception:
+                    pass
 
     _status("ok: {0} points, {1} segments, bbox x[{2:.2f},{3:.2f}] y[{4:.2f},{5:.2f}]".format(
         len(pts), len(segments), minx, maxx, miny, maxy
@@ -248,6 +314,29 @@ def _build():
     comp.nodeX, comp.nodeY = 0, 0
 
     # --- custom parameters ---
+    # Walk page (first-mile + last-mile walking) — what the visuals person tweaks
+    walk_page = comp.appendCustomPage('Walk')
+    for name, label, default in [
+        ('Walkthickness',  'Thickness',  4.0),
+        ('Walkbrightness', 'Brightness', 1.0),
+        ('Walkalpha',      'Alpha',      1.0),
+    ]:
+        p = walk_page.appendFloat(name, label=label)[0]
+        p.default = default
+        p.val = default
+
+    # Metro page (in-train hops) — same knobs, controlled independently
+    metro_page = comp.appendCustomPage('Metro')
+    for name, label, default in [
+        ('Metrothickness',  'Thickness',  8.0),
+        ('Metrobrightness', 'Brightness', 1.0),
+        ('Metroalpha',      'Alpha',      1.0),
+    ]:
+        p = metro_page.appendFloat(name, label=label)[0]
+        p.default = default
+        p.val = default
+
+    # Vector page (data source + render settings) — set once, then forget
     page = comp.appendCustomPage('Vector')
     p = page.appendStr('Url', label='URL')[0]
     p.default = 'http://localhost:5173/api/journey/current'
@@ -281,7 +370,7 @@ def _build():
     param_exec = comp.create(parameterexecuteDAT, 'param_exec')
     param_exec.nodeX, param_exec.nodeY = -400, 250
     param_exec.par.op = '..'
-    param_exec.par.pars = 'Url Refreshnow'
+    param_exec.par.pars = 'Url Refreshnow Walkbrightness Walkalpha Metrobrightness Metroalpha Scale'
     param_exec.par.valuechange = True
     param_exec.par.onpulse = True
     _set_text(param_exec, PARAM_EXEC_SCRIPT)
@@ -326,46 +415,63 @@ def _build():
 
     parser = geo.create(scriptSOP, 'parser')
     parser.nodeX, parser.nodeY = 0, 0
-    parser.display = True
-    parser.render = True
 
     parser_cb = geo.create(textDAT, 'parser_cb')
     parser_cb.nodeX, parser_cb.nodeY = 0, -150
     _set_text(parser_cb, PARSER_CB)
     parser.par.callbacks = parser_cb
 
-    # Debug reference: tiny sphere at origin so you can confirm the render chain
-    # works even if `parser` is empty. Delete `ref_sphere` once you see the line.
-    ref_sphere = geo.create(sphereSOP, 'ref_sphere')
-    ref_sphere.nodeX, ref_sphere.nodeY = 200, 0
+    # Material SOPs route MATs to primitive groups emitted by parser.
+    mat_apply_walks = geo.create(materialSOP, 'apply_walks_mat')
+    mat_apply_walks.nodeX, mat_apply_walks.nodeY = 200, 0
+    mat_apply_walks.inputConnectors[0].connect(parser)
     try:
-        ref_sphere.par.rad = 0.5
+        mat_apply_walks.par.group = 'walks'
     except Exception:
-        try:
-            ref_sphere.par.radx = 0.5
-            ref_sphere.par.rady = 0.5
-            ref_sphere.par.radz = 0.5
-        except Exception:
-            pass
-    ref_sphere.display = True
-    ref_sphere.render = True
+        pass
+
+    mat_apply_metros = geo.create(materialSOP, 'apply_metros_mat')
+    mat_apply_metros.nodeX, mat_apply_metros.nodeY = 400, 0
+    mat_apply_metros.inputConnectors[0].connect(mat_apply_walks)
+    try:
+        mat_apply_metros.par.group = 'metros'
+    except Exception:
+        pass
+    mat_apply_metros.display = True
+    mat_apply_metros.render = True
 
     geo.par.display = True
     geo.par.render = True
 
-    # ----- Material: Line MAT renders polylines with explicit pixel width -----
-    mat = comp.create(lineMAT, 'mat1')
-    mat.nodeX, mat.nodeY = 200, -200
+    # ----- Two Line MATs, each width bound to its respective custom param ------
+    # Line MAT exposes Width Near + Width Far (distance-interpolated, not a single
+    # linewidth). Bind BOTH to the same custom param so width is constant.
+    def _bind_line_mat(mat, thickness_param_name):
+        for par_name in ('widthnear', 'widthfar'):
+            try:
+                mat.par[par_name].expr = "parent().par." + thickness_param_name
+            except Exception as e:
+                print('[bmrcl_vector] could not bind', mat.name, par_name, ':', e)
+        try:
+            mat.par.usepointcolor = True
+        except Exception:
+            pass
+
+    walks_mat = comp.create(lineMAT, 'walks_mat')
+    walks_mat.nodeX, walks_mat.nodeY = 200, -180
+    _bind_line_mat(walks_mat, 'Walkthickness')
+
+    metros_mat = comp.create(lineMAT, 'metros_mat')
+    metros_mat.nodeX, metros_mat.nodeY = 400, -180
+    _bind_line_mat(metros_mat, 'Metrothickness')
+
+    # Now point the Material SOPs at their MATs.
     try:
-        mat.par.linewidth = 4.0
+        mat_apply_walks.par.material = walks_mat
     except Exception:
         pass
     try:
-        mat.par.usepointcolor = True
-    except Exception:
-        pass
-    try:
-        geo.par.material = mat
+        mat_apply_metros.par.material = metros_mat
     except Exception:
         pass
 
