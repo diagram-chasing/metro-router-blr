@@ -145,9 +145,10 @@ const renderFullLine = (map: maplibre.Map, lineFeature: any, colorName: string) 
 // Returns null if the nearest stations can't be determined.
 export const computeMetroSegments = async (
 	origin: { coordinates: [number, number] },
-	destination: { coordinates: [number, number] }
+	destination: { coordinates: [number, number] },
+	fetcher: typeof fetch = fetch
 ): Promise<GeoJSON.FeatureCollection | null> => {
-	const journeyCalculator = new JourneyCalculator(true);
+	const journeyCalculator = new JourneyCalculator(true, fetcher);
 	await journeyCalculator.loadVoronoiData();
 
 	const [sourceStation] = journeyCalculator.findNearestStation(origin.coordinates) || ['', ''];
@@ -168,7 +169,7 @@ export const computeMetroSegments = async (
 	);
 
 	try {
-		const data = await fetch('/bmrcl.geojson').then((r) => r.json());
+		const data = await fetcher('/bmrcl.geojson').then((r) => r.json());
 		const purpleLineFeatures = data.features.filter(
 			(f: any) => f.properties.colour === 'purple'
 		);

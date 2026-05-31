@@ -4,6 +4,7 @@
 	import Map from '$lib/components/Map.svelte';
 	import { JourneyCalculator } from '$lib/utils/JourneyCalculator';
 	import { computeMetroSegments } from '$lib/utils/mapHelpers';
+	import { buildVectorJourney } from '$lib/utils/vectorExport';
 
 	let originPick: [number, number] | null = null;
 	let destinationPick: [number, number] | null = null;
@@ -40,6 +41,16 @@
 			walkingRouteToStation = journey?.firstLegWalkRoute;
 			walkingRouteFromStation = journey?.secondLegWalkRoute;
 			metroSegments = segments;
+
+			// Publish to the TouchDesigner-facing endpoint so TD's poller picks it up.
+			if (journey && segments) {
+				const vector = buildVectorJourney(originPick, destinationPick, journey, segments);
+				fetch('/api/journey/current', {
+					method: 'POST',
+					headers: { 'Content-Type': 'application/json' },
+					body: JSON.stringify(vector)
+				}).catch((e) => console.warn('Failed to publish vector journey:', e));
+			}
 		} catch (error) {
 			console.error('Journey calculation failed:', error);
 		} finally {

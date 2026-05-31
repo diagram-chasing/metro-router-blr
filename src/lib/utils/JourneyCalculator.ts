@@ -70,21 +70,25 @@ export interface JourneyDetails {
 	price: number; // no change, in currency
 }
 
+type Fetcher = typeof fetch;
+
 export class JourneyCalculator {
 	private voronoiPolygons: VoronoiFeature[] = [];
 	private stationPoints: StationPointFeature[] = [];
 	private readonly VALHALLA_API_URL = 'https://valhalla1.openstreetmap.de/route';
 	private debug: boolean;
+	private fetcher: Fetcher;
 
-	constructor(debug = false) {
+	constructor(debug = false, fetcher?: Fetcher) {
 		this.debug = debug;
+		this.fetcher = fetcher ?? fetch;
 		this.loadVoronoiData();
 		this.loadStationPoints();
 	}
 
 	public async loadVoronoiData() {
 		try {
-			const response = await fetch('/voronoi.geojson');
+			const response = await this.fetcher('/voronoi.geojson');
 			const data = await response.json();
 			this.voronoiPolygons = data.features;
 		} catch (error) {
@@ -94,7 +98,7 @@ export class JourneyCalculator {
 
 	public async loadStationPoints() {
 		try {
-			const response = await fetch('/points.geojson');
+			const response = await this.fetcher('/points.geojson');
 			const data = await response.json();
 			this.stationPoints = data.features;
 		} catch (error) {
@@ -416,7 +420,7 @@ export class JourneyCalculator {
 
 			while (!success && retries < maxRetries) {
 				try {
-					const response = await fetch(this.VALHALLA_API_URL, {
+					const response = await this.fetcher(this.VALHALLA_API_URL, {
 						method: 'POST',
 						headers: {
 							'Content-Type': 'application/json'
@@ -449,8 +453,10 @@ export class JourneyCalculator {
 			const duration = data.trip.legs[0].summary.time / 60; // Convert seconds to minutes
 			const distance = data.trip.legs[0].summary.length * 1000; // Convert km to meters
 
-			// Decode Valhalla's polyline (precision=6) and re-encode for Mapbox (precision=5)
-			const decodedPoints = decode(data.trip.legs[0].shape);
+			// Decode Valhalla's polyline (precision=6) and re-encode for Mapbox (precision=5).
+			// Without the explicit `6`, decode defaults to precision=5 and the coords come back
+			// 10x too large, poisoning every downstream consumer of firstLegWalkRoute / secondLegWalkRoute.
+			const decodedPoints = decode(data.trip.legs[0].shape, 6);
 			const mapboxPolyline = encode(decodedPoints);
 
 			return {
