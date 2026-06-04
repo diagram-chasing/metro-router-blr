@@ -43,10 +43,13 @@
 	const WALK_DURATION_MS = 500;
 	const METRO_DURATION_MS = 1200;
 
+	// @mapbox/polyline.decode returns [lat, lng] in degrees (precision 5 default).
+	// MapLibre wants [lng, lat]. The previous `/ 10` was a leftover and was plotting
+	// the walks at ~(1.3°, 7.7°) — off the coast of Africa, invisible on the BLR map.
 	const decodeWalk = (encoded: string): [number, number][] =>
 		polyline
 			.decode(encoded)
-			.map((point: [number, number]) => [point[1] / 10, point[0] / 10] as [number, number]);
+			.map((point: [number, number]) => [point[1], point[0]] as [number, number]);
 
 	const flattenMetroCoords = (fc: GeoJSON.FeatureCollection | null): [number, number][] => {
 		if (!fc) return [];
