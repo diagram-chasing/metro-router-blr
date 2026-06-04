@@ -50,20 +50,9 @@ export const FUN_QUESTIONS: FunQuestion[] = [
 		]
 	},
 	{
-		id: 'time_pressure',
-		title: 'LATE AND STRESSED',
-		prompt: "You're twenty minutes late. What's the move?",
-		options: [
-			{ label: 'CAB & PRAY', value: 'cab' },
-			{ label: 'SPRINT TO METRO', value: 'sprint' },
-			{ label: 'ALREADY ON BUS', value: 'bus' },
-			{ label: 'TWO-WHEELER GAPS', value: 'two_wheeler' }
-		]
-	},
-	{
 		id: 'planning_slack',
 		title: 'THE SNOOZE COUNT',
-		prompt: 'Your alarm goes off. Be honest.',
+		prompt: 'Your alarm goes off. How many times do you hit snooze?',
 		options: [
 			{ label: 'UP ON FIRST RING', value: 'first' },
 			{ label: 'TWO OR THREE', value: 'few' },
@@ -73,9 +62,9 @@ export const FUN_QUESTIONS: FunQuestion[] = [
 	{
 		id: 'crowd_tolerance',
 		title: 'CONCERT SPOT',
-		prompt: 'At a gig, where are you?',
+		prompt: 'At a concert, where are you?',
 		options: [
-			{ label: 'FRONT ROW CRUSH', value: 'front' },
+			{ label: 'FRONT ROW, CRUSHED', value: 'front' },
 			{ label: 'IN THE MIDDLE', value: 'middle' },
 			{ label: 'AT THE BACK', value: 'back' }
 		]
@@ -83,11 +72,11 @@ export const FUN_QUESTIONS: FunQuestion[] = [
 	{
 		id: 'boredom',
 		title: 'DEAD TIME',
-		prompt: 'Sitting with nothing to do. You…',
+		prompt: 'Sitting with nothing to do. What do you do?',
 		options: [
 			{ label: 'DOOMSCROLL', value: 'scroll' },
-			{ label: 'BOOK OR PODCAST', value: 'book' },
-			{ label: 'NEED TO MOVE', value: 'move' }
+			{ label: 'READ A BOOK OR PODCAST', value: 'book' },
+			{ label: 'NEED TO MOVE AROUND', value: 'move' }
 		]
 	}
 ];
