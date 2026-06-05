@@ -259,6 +259,6 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 		},
 		distanceBand: distanceBand(distanceKm),
 		personalNudge,
-		disclaimer: 'Every figure on this receipt is illustrative — for the exhibit.'
+		disclaimer: 'Thanks for visiting!'
 	};
 }

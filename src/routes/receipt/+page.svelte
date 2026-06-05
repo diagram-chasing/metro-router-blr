@@ -4,6 +4,20 @@
 
 	import TactileButton from '$lib/exhibit/TactileButton.svelte';
 	import type { StoredReceipt } from '$lib/server/receiptStore';
+	import AsciiBlock from '$lib/receipt/AsciiBlock.svelte';
+	import {
+		routeStripSegments,
+		routeCaption,
+		routeBlurb,
+		scaleStack,
+		scaleBlurb,
+		distributionBell,
+		distributionBlurb,
+		switchBars,
+		switchBlurb,
+		fingerprintPatch,
+		fingerprintBlurb
+	} from '$lib/receipt/ascii';
 
 	let loading = $state(true);
 	let error = $state<string | null>(null);
@@ -53,18 +67,10 @@
 	}
 
 	function shortVisitor(id: string): string {
-		// Last 4 chars of the rand suffix — stable & readable on a thermal-print line.
 		const tail = id.split('-')[1] ?? id;
 		return tail.padStart(4, '0').slice(-4).toUpperCase();
 	}
 
-	const PRESET_LABELS: Record<string, string> = {
-		private: 'Private all the way',
-		metro_mixed: 'Metro + short auto',
-		metro_walk: 'Metro + walk'
-	};
-
-	// Deterministic pseudo-random barcode bar widths from the id.
 	function barcodeBars(seed: string, count = 44): number[] {
 		let h = 2166136261 >>> 0;
 		for (let i = 0; i < seed.length; i++) {
@@ -75,7 +81,7 @@
 		for (let i = 0; i < count; i++) {
 			h = Math.imul(h, 1664525) + 1013904223;
 			h >>>= 0;
-			out.push(((h >>> 16) % 4) + 1); // 1..4 px wide
+			out.push(((h >>> 16) % 4) + 1);
 		}
 		return out;
 	}
@@ -95,14 +101,22 @@
 	{:else if receipt}
 		{@const r = receipt.computed}
 		{@const a = receipt.answers}
+		{@const originLabel = receipt.geo?.originLabel ?? r.trip.originStation ?? 'Origin'}
+		{@const destLabel = receipt.geo?.destinationLabel ?? r.trip.destinationStation ?? 'Destination'}
+		{@const segs = receipt.geo?.segments ?? [{ mode: r.trip.mode, lengthM: r.trip.distanceKm * 1000 }]}
+		{@const route = routeStripSegments(segs)}
+		{@const stack = scaleStack(r.annualCommuteKg, r.annualAllInKg)}
+		{@const dist = distributionBell(r.multiplier)}
+		{@const sw = switchBars(r.annualCommuteKg, r.annualSwitchedKg)}
+		{@const patch = fingerprintPatch(a)}
 
 		<article class="receipt">
 			<header class="brandhead">
 				<div class="brand">
-					<span>THE COMMUTE</span>
+					<span>YOUR COMMUTE</span>
 					<span>RECEIPT</span>
 				</div>
-				<p class="branch">Namma Bengaluru Branch</p>
+				<p class="branch">Diagram Chasing</p>
 				<p class="meta">
 					{fmtDate(receipt.createdAt)} · {fmtTime(receipt.createdAt)} · VISITOR #{shortVisitor(
 						receipt.id
@@ -112,110 +126,84 @@
 
 			<hr />
 
-			<p class="tagline">YOUR YEAR, ONE TRIP AT A TIME</p>
-
-			<hr />
-
 			<section>
-				<h3>TRIP</h3>
-				{#if r.trip.originStation && r.trip.destinationStation}
-					<p class="route">
-						{r.trip.originStation}<br />→ {r.trip.destinationStation}
-					</p>
-				{/if}
-				<p class="trip-line">
-					{r.trip.modeLabel} · {r.trip.distanceKm} km · {r.trip.frequencyLabel}
+				<h3>YOUR ROUTE</h3>
+				<p class="end-label">[{originLabel}]</p>
+				<AsciiBlock text={route} align="left" emphasis="bold" />
+				<p class="meta-line">
+					{r.trip.distanceKm} km · {routeCaption(r.trip.mode, r.trip.frequency)}
 				</p>
-				{#if a.chosenPreset}
-					<p class="you-said">
-						You said you'd take it as: <b>{PRESET_LABELS[a.chosenPreset] ?? a.chosenPreset}</b>
+				<p class="end-label right">[{destLabel}]</p>
+				{#if segs.length > 1}
+					<p class="tiny">
+						{#each segs as s, i (i)}{#if i > 0} · {/if}{Math.round(s.lengthM / 100) / 10} km
+							{s.mode === 'active' ? 'walk' : s.mode}{/each}
 					</p>
 				{/if}
+				<p class="blurb">{routeBlurb(r.trip.mode, r.trip.frequency, r.trip.distanceKm)}</p>
 			</section>
 
 			<hr />
 
 			<section>
-				<div class="line big">
-					<span>THIS YEAR</span>
-					<span class="leader"></span>
-					<span class="num">~{r.annualCommuteKg} kg CO₂</span>
-				</div>
-				<p class="sublabel">(your commute alone)</p>
-				<div class="line">
-					<span>ALL TRIPS, SCALED</span>
-					<span class="leader"></span>
-					<span class="num">~{(r.annualAllInKg / 1000).toFixed(1)} tonnes</span>
-				</div>
-			</section>
-
-			<hr />
-
-			<section>
-				<h3>THE DAMAGE, IN CONTEXT</h3>
-				{#if r.multiplier > 1}
-					<p>
-						Your trips emit <strong>≈ {Math.round(r.multiplier)}×</strong> the
-						{r.recommendation.recommendedCombo} version of this exact route.
-					</p>
-				{:else}
-					<p>You're already on the lean side of this route.</p>
+				<h3>THIS YEAR, YOUR COMMUTE ALONE</h3>
+				<AsciiBlock text={stack.full} align="left" emphasis="bold" />
+				<p class="big-num">~{r.annualCommuteKg} kg CO₂</p>
+				{#if stack.ghost}
+					<AsciiBlock text={stack.ghost} align="left" />
+					<p class="meta-line">+ {r.annualAllInKg - r.annualCommuteKg} kg from everything else</p>
 				{/if}
-				<p class="muted">
-					Among {r.distanceBand} commuters, your trips sit in the heavier-emitting bracket.
+				<p class="blurb">
+					{scaleBlurb(r.annualCommuteKg, r.annualAllInKg, r.trip.lifestyle)}
+				</p>
+				<p class="tiny">
+					each block ≈ {stack.kgPerCell} kg · about {stack.cylinders} LPG cylinders worth
 				</p>
 			</section>
 
 			<hr />
 
 			<section>
-				<h3>YOUR TYPE</h3>
-				<div class="boxed">
-					<p class="archetype-name">{r.archetype.name}</p>
-					{#if r.archetype.subtitle}
-						<p class="archetype-sub">{r.archetype.subtitle}</p>
-					{/if}
-				</div>
+				<h3>AMONG {r.distanceBand.toUpperCase()} COMMUTERS</h3>
+				<AsciiBlock text={`${dist.marker} you\n${dist.bell}`} align="left" emphasis="bold" />
+				<p class="axis">
+					<span>LIGHTER ◀</span><span>▶ HEAVIER</span>
+				</p>
+				<p class="blurb">
+					{distributionBlurb(r.multiplier, r.distanceBand, r.trip.decider)}
+				</p>
 			</section>
 
 			<hr />
 
 			<section>
-				<h3>IF YOU'D SWITCHED</h3>
-				<p class="sublabel">({r.recommendation.recommendedCombo})</p>
-
-				<div class="line">
-					<span>Annual footprint</span>
-					<span class="leader"></span>
-					<span class="num">~{r.annualSwitchedKg} kg</span>
-				</div>
-				<div class="line">
-					<span>You'd save</span>
-					<span class="leader"></span>
-					<span class="num">~{r.annualSavingKg} kg / yr</span>
-				</div>
-				<div class="line">
-					<span>Over two years</span>
-					<span class="leader"></span>
-					<span class="num">~{(r.twoYearSavingKg / 1000).toFixed(1)} tonnes</span>
-				</div>
-				<div class="line">
-					<span>≈ trees working</span>
-					<span class="leader"></span>
-					<span class="num">{r.treeYearsEquivalent} / year</span>
-				</div>
+				<h3>IF YOU SWAPPED IT</h3>
+				<p class="bar-cap">
+					<span class="bar-tag">NOW</span><span class="bar-num">{r.annualCommuteKg} kg</span>
+				</p>
+				<AsciiBlock text={sw.now} align="left" emphasis="bold" />
+				<p class="bar-cap">
+					<span class="bar-tag">SWAP</span><span class="bar-num">{r.annualSwitchedKg} kg</span>
+				</p>
+				<AsciiBlock text={sw.switched} align="left" emphasis="bold" />
+				<p class="blurb">
+					{switchBlurb(r.annualSavingKg, r.treeYearsEquivalent)}
+				</p>
 			</section>
 
 			<hr />
 
 			<section>
-				<h3>ONE THING</h3>
-				<p>{r.personalNudge}</p>
+				<h3>YOUR COMMUTE FINGERPRINT</h3>
+				<AsciiBlock text={patch.join('\n')} align="center" />
+				<p class="archetype-name">{r.archetype.name}</p>
+				{#if r.archetype.subtitle}
+					<p class="archetype-sub">{r.archetype.subtitle}</p>
+				{/if}
+				<p class="blurb">
+					{fingerprintBlurb(r.archetype.name, a.funQuestionId, a.funAnswer)}
+				</p>
 			</section>
-
-			<hr />
-
-			<p class="headline">"{r.recommendation.deciderHeadline}"</p>
 
 			<hr />
 
@@ -227,7 +215,6 @@
 				</div>
 				<p class="code">BLR-RECEIPT-{shortVisitor(receipt.id)}</p>
 				<p class="discl">{r.disclaimer}</p>
-				<p class="discl">keep · or recycle :)</p>
 			</footer>
 		</article>
 	{/if}
@@ -261,7 +248,6 @@
 		color: #ff7058;
 	}
 
-	/* The paper. */
 	.receipt {
 		width: 100%;
 		max-width: 420px;
@@ -269,11 +255,13 @@
 		color: #14110d;
 		padding: 36px 30px 32px;
 		position: relative;
-		box-shadow: 0 30px 80px rgba(0, 0, 0, 0.55), 0 8px 24px rgba(0, 0, 0, 0.35);
+		box-shadow:
+			0 30px 80px rgba(0, 0, 0, 0.55),
+			0 8px 24px rgba(0, 0, 0, 0.35);
 		font-size: 13px;
 		line-height: 1.55;
+		container-type: inline-size;
 	}
-	/* Zigzag torn edges. */
 	.receipt::before,
 	.receipt::after {
 		content: '';
@@ -299,7 +287,6 @@
 		margin: 14px 0;
 	}
 
-	/* Brand block */
 	.brandhead {
 		text-align: center;
 	}
@@ -326,14 +313,6 @@
 		opacity: 0.78;
 	}
 
-	.tagline {
-		text-align: center;
-		margin: 4px 0;
-		font-size: 11px;
-		letter-spacing: 0.22em;
-		font-weight: 700;
-	}
-
 	section {
 		margin: 6px 0;
 	}
@@ -346,89 +325,80 @@
 	section p {
 		margin: 4px 0;
 	}
-	.muted {
-		opacity: 0.72;
-	}
-	.sublabel {
-		font-size: 11px;
-		opacity: 0.7;
-		margin-top: -2px !important;
-	}
 
-	.route {
-		font-weight: 700;
-		line-height: 1.35;
-	}
-	.trip-line {
+	.meta-line {
 		font-size: 12px;
 		opacity: 0.85;
+		margin-top: 2px !important;
 	}
-	.you-said {
-		font-size: 12px;
-		margin-top: 6px;
+	.tiny {
+		font-size: 10.5px;
+		opacity: 0.55;
+		letter-spacing: 0.02em;
+		margin-top: 4px !important;
 	}
-	.you-said b {
-		font-weight: 700;
+	.blurb {
+		font-size: 12.5px;
+		margin-top: 8px !important;
+		line-height: 1.45;
 	}
 
-	strong {
-		font-size: 1.35em;
+	.end-label {
+		font-size: 11px;
+		letter-spacing: 0.08em;
+		margin: 0 0 2px !important;
+		opacity: 0.85;
+	}
+	.end-label.right {
+		text-align: right;
+	}
+
+	.big-num {
 		font-weight: 800;
+		font-size: 22px;
 		letter-spacing: -0.01em;
+		margin: 2px 0 6px !important;
 	}
 
-	/* Leader-dotted two-column lines */
-	.line {
+	.axis {
 		display: flex;
-		align-items: baseline;
-		gap: 6px;
-		margin: 3px 0;
-		font-size: 13px;
-	}
-	.line .leader {
-		flex: 1;
-		border-bottom: 1px dotted #14110d;
-		transform: translateY(-3px);
-		min-width: 18px;
-	}
-	.line .num {
-		font-weight: 700;
-		white-space: nowrap;
-	}
-	.line.big {
-		font-size: 14px;
-	}
-	.line.big .num {
-		font-size: 17px;
+		justify-content: space-between;
+		font-size: 10px;
+		letter-spacing: 0.12em;
+		opacity: 0.7;
+		margin: 2px 0 !important;
 	}
 
-	.boxed {
-		border: 2px solid #14110d;
-		padding: 14px 12px;
-		text-align: center;
-		margin-top: 6px;
+	.bar-cap {
+		display: flex;
+		justify-content: space-between;
+		align-items: baseline;
+		margin: 6px 0 0 !important;
 	}
+	.bar-tag {
+		font-size: 10px;
+		letter-spacing: 0.16em;
+		font-weight: 700;
+	}
+	.bar-num {
+		font-size: 12px;
+		font-weight: 700;
+	}
+
 	.archetype-name {
-		margin: 0;
+		text-align: center;
+		margin: 8px 0 0 !important;
 		font-weight: 800;
-		font-size: 17px;
-		letter-spacing: 0.06em;
+		font-size: 16px;
+		letter-spacing: 0.08em;
 		text-transform: uppercase;
 	}
 	.archetype-sub {
-		margin: 4px 0 0;
+		text-align: center;
+		margin: 4px 0 0 !important;
 		font-size: 11px;
 		font-style: italic;
 		opacity: 0.78;
-	}
-
-	.headline {
-		text-align: center;
-		font-style: italic;
-		font-size: 13px;
-		max-width: 28ch;
-		margin: 8px auto;
-		text-wrap: balance;
 	}
 
 	.footer {

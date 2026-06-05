@@ -4,25 +4,219 @@
 	import { browser } from '$app/environment';
 
 	import Map from '$lib/components/Map.svelte';
+	import { nearbyBusStops, nearestBusStop, type NearestBusStop } from '$lib/utils/busStops';
+	import { findBusRouteBetween, type BusRouteMatch } from '$lib/utils/busRouter';
 	import { JourneyCalculator } from '$lib/utils/JourneyCalculator';
 	import { computeMetroSegments } from '$lib/utils/mapHelpers';
+	import { fetchRoadRoute } from '$lib/utils/valhallaRoute';
 	import { buildVectorJourney } from '$lib/utils/vectorExport';
 
-	import { PRESET_OPTIONS } from './questions';
+	import { buildCandidates, type MetroLegInfo } from './routeCandidates';
+	import RouteOptions from './RouteOptions.svelte';
 	import { answers, setAnswer } from './store.svelte';
-	import TactileButton from './TactileButton.svelte';
+
+	import pkg from '@mapbox/polyline';
+	const { decode: decodePoly } = pkg;
 
 	let originPick = $state<[number, number] | null>(answers.origin ?? null);
 	let destinationPick = $state<[number, number] | null>(answers.destination ?? null);
-	let walkingRouteToStation = $state<string | undefined>(undefined);
-	let walkingRouteFromStation = $state<string | undefined>(undefined);
-	let metroSegments = $state<GeoJSON.FeatureCollection | null>(null);
+	let cachedWalkTo = $state<string | undefined>(undefined);
+	let cachedWalkFrom = $state<string | undefined>(undefined);
+	let cachedMetroSegments = $state<GeoJSON.FeatureCollection | null>(null);
 	let isLoading = $state(false);
 	let lastError = $state<string | null>(null);
+
+	let metroLeg = $state<MetroLegInfo>({});
+	let originBus = $state<NearestBusStop | null>(null);
+	let destBus = $state<NearestBusStop | null>(null);
+	let busMatch = $state<BusRouteMatch | null>(null);
+	let cabEncoded = $state<string | undefined>(undefined);
+	let walkEncoded = $state<string | undefined>(undefined);
+	let busFirstMileEncoded = $state<string | undefined>(undefined);
+	let busLastMileEncoded = $state<string | undefined>(undefined);
+	// Non-reactive refs: we only need to know what stop coords the cached
+	// first/last-mile polylines were fetched against, so we can invalidate them
+	// when the matched stops differ. Reading these inside $effect must not
+	// trigger re-runs, hence the object-property indirection (Svelte 5's
+	// compiler would otherwise either elide unused `let`s or treat $state
+	// writes as effect dependencies).
+	const busMileTargets: { first: [number, number] | null; last: [number, number] | null } = {
+		first: null,
+		last: null
+	};
 
 	let journeyCalculator: JourneyCalculator | undefined;
 
 	const routeReady = $derived(!!originPick && !!destinationPick && !!answers.distanceKm);
+
+	const statusLabel = $derived(
+		!originPick
+			? 'Tap map to set origin'
+			: !destinationPick
+				? 'Tap to set destination'
+				: 'Total distance'
+	);
+
+	const candidates = $derived(
+		routeReady ? buildCandidates(answers, metroLeg, originBus, destBus) : []
+	);
+
+	const selectedCandidate = $derived(
+		candidates.find((c) => c.id === answers.chosenRouteId) ?? null
+	);
+	// When the user hasn't picked yet, preview the top candidate so the map
+	// isn't blank between dropping pins and tapping a card. Selection state in
+	// the panel UI stays driven by chosenRouteId only.
+	const previewCandidate = $derived(selectedCandidate ?? candidates[0] ?? null);
+	const selectedKind = $derived(previewCandidate?.kind);
+
+	// Show metro walks only when the previewed option is metro.
+	const walkingRouteToStation = $derived(
+		selectedKind === 'metro' ? cachedWalkTo : undefined
+	);
+	const walkingRouteFromStation = $derived(
+		selectedKind === 'metro' ? cachedWalkFrom : undefined
+	);
+
+	function fcFromCoordLists(lines: [number, number][][]): GeoJSON.FeatureCollection {
+		return {
+			type: 'FeatureCollection',
+			features: lines.map((coords) => ({
+				type: 'Feature',
+				properties: {},
+				geometry: { type: 'LineString', coordinates: coords }
+			}))
+		};
+	}
+
+	function decodeMapboxPolyline(encoded: string): [number, number][] {
+		// Mapbox precision=5 polylines come back as [lat, lng]; the rest of the app
+		// works in [lng, lat].
+		return decodePoly(encoded).map(([lat, lng]) => [lng, lat] as [number, number]);
+	}
+
+	// metroSegments doubles as "lines to render" for the selected option. Metro
+	// renders the metro polyline; cab/auto/walk render Valhalla road lines (with
+	// straight-line fallback while loading); bus renders the GTFS route polyline
+	// between the two nearest stops with short connector segments to/from the pins.
+	const metroSegments = $derived.by<GeoJSON.FeatureCollection | null>(() => {
+		if (!originPick || !destinationPick || !selectedKind) return null;
+
+		if (selectedKind === 'metro') return cachedMetroSegments;
+
+		if (selectedKind === 'cab' || selectedKind === 'auto') {
+			if (cabEncoded) {
+				return fcFromCoordLists([decodeMapboxPolyline(cabEncoded)]);
+			}
+			return fcFromCoordLists([[originPick, destinationPick]]);
+		}
+
+		if (selectedKind === 'walk') {
+			if (walkEncoded) {
+				return fcFromCoordLists([decodeMapboxPolyline(walkEncoded)]);
+			}
+			return fcFromCoordLists([[originPick, destinationPick]]);
+		}
+
+		if (selectedKind === 'bus' && originBus && destBus) {
+			// Once a match is found, prefer the stops the matched service actually
+			// uses (may differ from the absolute nearest if a slightly-farther stop
+			// had a direct service).
+			const oStop: [number, number] = busMatch
+				? busMatch.originStopCoord
+				: [originBus.stop.lon, originBus.stop.lat];
+			const dStop: [number, number] = busMatch
+				? busMatch.destStopCoord
+				: [destBus.stop.lon, destBus.stop.lat];
+			const firstMile = busFirstMileEncoded
+				? decodeMapboxPolyline(busFirstMileEncoded)
+				: [originPick, oStop];
+			const lastMile = busLastMileEncoded
+				? decodeMapboxPolyline(busLastMileEncoded)
+				: [dStop, destinationPick];
+			if (busMatch) {
+				return fcFromCoordLists([firstMile, busMatch.coords, lastMile]);
+			}
+			// Still resolving (or no GTFS match): keep straight stop→stop as fallback.
+			return fcFromCoordLists([firstMile, [oStop, dStop], lastMile]);
+		}
+
+		return fcFromCoordLists([[originPick, destinationPick]]);
+	});
+
+	// Lazy-fetch the road/transit polyline once a kind is actually picked. Each
+	// fetcher is internally cached so repeated picks don't re-hit the network.
+	$effect(() => {
+		if (!originPick || !destinationPick || !selectedKind) return;
+
+		if ((selectedKind === 'cab' || selectedKind === 'auto') && !cabEncoded) {
+			void fetchRoadRoute(originPick, destinationPick, 'auto').then((r) => {
+				if (r) cabEncoded = r.encoded;
+			});
+		}
+		if (selectedKind === 'walk' && !walkEncoded) {
+			void fetchRoadRoute(originPick, destinationPick, 'pedestrian').then((r) => {
+				if (r) walkEncoded = r.encoded;
+			});
+		}
+		if (selectedKind === 'bus' && originPick && destinationPick) {
+			if (!busMatch) {
+				const oPin = originPick;
+				const dPin = destinationPick;
+				void (async () => {
+					const [oCands, dCands] = await Promise.all([
+						nearbyBusStops(oPin, 600, 6).catch(() => []),
+						nearbyBusStops(dPin, 600, 6).catch(() => [])
+					]);
+					if (oCands.length === 0 || dCands.length === 0) return;
+					const m = await findBusRouteBetween(
+						oCands.map((s) => ({ id: s.stop.id, coord: [s.stop.lon, s.stop.lat] })),
+						dCands.map((s) => ({ id: s.stop.id, coord: [s.stop.lon, s.stop.lat] }))
+					).catch((err) => {
+						console.warn('bus route lookup failed', err);
+						return null;
+					});
+					if (!m) return;
+					// If the match uses different stops than what first/last mile was
+					// fetched against, invalidate so the effect refetches.
+					if (busMatch === null) {
+						const oKey = busMileTargets.first;
+						const dKey = busMileTargets.last;
+						if (oKey && !coordsEqual(oKey, m.originStopCoord)) busFirstMileEncoded = undefined;
+						if (dKey && !coordsEqual(dKey, m.destStopCoord)) busLastMileEncoded = undefined;
+					}
+					busMatch = m;
+				})();
+			}
+			// First/last mile uses the matched stops if available, else nearest.
+			const oStop: [number, number] = busMatch
+				? busMatch.originStopCoord
+				: originBus
+					? [originBus.stop.lon, originBus.stop.lat]
+					: originPick;
+			const dStop: [number, number] = busMatch
+				? busMatch.destStopCoord
+				: destBus
+					? [destBus.stop.lon, destBus.stop.lat]
+					: destinationPick;
+			if (!busFirstMileEncoded) {
+				busMileTargets.first = oStop;
+				void fetchRoadRoute(originPick, oStop, 'pedestrian').then((r) => {
+					if (r) busFirstMileEncoded = r.encoded;
+				});
+			}
+			if (!busLastMileEncoded) {
+				busMileTargets.last = dStop;
+				void fetchRoadRoute(dStop, destinationPick, 'pedestrian').then((r) => {
+					if (r) busLastMileEncoded = r.encoded;
+				});
+			}
+		}
+	});
+
+	function coordsEqual(a: [number, number], b: [number, number]): boolean {
+		return Math.abs(a[0] - b[0]) < 1e-6 && Math.abs(a[1] - b[1]) < 1e-6;
+	}
 
 	async function handlePick(e: CustomEvent<{ lng: number; lat: number }>) {
 		if (isLoading) return;
@@ -46,18 +240,30 @@
 		try {
 			isLoading = true;
 			lastError = null;
-			const [journey, segments] = await Promise.all([
+			const [journey, segments, oBus, dBus] = await Promise.all([
 				journeyCalculator.calculateJourney(originPick, destinationPick),
-				computeMetroSegments({ coordinates: originPick }, { coordinates: destinationPick })
+				computeMetroSegments({ coordinates: originPick }, { coordinates: destinationPick }),
+				nearestBusStop(originPick).catch(() => null),
+				nearestBusStop(destinationPick).catch(() => null)
 			]);
-			walkingRouteToStation = journey?.firstLegWalkRoute;
-			walkingRouteFromStation = journey?.secondLegWalkRoute;
-			metroSegments = segments;
+			cachedWalkTo = journey?.firstLegWalkRoute;
+			cachedWalkFrom = journey?.secondLegWalkRoute;
+			cachedMetroSegments = segments;
+			originBus = oBus;
+			destBus = dBus;
 
 			if (journey) {
 				setAnswer('distanceKm', journey.totalDistanceKm);
 				setAnswer('originStation', journey.originStation);
 				setAnswer('destinationStation', journey.destinationStation);
+
+				metroLeg = {
+					originStation: journey.originStation,
+					destinationStation: journey.destinationStation,
+					totalMetroMin: journey.firstLegMetroTime + journey.secondLegMetroTime,
+					originWalkMeters: journey.firstLegWalkDistance,
+					destinationWalkMeters: journey.secondLegWalkDistance
+				};
 
 				if (segments) {
 					const vector = buildVectorJourney(originPick, destinationPick, journey, segments);
@@ -68,7 +274,15 @@
 					}).catch((err) => console.warn('Failed to publish vector journey:', err));
 				}
 			} else {
-				lastError = 'Could not find a route — try pins closer to the metro network.';
+				metroLeg = {};
+				// Bus distance is straight-line; good enough to surface bus/cab/auto/walk
+				// candidates even when the metro route can't be computed.
+				if (oBus && dBus) {
+					const km = straightLineKm(originPick, destinationPick);
+					setAnswer('distanceKm', km);
+				} else {
+					lastError = 'Could not find a route — try pins closer to the metro network.';
+				}
 			}
 		} catch (err) {
 			console.error('Journey calculation failed:', err);
@@ -76,6 +290,17 @@
 		} finally {
 			isLoading = false;
 		}
+	}
+
+	function straightLineKm(a: [number, number], b: [number, number]): number {
+		const R = 6371;
+		const toRad = Math.PI / 180;
+		const dLat = (b[1] - a[1]) * toRad;
+		const dLon = (b[0] - a[0]) * toRad;
+		const lat1 = a[1] * toRad;
+		const lat2 = b[1] * toRad;
+		const s = Math.sin(dLat / 2) ** 2 + Math.sin(dLon / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
+		return 2 * R * Math.asin(Math.sqrt(s));
 	}
 
 	onMount(() => {
@@ -87,16 +312,26 @@
 	function clear() {
 		originPick = null;
 		destinationPick = null;
-		walkingRouteToStation = undefined;
-		walkingRouteFromStation = undefined;
-		metroSegments = null;
+		cachedWalkTo = undefined;
+		cachedWalkFrom = undefined;
+		cachedMetroSegments = null;
 		lastError = null;
+		metroLeg = {};
+		originBus = null;
+		destBus = null;
+		busMatch = null;
+		cabEncoded = undefined;
+		walkEncoded = undefined;
+		busFirstMileEncoded = undefined;
+		busLastMileEncoded = undefined;
+		busMileTargets.first = null;
+		busMileTargets.last = null;
 		setAnswer('origin', undefined);
 		setAnswer('destination', undefined);
 		setAnswer('distanceKm', undefined);
 		setAnswer('originStation', undefined);
 		setAnswer('destinationStation', undefined);
-		setAnswer('chosenPreset', undefined);
+		setAnswer('chosenRouteId', undefined);
 	}
 </script>
 
@@ -112,28 +347,44 @@
 		/>
 
 		<div class="hud" class:dim={isLoading}>
-			<button type="button" class="clear" onclick={clear} disabled={isLoading}>CLEAR PINS</button>
+			<div class="schematic" aria-hidden="true">
+				<span class="dot" class:lit={!!originPick}></span>
+				<span class="link" class:lit={!!originPick && !!destinationPick}></span>
+				<span class="dot" class:lit={!!destinationPick}></span>
+			</div>
 
 			<div class="readout">
-				<div class="cell">
-					<span class="lbl">ORIGIN</span>
-					<span class="val" class:lit={!!originPick}>
-						{originPick ? '● SET' : '— TAP MAP —'}
-					</span>
+				<div class="value">
+					{#if answers.distanceKm}
+						<span class="num">{answers.distanceKm.toFixed(2)}</span>
+						<span class="unit">km</span>
+					{:else}
+						<span class="num placeholder">––.––</span>
+						<span class="unit placeholder">km</span>
+					{/if}
 				</div>
-				<div class="cell">
-					<span class="lbl">DESTINATION</span>
-					<span class="val" class:lit={!!destinationPick}>
-						{destinationPick ? '● SET' : originPick ? '— TAP AGAIN —' : '...'}
-					</span>
-				</div>
-				<div class="cell">
-					<span class="lbl">TOTAL DIST</span>
-					<span class="val" class:lit={!!answers.distanceKm}>
-						{answers.distanceKm ? `${answers.distanceKm.toFixed(2)} KM` : '—— · ——'}
-					</span>
-				</div>
+				<span class="lbl">{statusLabel}</span>
 			</div>
+
+			{#if originPick || destinationPick}
+				<button
+					type="button"
+					class="clear"
+					onclick={clear}
+					disabled={isLoading}
+					aria-label="Clear pins"
+					title="Clear pins"
+				>
+					<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+						<path
+							d="M3 3 L11 11 M11 3 L3 11"
+							stroke="currentColor"
+							stroke-width="1.5"
+							stroke-linecap="round"
+						/>
+					</svg>
+				</button>
+			{/if}
 		</div>
 
 		{#if isLoading}
@@ -145,26 +396,12 @@
 		{/if}
 	</div>
 
-	<aside class="presets-panel">
-		<div class="presets-head">
-			<span class="presets-title">HOW WOULD YOU MAKE IT?</span>
-		</div>
-
-		<div class="presets-list" class:locked={!routeReady}>
-			{#each PRESET_OPTIONS as p (p.value)}
-				<div class="preset-cell">
-					<TactileButton
-						label={p.label}
-						size="lg"
-						glow="amber"
-						selected={answers.chosenPreset === p.value}
-						disabled={!routeReady}
-						onclick={() => setAnswer('chosenPreset', p.value)}
-					/>
-				</div>
-			{/each}
-		</div>
-	</aside>
+	<RouteOptions
+		{candidates}
+		selectedId={answers.chosenRouteId}
+		locked={!routeReady}
+		onSelect={(id) => setAnswer('chosenRouteId', id)}
+	/>
 </div>
 
 <style>
@@ -190,123 +427,123 @@
 			inset 0 0 32px rgba(0, 0, 0, 0.6);
 	}
 
-	.presets-panel {
-		flex: 0 0 340px;
-		display: flex;
-		flex-direction: column;
-		gap: 18px;
-		padding: 18px 18px 22px;
-		background: #161616;
-		border: 1px solid #050505;
-		border-radius: 12px;
-		box-shadow:
-			inset 0 1px 0 rgba(255, 255, 255, 0.04),
-			inset 0 -1px 0 rgba(0, 0, 0, 0.6);
-	}
-
-	.presets-head {
-		padding: 4px 4px 12px;
-		border-bottom: 1px solid #2a2a2a;
-	}
-	.presets-title {
-		display: block;
-		font-family: 'IBM Plex Mono', ui-monospace, monospace;
-		font-size: 13px;
-		letter-spacing: 0.2em;
-		color: #ededed;
-	}
-
-	.presets-list {
-		flex: 1;
-		display: grid;
-		grid-auto-rows: 1fr;
-		gap: 16px;
-		min-height: 0;
-	}
-	.presets-list.locked {
-		opacity: 0.55;
-	}
-
-	.preset-cell {
-		min-height: 0;
-		display: flex;
-	}
-
 	/* HUD anchored bottom-center of the map */
 	.hud {
 		position: absolute;
 		left: 50%;
-		bottom: 18px;
+		bottom: 20px;
 		transform: translateX(-50%);
 		display: flex;
-		align-items: stretch;
-		gap: 14px;
-		padding: 12px 14px;
-		background: #161616;
-		border: 1px solid #050505;
+		align-items: center;
+		gap: 20px;
+		padding: 12px 16px 12px 18px;
+		background: #141414;
+		border: 1px solid #2a2a2a;
 		border-radius: 10px;
-		box-shadow:
-			inset 0 1px 0 rgba(255, 255, 255, 0.05),
-			0 6px 22px rgba(0, 0, 0, 0.7);
+		box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55);
 		font-family: 'IBM Plex Mono', ui-monospace, monospace;
-		color: #b0b0b0;
+		color: #ededed;
+		min-width: 320px;
+		transition: opacity 0.2s ease;
 	}
 	.hud.dim {
-		opacity: 0.6;
+		opacity: 0.55;
 	}
 
-	.clear {
-		background: #1c1c1c;
-		color: #c0c0c0;
-		border: 1px solid #050505;
-		padding: 10px 14px;
-		border-radius: 6px;
-		font-family: inherit;
-		font-size: 12px;
-		letter-spacing: 0.16em;
-		font-weight: 600;
-		cursor: pointer;
-		text-transform: uppercase;
-		box-shadow:
-			inset 0 1px 0 rgba(255, 255, 255, 0.05),
-			0 2px 0 #050505;
+	/* Route schematic: ○━━○ that fills in as pins are placed */
+	.schematic {
+		display: flex;
+		align-items: center;
+		gap: 0;
+		flex-shrink: 0;
 	}
-	.clear:active:not(:disabled) {
-		transform: translateY(1px);
-		box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.5);
+	.dot {
+		width: 9px;
+		height: 9px;
+		border-radius: 50%;
+		border: 1.5px solid #4a4a4a;
+		background: transparent;
+		transition:
+			background 0.2s ease,
+			border-color 0.2s ease;
 	}
-	.clear:disabled {
-		opacity: 0.35;
-		cursor: not-allowed;
+	.dot.lit {
+		background: #ededed;
+		border-color: #ededed;
+	}
+	.link {
+		width: 22px;
+		height: 1.5px;
+		background: #4a4a4a;
+		transition: background 0.2s ease;
+	}
+	.link.lit {
+		background: #ededed;
 	}
 
 	.readout {
 		display: flex;
-		gap: 18px;
-		align-items: stretch;
-	}
-	.cell {
-		display: flex;
 		flex-direction: column;
-		gap: 4px;
-		padding: 4px 12px;
-		border-left: 1px solid #2a2a2a;
+		align-items: flex-start;
+		gap: 2px;
+		flex: 1;
+		min-width: 0;
 	}
-	.cell:first-child {
-		border-left: none;
+	.value {
+		display: flex;
+		align-items: baseline;
+		gap: 5px;
+		font-variant-numeric: tabular-nums;
+		line-height: 1;
+	}
+	.num {
+		font-size: 22px;
+		font-weight: 500;
+		color: #ededed;
+		letter-spacing: 0;
+	}
+	.unit {
+		font-size: 12px;
+		font-weight: 400;
+		color: #8a8a8a;
+		letter-spacing: 0;
+	}
+	.placeholder {
+		color: #3a3a3a;
 	}
 	.lbl {
-		font-size: 10px;
+		font-size: 9px;
+		font-weight: 600;
 		letter-spacing: 0.22em;
+		color: #7a7a7a;
+		text-transform: uppercase;
+		line-height: 1;
+	}
+
+	.clear {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 24px;
+		height: 24px;
+		padding: 0;
+		background: transparent;
+		border: none;
+		border-radius: 4px;
 		color: #6a6a6a;
+		cursor: pointer;
+		flex-shrink: 0;
+		transition:
+			color 0.15s ease,
+			background 0.15s ease;
 	}
-	.val {
-		font-size: 16px;
-		letter-spacing: 0.1em;
-		color: #4a4a4a;
-	}
-	.val.lit {
+	.clear:hover:not(:disabled) {
 		color: #ededed;
+		background: rgba(255, 255, 255, 0.06);
+	}
+	.clear:disabled {
+		opacity: 0.35;
+		cursor: not-allowed;
 	}
 
 	.loading {

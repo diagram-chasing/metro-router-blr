@@ -68,7 +68,7 @@
 					? !!answers.origin &&
 						!!answers.destination &&
 						!!answers.distanceKm &&
-						!!answers.chosenPreset
+						!!answers.chosenRouteId
 					: step === 4
 						? !!answers.lifestyle
 						: step === 5

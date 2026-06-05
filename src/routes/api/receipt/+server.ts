@@ -8,7 +8,9 @@ import type { RequestHandler } from '@sveltejs/kit';
 
 import type { Answers } from '$lib/exhibit/types';
 import { computeReceipt } from '$lib/server/computeReceipt';
-import { getReceipt, putReceipt } from '$lib/server/receiptStore';
+import { getCurrent } from '$lib/server/journeyCache';
+import { reverseGeocodeArea } from '$lib/server/reverseGeocode';
+import { getReceipt, putReceipt, type GeoSnapshot } from '$lib/server/receiptStore';
 
 export const prerender = false;
 
@@ -53,17 +55,64 @@ export const POST: RequestHandler = async ({ request }) => {
 		return json({ error: 'distanceKm missing — map question incomplete' }, 400);
 	}
 
-	const computed = computeReceipt(answers as Answers);
+	const a = answers as Answers;
+	const computed = computeReceipt(a);
+	const geo = await buildGeoSnapshot(a);
 	const id = makeId();
 	putReceipt({
 		id,
 		createdAt: Date.now(),
-		answers: answers as Answers,
-		computed
+		answers: a,
+		computed,
+		geo
 	});
 
 	return json({ id }, 201);
 };
+
+async function buildGeoSnapshot(a: Answers): Promise<GeoSnapshot> {
+	const segments = pickSegments(a);
+	const originLabel = await resolveLabel(a.originStation, a.origin);
+	const destinationLabel = await resolveLabel(a.destinationStation, a.destination);
+	return { originLabel, destinationLabel, segments };
+}
+
+function pickSegments(a: Answers): GeoSnapshot['segments'] {
+	// Multi-leg trip (metro mixed, etc.): use the journey the browser POSTed.
+	// The cache holds one segment per station-to-station hop, so collapse
+	// consecutive same-mode runs into a single leg.
+	const cached = getCurrent();
+	const cachedSegs = cached?.data?.segments;
+	if (cachedSegs && cachedSegs.length > 0) {
+		const collapsed: { mode: 'metro' | 'active'; lengthM: number }[] = [];
+		for (const s of cachedSegs) {
+			const mode = s.kind === 'metro' ? 'metro' : 'active';
+			const last = collapsed[collapsed.length - 1];
+			if (last && last.mode === mode) {
+				last.lengthM += Math.max(1, Math.round(s.lengthM));
+			} else {
+				collapsed.push({ mode, lengthM: Math.max(1, Math.round(s.lengthM)) });
+			}
+		}
+		return collapsed;
+	}
+	// Single mode: synthesize a one-segment breakdown so the strip still renders.
+	if (a.mode && a.distanceKm) {
+		return [{ mode: a.mode, lengthM: Math.round(a.distanceKm * 1000) }];
+	}
+	return undefined;
+}
+
+async function resolveLabel(
+	station: string | undefined,
+	coord: [number, number] | undefined
+): Promise<string | undefined> {
+	if (station) return station;
+	if (!coord) return undefined;
+	const [lng, lat] = coord;
+	const area = await reverseGeocodeArea(lat, lng);
+	return area ?? undefined;
+}
 
 export const GET: RequestHandler = async ({ url }) => {
 	const id = url.searchParams.get('id');

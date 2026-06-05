@@ -11,7 +11,6 @@ export type Mode =
 export type Frequency = 'daily' | 'few_weekly' | 'weekly' | 'occasional';
 export type Lifestyle = 'homebody' | 'moderate' | 'always_out';
 export type Decider = 'speed' | 'cost' | 'comfort' | 'habit' | 'no_option';
-export type ChosenPreset = 'private' | 'metro_mixed' | 'metro_walk';
 export type FunQuestionId =
 	| 'walking'
 	| 'time_pressure'
@@ -35,7 +34,7 @@ export type Answers = {
 	distanceKm?: number;
 	originStation?: string;
 	destinationStation?: string;
-	chosenPreset?: ChosenPreset;
+	chosenRouteId?: string;
 	lifestyle?: Lifestyle;
 	decider?: Decider;
 	funQuestionId?: FunQuestionId;

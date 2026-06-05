@@ -249,11 +249,21 @@
 		updatePickMarkers();
 	}
 
-	$: if (styleReady && walkingRouteToStation && walkingRouteFromStation && metroSegments) {
+	// Triggers on any render-relevant change: walk legs for metro mode, or
+	// a metroSegments-only payload (bus/cab/auto/walk modes pass straight lines
+	// via metroSegments).
+	$: if (styleReady && metroSegments) {
+		void walkingRouteToStation;
+		void walkingRouteFromStation;
 		animateJourney();
 	}
 
-	$: if (styleReady && !originPick && !destinationPick) {
+	$: if (styleReady && (!originPick || !destinationPick)) {
+		animationToken++;
+		clearJourneyLayers();
+	}
+
+	$: if (styleReady && originPick && destinationPick && !metroSegments) {
 		animationToken++;
 		clearJourneyLayers();
 	}

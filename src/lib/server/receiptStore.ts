@@ -5,11 +5,22 @@
 import type { Answers } from '$lib/exhibit/types';
 import type { ComputedReceipt } from './computeReceipt';
 
+import type { Mode } from '$lib/exhibit/types';
+
+export type GeoSnapshot = {
+	originLabel?: string;
+	destinationLabel?: string;
+	// Per-leg breakdown so the receipt strip can render mode splits
+	// (e.g. walk + metro + walk for a metro-mixed route).
+	segments?: { mode: Mode; lengthM: number }[];
+};
+
 export type StoredReceipt = {
 	id: string;
 	createdAt: number;
 	answers: Answers;
 	computed: ComputedReceipt;
+	geo?: GeoSnapshot;
 };
 
 const receipts = new Map<string, StoredReceipt>();

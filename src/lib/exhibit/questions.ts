@@ -1,16 +1,9 @@
-import type { ChosenPreset, Decider, Frequency, FunQuestion, Lifestyle, Mode } from './types';
-
-export const PRESET_OPTIONS: { value: ChosenPreset; label: string }[] = [
-	{ value: 'private', label: 'PRIVATE ALL THE WAY' },
-	{ value: 'metro_mixed', label: 'METRO + SHORT AUTO' },
-	{ value: 'metro_walk', label: 'METRO + WALK' }
-];
+import type { Decider, Frequency, FunQuestion, Lifestyle, Mode } from './types';
 
 // Q1 shows six chunky options — kept tight for the kiosk. Cab pooled and
 // walk/cycle are rare answers for "most regular trip" and were dropped.
 export const MODE_OPTIONS: { value: Mode; label: string; sub: string }[] = [
 	{ value: 'auto', label: 'AUTO', sub: 'three-wheeler' },
-	{ value: 'cab_solo', label: 'CAB', sub: 'ola / uber / rapido' },
 	{ value: 'car', label: 'OWN CAR', sub: 'i drive myself' },
 	{ value: 'two_wheeler', label: 'TWO WHEELER', sub: 'bike / scooter' },
 	{ value: 'bus', label: 'BUS', sub: 'bmtc' },
