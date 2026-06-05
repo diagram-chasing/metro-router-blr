@@ -24,14 +24,88 @@
 
 	const BENGALURU_CENTER = { lng: 77.5946, lat: 12.9716, zoom: 11 };
 
-	const BLANK_STYLE = {
-		version: 8 as const,
-		sources: {},
+	// Toner-inspired b&w base layer over OpenFreeMap vector tiles (OpenMapTiles schema).
+	// Black water, hairline-to-thin black roads, white parks. No labels — the metro
+	// overlay is the focus; geographic context is for orientation only.
+	const TONER_STYLE: maplibre.StyleSpecification = {
+		version: 8,
+		name: 'Toner',
+		sources: {
+			openmaptiles: {
+				type: 'vector',
+				url: 'https://tiles.openfreemap.org/planet'
+			}
+		},
+		glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
 		layers: [
 			{
 				id: 'background',
-				type: 'background' as const,
-				paint: { 'background-color': '#FFFFFF' }
+				type: 'background',
+				paint: { 'background-color': '#ffffff' }
+			},
+			{
+				id: 'park',
+				type: 'fill',
+				source: 'openmaptiles',
+				'source-layer': 'park',
+				paint: { 'fill-color': '#f3f3f3', 'fill-opacity': 0.05 }
+			},
+			{
+				id: 'water',
+				type: 'fill',
+				source: 'openmaptiles',
+				'source-layer': 'water',
+				paint: { 'fill-color': '#000000', 'fill-opacity': 0.05 }
+			},
+			{
+				id: 'road-minor',
+				type: 'line',
+				source: 'openmaptiles',
+				'source-layer': 'transportation',
+				minzoom: 12,
+				filter: ['in', 'class', 'minor', 'service', 'track'],
+				paint: {
+					'line-color': '#000000',
+					'line-width': ['interpolate', ['linear'], ['zoom'], 12, 0.25, 16, 0.7],
+					'line-opacity': 0.05
+				}
+			},
+			{
+				id: 'road-secondary',
+				type: 'line',
+				source: 'openmaptiles',
+				'source-layer': 'transportation',
+				filter: ['in', 'class', 'secondary', 'tertiary'],
+				paint: {
+					'line-color': '#000000',
+					'line-width': ['interpolate', ['linear'], ['zoom'], 9, 0.4, 16, 1.6],
+					'line-opacity': 0.05
+				}
+			},
+			{
+				id: 'road-primary',
+				type: 'line',
+				source: 'openmaptiles',
+				'source-layer': 'transportation',
+				filter: ['in', 'class', 'primary', 'trunk', 'motorway'],
+				paint: {
+					'line-color': '#000000',
+					'line-width': ['interpolate', ['linear'], ['zoom'], 6, 0.5, 16, 2.5],
+					'line-opacity': 0.05
+				}
+			},
+			{
+				id: 'admin-boundary',
+				type: 'line',
+				source: 'openmaptiles',
+				'source-layer': 'boundary',
+				filter: ['<=', 'admin_level', 4],
+				paint: {
+					'line-color': '#000000',
+					'line-dasharray': [3, 2],
+					'line-width': 0.7,
+					'line-opacity': 0.05
+				}
 			}
 		]
 	};
@@ -210,7 +284,7 @@
 	onMount(() => {
 		map = new maplibre.Map({
 			container: mapContainer,
-			style: BLANK_STYLE,
+			style: TONER_STYLE,
 			center: [BENGALURU_CENTER.lng, BENGALURU_CENTER.lat],
 			zoom: BENGALURU_CENTER.zoom,
 			dragPan: false,
@@ -280,8 +354,22 @@
 		cursor: crosshair;
 	}
 
-	:global(.maplibregl-ctrl-attrib),
 	:global(.maplibregl-ctrl-logo) {
+		display: none !important;
+	}
+
+	/* Attribution is required by OpenFreeMap / OpenMapTiles / OSM.
+	   Style it down to a minimal mark so it doesn't fight the dashboard, but keep it visible. */
+	:global(.maplibregl-ctrl-attrib) {
+		background: rgba(255, 255, 255, 0.85);
+		font-family: 'IBM Plex Mono', ui-monospace, monospace;
+		font-size: 10px;
+		padding: 2px 6px;
+	}
+	:global(.maplibregl-ctrl-attrib a) {
+		color: #1c1c1c;
+	}
+	:global(.maplibregl-ctrl-attrib-button) {
 		display: none !important;
 	}
 </style>

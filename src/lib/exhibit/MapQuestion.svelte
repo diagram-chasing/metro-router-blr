@@ -135,7 +135,10 @@
 				? decodeMapboxPolyline(busLastMileEncoded)
 				: [dStop, destinationPick];
 			if (busMatch) {
-				return fcFromCoordLists([firstMile, busMatch.coords, lastMile]);
+				const segments: [number, number][][] = [firstMile];
+				for (const leg of busMatch.legs) segments.push(leg.coords);
+				segments.push(lastMile);
+				return fcFromCoordLists(segments);
 			}
 			// Still resolving (or no GTFS match): keep straight stop→stop as fallback.
 			return fcFromCoordLists([firstMile, [oStop, dStop], lastMile]);
