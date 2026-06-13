@@ -45,10 +45,17 @@ function getDb(): Database.Database {
 			co2_per_km_g    REAL,
 			pm25_per_trip_mg REAL,
 			grey_bucket     INTEGER,
+			trips_per_year  INTEGER,
 			segments        TEXT NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS idx_lines_id ON lines (id);
 	`);
+	// Older databases predate trips_per_year — add it idempotently.
+	try {
+		handle.exec('ALTER TABLE lines ADD COLUMN trips_per_year INTEGER');
+	} catch {
+		// column already exists
+	}
 	db = handle;
 	return handle;
 }
@@ -123,6 +130,7 @@ export type LineInput = {
 	co2PerKmG: number;
 	pm25PerTripMg: number;
 	greyBucket: number;
+	tripsPerYear: number;
 	segments: LineSegment[];
 };
 
@@ -133,7 +141,9 @@ export type LineRow = {
 	distanceKm: number;
 	co2PerTripKg: number;
 	co2PerKmG: number;
+	pm25PerTripMg: number;
 	greyBucket: number;
+	tripsPerYear: number | null;
 	segments: LineSegment[];
 };
 
@@ -141,9 +151,9 @@ export function insertLine(line: LineInput): number {
 	const info = getDb()
 		.prepare(
 			`INSERT INTO lines (submission_id, created_at, chosen_mode, distance_km,
-				co2_per_trip_kg, co2_per_km_g, pm25_per_trip_mg, grey_bucket, segments)
+				co2_per_trip_kg, co2_per_km_g, pm25_per_trip_mg, grey_bucket, trips_per_year, segments)
 			 VALUES (@submissionId, @createdAt, @chosenMode, @distanceKm,
-				@co2PerTripKg, @co2PerKmG, @pm25PerTripMg, @greyBucket, @segments)`
+				@co2PerTripKg, @co2PerKmG, @pm25PerTripMg, @greyBucket, @tripsPerYear, @segments)`
 		)
 		.run({
 			submissionId: line.submissionId,
@@ -154,6 +164,7 @@ export function insertLine(line: LineInput): number {
 			co2PerKmG: line.co2PerKmG,
 			pm25PerTripMg: line.pm25PerTripMg,
 			greyBucket: line.greyBucket,
+			tripsPerYear: line.tripsPerYear,
 			segments: JSON.stringify(line.segments)
 		});
 	return Number(info.lastInsertRowid);
@@ -166,7 +177,9 @@ type RawLine = {
 	distance_km: number;
 	co2_per_trip_kg: number;
 	co2_per_km_g: number;
+	pm25_per_trip_mg: number;
 	grey_bucket: number;
+	trips_per_year: number | null;
 	segments: string;
 };
 
@@ -178,7 +191,9 @@ function parseLine(r: RawLine): LineRow {
 		distanceKm: r.distance_km,
 		co2PerTripKg: r.co2_per_trip_kg,
 		co2PerKmG: r.co2_per_km_g,
+		pm25PerTripMg: r.pm25_per_trip_mg,
 		greyBucket: r.grey_bucket,
+		tripsPerYear: r.trips_per_year,
 		segments: JSON.parse(r.segments) as LineSegment[]
 	};
 }

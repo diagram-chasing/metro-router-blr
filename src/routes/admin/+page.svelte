@@ -60,8 +60,16 @@
 	{#if note}<p class="note">{note}</p>{/if}
 
 	<p class="hint">
-		Map: <a href="/">/</a> · TD layers via params, e.g. <code>/?basemap=0</code>,
+		Line map: <a href="/">/</a> · TD layers via params, e.g. <code>/?basemap=0</code>,
 		<code>/?recent=1</code>, <code>/?stations=1&hud=1</code>.
+	</p>
+	<p class="hint">
+		AQI raster: <a href="/aqi">/aqi</a> ·
+		<a href="/aqi?metric=pm25&grid=raw">pm25 raw</a> ·
+		<a href="/aqi?metric=pm25&grid=diff">pm25 diff</a> ·
+		<a href="/aqi?metric=co2&grid=raw">co2 raw</a> ·
+		<a href="/aqi?metric=co2&grid=diff">co2 diff</a> ·
+		<a href="/aqi?metric=pm25&grid=raw&base=1">pm25 + base</a>
 	</p>
 </main>
 

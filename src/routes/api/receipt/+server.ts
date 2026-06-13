@@ -77,6 +77,7 @@ export const POST: RequestHandler = async ({ request }) => {
 			co2PerKmG,
 			pm25PerTripMg: computed.perTripPm25Mg,
 			greyBucket: greyBucket(co2PerKmG),
+			tripsPerYear: computed.tripsPerYear,
 			segments: a.route.segments
 		});
 	}
