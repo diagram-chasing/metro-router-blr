@@ -1,0 +1,4 @@
+# Allow better-sqlite3 to run its native build script on install.
+# (Newer pnpm reads this here, not from the "pnpm" field in package.json.)
+onlyBuiltDependencies:
+  - better-sqlite3
