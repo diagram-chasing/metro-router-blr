@@ -1,7 +1,13 @@
-// Receipt math. All numbers here are PLACEHOLDERS per §8 of the spec —
-// validate against real Bengaluru figures before going live.
+// Receipt math. Emission factors come from $lib/exhibit/emissions.ts (sourced).
+// The projection constants below (trips/year, lifestyle scaler, equivalences)
+// are documented inline; the lifestyle scaler is the one acknowledged heuristic.
 
-import { MODE_FACTOR_G_PER_KM, MODE_LABEL } from '$lib/exhibit/emissions';
+import {
+	MODE_CO2E_G_PER_PKM,
+	MODE_PM25_MG_PER_PKM,
+	MODE_LABEL,
+	firstLastMileKm
+} from '$lib/exhibit/emissions';
 import type {
 	Answers,
 	Decider,
@@ -11,22 +17,34 @@ import type {
 	Mode
 } from '$lib/exhibit/types';
 
-// trips per year, one-way (placeholder)
+// One-way trips per year for the visitor's single most-regular trip.
+// A commute is there-and-back, so "daily" = 2 trips × ~240 working days = 480.
+//   few_weekly ≈ 3 round trips/week × 48 weeks ≈ 288
+//   weekly     ≈ 1 round trip/week  × 50 weeks = 100
+//   occasional ≈ 1 round trip/month × 12       = 24
 const TRIPS_PER_YEAR: Record<Frequency, number> = {
 	daily: 480,
-	few_weekly: 200,
+	few_weekly: 288,
 	weekly: 100,
 	occasional: 24
 };
 
-// lifestyle scaler from §5.3 (placeholder)
+// Scales commute-only emissions up to all-of-life travel. Heuristic, not from a
+// single source: commuting is roughly half to two-thirds of personal urban
+// travel, so a homebody's total is a little above their commute and an
+// always-out person's is well above it. Illustrative — flagged in the receipt.
 const LIFESTYLE_MULTIPLIER: Record<Lifestyle, number> = {
-	homebody: 1.1,
-	moderate: 1.6,
-	always_out: 2.5
+	homebody: 1.2,
+	moderate: 1.7,
+	always_out: 2.6
 };
 
-// Headline pitch by decider (recommendation strategy from §5.7)
+// CO2 absorbed by one mature urban tree per year (kg). Common communication
+// value (Arbor Day ~21.8 kg/yr). EPA's young-tree average is lower (~6 kg/yr);
+// 21 is the "mature tree" figure and is labelled as such on the receipt.
+const KG_CO2_PER_TREE_YEAR = 21;
+
+// Headline pitch by decider (recommendation strategy).
 const DECIDER_HEADLINE: Record<Decider, string> = {
 	speed: 'The metro version is only a few minutes more — and you skip the traffic.',
 	cost: 'Switching this trip would save real money every month.',
@@ -38,9 +56,11 @@ const DECIDER_HEADLINE: Record<Decider, string> = {
 // Friction overlays per Q6 friction
 const FRICTION_OVERLAY: Record<FunQuestionId, string> = {
 	walking: 'A short auto stand-in for the walking legs keeps this realistic.',
-	time_pressure: 'On bad days the cab gets booked — that single panic move is the heaviest km of your week.',
+	time_pressure:
+		'On bad days the cab gets booked — that single panic move is the heaviest km of your week.',
 	planning_slack: 'Keep it to one transfer max. The simpler the swap, the more likely it sticks.',
-	crowd_tolerance: 'Crowds don\'t faze you, so the only thing left is comfort — and the metro has AC.',
+	crowd_tolerance:
+		"Crowds don't faze you, so the only thing left is comfort — and the metro has AC.",
 	boredom: 'Add up the dead time and you get hours back per week to read, podcast, or doze.'
 };
 
@@ -81,22 +101,29 @@ export type ComputedReceipt = {
 		deciderLabel: string;
 	};
 
-	// Per-trip emissions
-	perTripKg: number; // their mode
-	bestComboPerTripKg: number; // best transit-led alternative for this route
-	multiplier: number; // perTripKg / bestComboPerTripKg
+	// Per-trip emissions (their mode vs the best transit-led alternative)
+	perTripKg: number; // CO2e, kg
+	perTripPm25Mg: number; // PM2.5, mg
+	bestComboPerTripKg: number; // CO2e, kg
+	bestComboPerTripPm25Mg: number; // PM2.5, mg
+	multiplier: number; // CO2 perTripKg / bestComboPerTripKg
 	multiplierPhrase: string; // human ("about 3×")
+	comboLabel: string; // the recommended alternative
 
-	// Yearly
+	// Yearly CO2e (kg)
 	tripsPerYear: number;
 	annualCommuteKg: number; // perTripKg × tripsPerYear
-	annualAllInKg: number; // annualCommuteKg × lifestyleScaler
-
-	// If switched
+	annualAllInKg: number; // annualCommuteKg × lifestyle scaler
 	annualSwitchedKg: number;
 	annualSavingKg: number;
 	twoYearSavingKg: number;
-	treeYearsEquivalent: number; // illustrative: 21 kg per tree-year
+	treeYearsEquivalent: number; // annualSavingKg / 21
+
+	// Yearly PM2.5 (grams)
+	annualCommutePm25G: number;
+	annualAllInPm25G: number;
+	annualSwitchedPm25G: number;
+	annualSavingPm25G: number;
 
 	// Recommendation
 	recommendation: {
@@ -110,13 +137,8 @@ export type ComputedReceipt = {
 		subtitle: string;
 	};
 
-	// Distance band string (e.g. "6-10 km")
-	distanceBand: string;
-
-	// One personal nudge line
+	distanceBand: string; // e.g. "6-10 km"
 	personalNudge: string;
-
-	// Disclaimer — every number here is illustrative
 	disclaimer: string;
 };
 
@@ -140,24 +162,21 @@ function multiplierPhrase(m: number): string {
 	return `about ${rounded}×`;
 }
 
-// Best alternative for the same route: assume a short auto for first/last mile
-// + metro for the middle. If the route is very short, walk + bus instead.
-function bestComboPerTripKg(distanceKm: number): {
-	totalKg: number;
+// Best realistic alternative for the same route: a short auto for the first/last
+// mile + metro for the trunk. Very short trips just walk. Returns both pollutants.
+function bestCombo(distanceKm: number): {
+	co2Kg: number;
+	pm25Mg: number;
 	comboLabel: string;
 } {
 	if (distanceKm < 2) {
-		// short trip — just walk
-		return { totalKg: 0, comboLabel: 'a 15-min walk' };
+		return { co2Kg: 0, pm25Mg: 0, comboLabel: 'a 15-min walk' };
 	}
-	const firstMileKm = Math.min(1.6, distanceKm * 0.2);
-	const lastMileKm = Math.min(1.6, distanceKm * 0.2);
-	const mainKm = Math.max(0, distanceKm - firstMileKm - lastMileKm);
-	const grams =
-		firstMileKm * MODE_FACTOR_G_PER_KM.auto +
-		mainKm * MODE_FACTOR_G_PER_KM.metro +
-		lastMileKm * MODE_FACTOR_G_PER_KM.auto;
-	return { totalKg: grams / 1000, comboLabel: 'metro + a short auto' };
+	const { firstMile, main, lastMile } = firstLastMileKm(distanceKm);
+	const accessKm = firstMile + lastMile;
+	const co2Kg = (accessKm * MODE_CO2E_G_PER_PKM.auto + main * MODE_CO2E_G_PER_PKM.metro) / 1000;
+	const pm25Mg = accessKm * MODE_PM25_MG_PER_PKM.auto + main * MODE_PM25_MG_PER_PKM.metro;
+	return { co2Kg, pm25Mg, comboLabel: 'metro + a short auto' };
 }
 
 function archetypeFor(mode: Mode, decider: Decider): { name: string; subtitle: string } {
@@ -206,16 +225,25 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 	const tripsPerYear = TRIPS_PER_YEAR[frequency];
 	const lifestyleMul = LIFESTYLE_MULTIPLIER[lifestyle];
 
-	const perTripKg = (distanceKm * MODE_FACTOR_G_PER_KM[mode]) / 1000;
-	const { totalKg: bestKg, comboLabel } = bestComboPerTripKg(distanceKm);
-	const multiplier = bestKg > 0 ? perTripKg / bestKg : 0;
+	// Per-trip
+	const perTripKg = (distanceKm * MODE_CO2E_G_PER_PKM[mode]) / 1000;
+	const perTripPm25Mg = distanceKm * MODE_PM25_MG_PER_PKM[mode];
+	const combo = bestCombo(distanceKm);
+	const multiplier = combo.co2Kg > 0 ? perTripKg / combo.co2Kg : 0;
 
+	// Annual CO2e (kg)
 	const annualCommuteKg = perTripKg * tripsPerYear;
 	const annualAllInKg = annualCommuteKg * lifestyleMul;
-	const annualSwitchedKg = bestKg * tripsPerYear;
+	const annualSwitchedKg = combo.co2Kg * tripsPerYear;
 	const annualSavingKg = Math.max(0, annualCommuteKg - annualSwitchedKg);
 	const twoYearSavingKg = annualSavingKg * 2;
-	const treeYearsEquivalent = annualSavingKg / 21;
+	const treeYearsEquivalent = annualSavingKg / KG_CO2_PER_TREE_YEAR;
+
+	// Annual PM2.5 (grams = mg/trip × trips ÷ 1000)
+	const annualCommutePm25G = (perTripPm25Mg * tripsPerYear) / 1000;
+	const annualAllInPm25G = annualCommutePm25G * lifestyleMul;
+	const annualSwitchedPm25G = (combo.pm25Mg * tripsPerYear) / 1000;
+	const annualSavingPm25G = Math.max(0, annualCommutePm25G - annualSwitchedPm25G);
 
 	const arch = archetypeFor(mode, decider);
 	const subtitle = subtitleFor(a.funQuestionId, a.funAnswer);
@@ -239,9 +267,12 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 			deciderLabel: DECIDER_LABEL[decider]
 		},
 		perTripKg: round(perTripKg, 2),
-		bestComboPerTripKg: round(bestKg, 2),
+		perTripPm25Mg: round(perTripPm25Mg, 1),
+		bestComboPerTripKg: round(combo.co2Kg, 2),
+		bestComboPerTripPm25Mg: round(combo.pm25Mg, 1),
 		multiplier: round(multiplier, 1),
 		multiplierPhrase: multiplierPhrase(multiplier),
+		comboLabel: combo.comboLabel,
 		tripsPerYear,
 		annualCommuteKg: round(annualCommuteKg, 0),
 		annualAllInKg: round(annualAllInKg, 0),
@@ -249,9 +280,13 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 		annualSavingKg: round(annualSavingKg, 0),
 		twoYearSavingKg: round(twoYearSavingKg, 0),
 		treeYearsEquivalent: round(treeYearsEquivalent, 0),
+		annualCommutePm25G: round(annualCommutePm25G, 1),
+		annualAllInPm25G: round(annualAllInPm25G, 1),
+		annualSwitchedPm25G: round(annualSwitchedPm25G, 1),
+		annualSavingPm25G: round(annualSavingPm25G, 1),
 		recommendation: {
 			deciderHeadline: DECIDER_HEADLINE[decider],
-			recommendedCombo: comboLabel
+			recommendedCombo: combo.comboLabel
 		},
 		archetype: {
 			name: arch.name,
@@ -259,6 +294,7 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 		},
 		distanceBand: distanceBand(distanceKm),
 		personalNudge,
-		disclaimer: 'Thanks for visiting!'
+		disclaimer:
+			'Estimates use India-specific operational (well-to-wheel) emission factors; actual figures vary with vehicle, occupancy and traffic.'
 	};
 }

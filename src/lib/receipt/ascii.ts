@@ -148,7 +148,8 @@ export function routeStripSegments(segs: RouteSeg[], cols = COLS): string {
 // 2. Scale stack
 // ───────────────────────────────────────────────────────────────────
 
-const KG_PER_LPG = 43;
+// CO2 released burning one 14.2 kg domestic LPG cylinder (IPCC 2006 EF).
+const KG_PER_LPG = 42;
 
 export type ScaleStack = {
 	full: string;
@@ -304,13 +305,13 @@ export function routeBlurb(mode: Mode, frequency: Frequency, distanceKm: number)
 		return `A pooled cab is about half the footprint of a solo one. Around ${weeklyKm} km a week.`;
 	}
 	if (mode === 'two_wheeler') {
-		return `Two-wheelers sit between the bus and a car on emissions. That's about ${weeklyKm} km a week.`;
+		return `Two-wheelers are light on CO₂ but heavy on the fine particles you breathe. That's about ${weeklyKm} km a week.`;
 	}
 	if ((mode === 'cab_solo' || mode === 'car') && frequency === 'daily') {
 		return `A private vehicle every weekday is where most of the year's emissions come from. Around ${weeklyKm} km a week.`;
 	}
 	if (mode === 'auto') {
-		return `Autos run around 110 g CO₂ per km. That works out to about ${weeklyKm} km a week here.`;
+		return `Autos land around 75 g CO₂ per passenger-km — half a private car. That's about ${weeklyKm} km a week here.`;
 	}
 	return `Around ${weeklyKm} km a week of road time.`;
 }
@@ -363,20 +364,39 @@ export function switchBlurb(annualSavingKg: number, treeYearsEquivalent: number)
 	return `${annualSavingKg} kg less every year.${trees}`;
 }
 
+// PM2.5 is the fine-particle pollutant most tied to respiratory and heart
+// disease — the local-air story, distinct from CO₂'s climate story.
+export function pm25Blurb(annualCommuteG: number, annualSavingG: number, mode: Mode): string {
+	if (mode === 'active' || annualCommuteG <= 0) {
+		return 'Walking or cycling adds no tailpipe particles to the air you and others share.';
+	}
+	if (mode === 'two_wheeler' || mode === 'auto') {
+		return `Open engines close to street level make this one of the heaviest modes for fine particles. A metro-led trip takes about ${Math.round(annualSavingG)} g a year out of the air.`;
+	}
+	if (mode === 'metro' || mode === 'bus') {
+		return 'Spread across a full vehicle, your share of fine particles is already among the lowest of any mode.';
+	}
+	// car / cab
+	if (annualSavingG > 1) {
+		return `PM2.5 is the pollutant most tied to lung and heart disease. The swap clears about ${Math.round(annualSavingG)} g a year.`;
+	}
+	return 'A modern car emits little exhaust PM, so the gap here is small. Walking the last mile instead of an auto is what closes it — your bigger win is CO₂.';
+}
+
 export function fingerprintBlurb(archetypeName: string, _funId?: FunQuestionId, _funAnswer?: string): string {
 	switch (archetypeName) {
 		case 'The Lane-Splitter':
-			return 'Two-wheelers cover ground fast and emit roughly a third of a private car.';
-		case 'The Optimizer':
+			return 'Two-wheelers are light on CO₂ but among the worst for the fine particles you breathe.';
+		case 'The Quiet Optimizer':
 			return 'One of the lowest-emission commute patterns the city has.';
 		case 'The Auto-Pilot':
 			return 'Autos are usually a habit choice, not a cost or speed one.';
 		case 'The Meter Runner':
-			return 'Autos run around 110 g CO₂ per km. Half a private car, almost triple a bus.';
-		case 'The Cruiser':
-			return 'Solo cabs and private cars have the highest per-km footprint of the common modes.';
+			return 'Autos land near 75 g CO₂ per passenger-km. Half a private car, but more PM than a bus.';
+		case 'The Comfort Cruiser':
+			return 'Solo cabs and private cars carry the highest per-passenger footprint of the common modes.';
 		case 'The Cab-and-Pray Commuter':
-			return 'Solo cabs average about 150 g CO₂ per km.';
+			return 'A solo cab works out to roughly 170 g CO₂ per passenger-km — about four metros.';
 		case 'The Door-to-Door Spender':
 			return 'Door-to-door cabs are the most expensive option in both rupees and CO₂.';
 		case 'The Reluctant Rider':

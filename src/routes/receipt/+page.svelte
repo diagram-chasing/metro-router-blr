@@ -15,6 +15,7 @@
 		distributionBlurb,
 		switchBars,
 		switchBlurb,
+		pm25Blurb,
 		fingerprintPatch,
 		fingerprintBlurb
 	} from '$lib/receipt/ascii';
@@ -110,6 +111,7 @@
 		{@const stack = scaleStack(r.annualCommuteKg, r.annualAllInKg)}
 		{@const dist = distributionBell(r.multiplier)}
 		{@const sw = switchBars(r.annualCommuteKg, r.annualSwitchedKg)}
+			{@const pm = switchBars(r.annualCommutePm25G, r.annualSwitchedPm25G)}
 		{@const patch = fingerprintPatch(a)}
 
 		<article class="receipt">
@@ -152,7 +154,7 @@
 			<section>
 				<h3>THIS YEAR, YOUR COMMUTE ALONE</h3>
 				<AsciiBlock text={stack.full} align="left" emphasis="bold" />
-				<p class="big-num">~{r.annualCommuteKg} kg CO₂</p>
+				<p class="big-num">~{r.annualCommuteKg} kg CO₂e</p>
 				{#if stack.ghost}
 					<AsciiBlock text={stack.ghost} align="left" />
 					<p class="meta-line">+ {r.annualAllInKg - r.annualCommuteKg} kg from everything else</p>
@@ -181,18 +183,49 @@
 			<hr />
 
 			<section>
-				<h3>IF YOU SWAPPED IT</h3>
-				<p class="bar-cap">
-					<span class="bar-tag">NOW</span><span class="bar-num">{r.annualCommuteKg} kg</span>
-				</p>
-				<AsciiBlock text={sw.now} align="left" emphasis="bold" />
-				<p class="bar-cap">
-					<span class="bar-tag">SWAP</span><span class="bar-num">{r.annualSwitchedKg} kg</span>
-				</p>
-				<AsciiBlock text={sw.switched} align="left" emphasis="bold" />
+				<h3>IF YOU SWAPPED IT — CO₂</h3>
+				{#if r.annualSavingKg > 0}
+					<p class="meta-line">vs {r.comboLabel}</p>
+					<p class="bar-cap">
+						<span class="bar-tag">NOW</span><span class="bar-num">{r.annualCommuteKg} kg</span>
+					</p>
+					<AsciiBlock text={sw.now} align="left" emphasis="bold" />
+					<p class="bar-cap">
+						<span class="bar-tag">SWAP</span><span class="bar-num">{r.annualSwitchedKg} kg</span>
+					</p>
+					<AsciiBlock text={sw.switched} align="left" emphasis="bold" />
+					<p class="blurb">
+						{switchBlurb(r.annualSavingKg, r.treeYearsEquivalent)}
+					</p>
+					{#if r.twoYearSavingKg > 0}
+						<p class="tiny">Over two years that's about {r.twoYearSavingKg} kg.</p>
+					{/if}
+				{:else}
+					<p class="blurb">
+						You're already at or below a metro-led trip on CO₂. Little to swap — this is one of the cleaner ways to move.
+					</p>
+				{/if}
+			</section>
+
+			<hr />
+
+			<section>
+				<h3>THE AIR YOU BREATHE OUT — PM2.5</h3>
+				<p class="big-num">~{r.annualCommutePm25G} g / year</p>
+				{#if r.annualSavingPm25G > 1}
+					<p class="bar-cap">
+						<span class="bar-tag">NOW</span><span class="bar-num">{r.annualCommutePm25G} g</span>
+					</p>
+					<AsciiBlock text={pm.now} align="left" emphasis="bold" />
+					<p class="bar-cap">
+						<span class="bar-tag">SWAP</span><span class="bar-num">{r.annualSwitchedPm25G} g</span>
+					</p>
+					<AsciiBlock text={pm.switched} align="left" emphasis="bold" />
+				{/if}
 				<p class="blurb">
-					{switchBlurb(r.annualSavingKg, r.treeYearsEquivalent)}
+					{pm25Blurb(r.annualCommutePm25G, r.annualSavingPm25G, r.trip.mode)}
 				</p>
+				<p class="tiny">Fine particulate (PM2.5) — the pollutant most tied to lung and heart disease.</p>
 			</section>
 
 			<hr />
