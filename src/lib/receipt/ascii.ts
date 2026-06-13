@@ -200,6 +200,27 @@ export function distributionBell(multiplier: number): DistributionBell {
 	return { bell, marker };
 }
 
+// Real distribution built from the per-trip CO2 (kg) of everyone in the same
+// distance band so far. `values` is that sample; `mine` is this visitor's
+// per-trip CO2. The histogram is binned across the observed range and the marker
+// sits on the visitor's own bin. Falls back to the synthetic bell on no data.
+export function distributionFromData(values: number[], mine: number): DistributionBell {
+	if (values.length === 0) return distributionBell(1);
+	const lo = Math.min(...values, mine);
+	const hi = Math.max(...values, mine);
+	const range = hi - lo || 1;
+	const counts = new Array(COLS).fill(0);
+	for (const v of values) {
+		const idx = clamp(Math.floor(((v - lo) / range) * COLS), 0, COLS - 1);
+		counts[idx]++;
+	}
+	const peak = Math.max(...counts, 1);
+	const bell = counts.map((c) => BELL_GLYPHS[clamp(Math.round((c / peak) * 7), 0, 7)]).join('');
+	const col = clamp(Math.floor(((mine - lo) / range) * COLS), 0, COLS - 1);
+	const marker = ' '.repeat(col) + '▼';
+	return { bell, marker };
+}
+
 // ───────────────────────────────────────────────────────────────────
 // 4. Switch bars
 // ───────────────────────────────────────────────────────────────────

@@ -26,6 +26,17 @@ export type FunQuestion = {
 	options: FunOption[];
 };
 
+// Drawable geometry of the route the visitor chose, captured at Q3. Travels with
+// the answers to the server, where it becomes the grey line on the accumulation
+// map. `legKind`/`chosenKind` use the route-candidate vocabulary.
+import type { CandidateKind, LegKind } from './routeCandidates';
+
+export type RouteSegmentGeo = { coords: [number, number][]; legKind: LegKind };
+export type RouteGeometry = {
+	chosenKind: CandidateKind;
+	segments: RouteSegmentGeo[];
+};
+
 export type Answers = {
 	mode?: Mode;
 	frequency?: Frequency;
@@ -35,6 +46,7 @@ export type Answers = {
 	originStation?: string;
 	destinationStation?: string;
 	chosenRouteId?: string;
+	route?: RouteGeometry;
 	lifestyle?: Lifestyle;
 	decider?: Decider;
 	funQuestionId?: FunQuestionId;

@@ -5,7 +5,6 @@
 
 	import Map from '$lib/components/Map.svelte';
 	import { planAllModes, type PlanBundle } from '$lib/utils/otp';
-	import { buildVectorJourneyFromItinerary } from '$lib/utils/vectorExport';
 
 	import { buildOtpCandidates, stationNames, tripDistanceKm } from './routeCandidates';
 	import RouteOptions from './RouteOptions.svelte';
@@ -40,22 +39,20 @@
 	// The map renders the previewed candidate's real OTP geometry, leg by leg.
 	const mapSegments = $derived(previewCandidate?.segments ?? null);
 
-	// Publish the previewed route as a "vector journey" for the receipt /
-	// TouchDesigner consumers whenever the selection (or pins) change.
-	$effect(() => {
-		if (!browser || !originPick || !destinationPick) return;
-		const c = previewCandidate;
-		if (!c?.itinerary) return;
-		const vector = buildVectorJourneyFromItinerary(originPick, destinationPick, c.itinerary, {
-			priceINR: c.costINR,
-			distanceKm: answers.distanceKm
-		});
-		void fetch('/api/journey/current', {
-			method: 'POST',
-			headers: { 'Content-Type': 'application/json' },
-			body: JSON.stringify(vector)
-		}).catch((err) => console.warn('Failed to publish vector journey:', err));
-	});
+	// Record the picked card AND its drawable geometry in one go. The geometry
+	// travels with the submission and becomes the grey line on the home-page map.
+	// Done in the click handler (not an $effect) so writing answers.route can't
+	// feed back into the candidate derivation and loop.
+	function selectRoute(id: string) {
+		setAnswer('chosenRouteId', id);
+		const c = candidates.find((x) => x.id === id);
+		if (c?.segments) {
+			setAnswer('route', {
+				chosenKind: c.kind,
+				segments: c.segments.map((s) => ({ coords: s.coords, legKind: s.kind }))
+			});
+		}
+	}
 
 	async function handlePick(e: CustomEvent<{ lng: number; lat: number }>) {
 		if (isLoading) return;
@@ -120,6 +117,7 @@
 		setAnswer('originStation', undefined);
 		setAnswer('destinationStation', undefined);
 		setAnswer('chosenRouteId', undefined);
+		setAnswer('route', undefined);
 	}
 </script>
 
@@ -181,7 +179,7 @@
 		{candidates}
 		selectedId={answers.chosenRouteId}
 		locked={!routeReady}
-		onSelect={(id) => setAnswer('chosenRouteId', id)}
+		onSelect={selectRoute}
 	/>
 </div>
 

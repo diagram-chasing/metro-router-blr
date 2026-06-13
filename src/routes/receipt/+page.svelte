@@ -5,6 +5,12 @@
 	import TactileButton from '$lib/exhibit/TactileButton.svelte';
 	import type { StoredReceipt } from '$lib/server/receiptStore';
 	import AsciiBlock from '$lib/receipt/AsciiBlock.svelte';
+
+	// The receipt endpoint augments the stored receipt with a live distribution of
+	// everyone in the same distance band so far (absent until enough data exists).
+	type ReceiptResponse = StoredReceipt & {
+		distribution?: { percentile: number; n: number; values: number[] };
+	};
 	import {
 		routeStripSegments,
 		routeCaption,
@@ -12,6 +18,7 @@
 		scaleStack,
 		scaleBlurb,
 		distributionBell,
+		distributionFromData,
 		distributionBlurb,
 		switchBars,
 		switchBlurb,
@@ -22,7 +29,7 @@
 
 	let loading = $state(true);
 	let error = $state<string | null>(null);
-	let receipt = $state<StoredReceipt | null>(null);
+	let receipt = $state<ReceiptResponse | null>(null);
 
 	$effect(() => {
 		const id = $page.url.searchParams.get('id');
@@ -40,7 +47,7 @@
 		try {
 			const res = await fetch(`/api/receipt?id=${encodeURIComponent(id)}`);
 			if (!res.ok) throw new Error(`status ${res.status}`);
-			receipt = (await res.json()) as StoredReceipt;
+			receipt = (await res.json()) as ReceiptResponse;
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'fetch failed';
 		} finally {
@@ -109,7 +116,9 @@
 		]}
 		{@const route = routeStripSegments(segs)}
 		{@const stack = scaleStack(r.annualCommuteKg, r.annualAllInKg)}
-		{@const dist = distributionBell(r.multiplier)}
+		{@const dist = receipt.distribution
+			? distributionFromData(receipt.distribution.values, r.perTripKg)
+			: distributionBell(r.multiplier)}
 		{@const sw = switchBars(r.annualCommuteKg, r.annualSwitchedKg)}
 			{@const pm = switchBars(r.annualCommutePm25G, r.annualSwitchedPm25G)}
 		{@const patch = fingerprintPatch(a)}
@@ -178,6 +187,12 @@
 				<p class="blurb">
 					{distributionBlurb(r.multiplier, r.distanceBand, r.trip.decider)}
 				</p>
+				{#if receipt.distribution}
+					<p class="tiny">
+						Lighter than {receipt.distribution.percentile}% of {receipt.distribution.n}
+						{r.distanceBand} commuters here so far.
+					</p>
+				{/if}
 			</section>
 
 			<hr />

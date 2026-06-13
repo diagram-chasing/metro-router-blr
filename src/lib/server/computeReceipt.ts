@@ -147,7 +147,7 @@ function round(n: number, digits = 0): number {
 	return Math.round(n * f) / f;
 }
 
-function distanceBand(km: number): string {
+export function distanceBand(km: number): string {
 	if (km < 3) return '0-3 km';
 	if (km < 6) return '3-6 km';
 	if (km < 10) return '6-10 km';

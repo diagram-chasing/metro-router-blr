@@ -1,11 +1,14 @@
-// In-memory store of computed receipts, keyed by id.
-// Single Vite dev process means this singleton is shared across requests.
-// Not suitable for production multi-process deployments — exhibition/dev only.
+// Receipt persistence, backed by the local SQLite store (see db.ts).
+//
+// Exhibition/dev only — a single local server owns the database file. The API
+// here is unchanged from the previous in-memory implementation so callers
+// (the /api/receipt endpoint) don't need to change.
 
 import type { Answers } from '$lib/exhibit/types';
 import type { ComputedReceipt } from './computeReceipt';
 
 import type { Mode } from '$lib/exhibit/types';
+import { getSubmission, insertSubmission, listSubmissions } from './db';
 
 export type GeoSnapshot = {
 	originLabel?: string;
@@ -23,22 +26,14 @@ export type StoredReceipt = {
 	geo?: GeoSnapshot;
 };
 
-const receipts = new Map<string, StoredReceipt>();
-
-const MAX_KEEP = 500;
-
 export function putReceipt(r: StoredReceipt): void {
-	receipts.set(r.id, r);
-	if (receipts.size > MAX_KEEP) {
-		const oldest = receipts.keys().next().value;
-		if (oldest !== undefined) receipts.delete(oldest);
-	}
+	insertSubmission(r);
 }
 
 export function getReceipt(id: string): StoredReceipt | undefined {
-	return receipts.get(id);
+	return getSubmission(id);
 }
 
 export function listReceipts(): StoredReceipt[] {
-	return Array.from(receipts.values()).sort((a, b) => b.createdAt - a.createdAt);
+	return listSubmissions();
 }
