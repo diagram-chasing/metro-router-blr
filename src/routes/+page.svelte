@@ -2,18 +2,14 @@
 	import { browser } from '$app/environment';
 
 	import Map from '$lib/components/Map.svelte';
-	import { JourneyCalculator } from '$lib/utils/JourneyCalculator';
-	import { computeMetroSegments } from '$lib/utils/mapHelpers';
-	import { buildVectorJourney } from '$lib/utils/vectorExport';
+	import { planAllModes, firstWithMode } from '$lib/utils/otp';
+	import { itineraryToSegments, type RouteSegment } from '$lib/exhibit/routeCandidates';
+	import { buildVectorJourneyFromItinerary } from '$lib/utils/vectorExport';
 
 	let originPick: [number, number] | null = null;
 	let destinationPick: [number, number] | null = null;
-	let walkingRouteToStation: string | undefined;
-	let walkingRouteFromStation: string | undefined;
-	let metroSegments: GeoJSON.FeatureCollection | null = null;
+	let segments: RouteSegment[] | null = null;
 	let isLoading = false;
-
-	let journeyCalculator: JourneyCalculator | undefined;
 
 	async function handlePick(e: CustomEvent<{ lng: number; lat: number }>) {
 		if (isLoading) return;
@@ -31,20 +27,23 @@
 
 	async function calculateJourney() {
 		if (!browser || !originPick || !destinationPick) return;
-		if (!journeyCalculator) journeyCalculator = new JourneyCalculator();
 		try {
 			isLoading = true;
-			const [journey, segments] = await Promise.all([
-				journeyCalculator.calculateJourney(originPick, destinationPick),
-				computeMetroSegments({ coordinates: originPick }, { coordinates: destinationPick })
-			]);
-			walkingRouteToStation = journey?.firstLegWalkRoute;
-			walkingRouteFromStation = journey?.secondLegWalkRoute;
-			metroSegments = segments;
+			const bundle = await planAllModes(originPick, destinationPick);
+			const itinerary =
+				firstWithMode(bundle.metro, 'SUBWAY') ??
+				firstWithMode(bundle.bus, 'BUS') ??
+				bundle.car[0] ??
+				bundle.walk[0] ??
+				null;
+
+			segments = itinerary ? itineraryToSegments(itinerary) : null;
 
 			// Publish to the TouchDesigner-facing endpoint so TD's poller picks it up.
-			if (journey && segments) {
-				const vector = buildVectorJourney(originPick, destinationPick, journey, segments);
+			if (itinerary) {
+				const vector = buildVectorJourneyFromItinerary(originPick, destinationPick, itinerary, {
+					priceINR: 0
+				});
 				fetch('/api/journey/current', {
 					method: 'POST',
 					headers: { 'Content-Type': 'application/json' },
@@ -61,21 +60,12 @@
 	function reset() {
 		originPick = null;
 		destinationPick = null;
-		walkingRouteToStation = undefined;
-		walkingRouteFromStation = undefined;
-		metroSegments = null;
+		segments = null;
 	}
 </script>
 
 <main class="absolute inset-0 bg-white">
-	<Map
-		{originPick}
-		{destinationPick}
-		{walkingRouteToStation}
-		{walkingRouteFromStation}
-		{metroSegments}
-		on:pick={handlePick}
-	/>
+	<Map {originPick} {destinationPick} {segments} on:pick={handlePick} />
 	<button type="button" class="reset-btn" on:click={reset} disabled={isLoading}>Reset</button>
 </main>
 

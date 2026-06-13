@@ -1,4 +1,5 @@
-import type { NearestBusStop } from '$lib/utils/busStops';
+import type { OtpItinerary, OtpLeg } from '$lib/utils/otp';
+import { firstWithMode, type PlanBundle } from '$lib/utils/otp';
 
 import type { Answers, Frequency, Mode } from './types';
 
@@ -8,6 +9,9 @@ export type Glow = 'amber' | 'blue' | 'green' | 'red';
 export type LegKind = 'walk' | 'bus' | 'metro' | 'cab' | 'auto';
 export type Leg = { kind: LegKind; mins?: number; note?: string };
 
+/** A drawable stretch of the route, in [lng, lat] coordinates. */
+export type RouteSegment = { coords: [number, number][]; kind: LegKind; color: string };
+
 export type RouteCandidate = {
 	id: string;
 	kind: CandidateKind;
@@ -16,27 +20,20 @@ export type RouteCandidate = {
 	costINR: number;
 	legs: Leg[];
 	glow: Glow;
+	/** Per-leg geometry for the map (omitted on legacy/synthetic candidates). */
+	segments?: RouteSegment[];
+	/** The raw OTP itinerary this candidate was built from. */
+	itinerary?: OtpItinerary;
 };
 
-export type MetroLegInfo = {
-	originStation?: string;
-	destinationStation?: string;
-	totalMetroMin?: number;
-	originWalkMeters?: number;
-	destinationWalkMeters?: number;
-};
+// Segment colours for the map overlay.
+const COLOR_WALK = '#666666';
+const COLOR_METRO = '#000000';
+const COLOR_BUS = '#0f883b';
+const COLOR_ROAD = '#1c1c1c';
 
-const MAX_WALK_M = 1200;
-const SHORT_AUTO_MIN = 5;
-const LONG_AUTO_MIN = 12;
-const SHORT_AUTO_COST = 50;
-const LONG_AUTO_COST = 120;
-const BUS_WAIT_MIN = 8;
-const WALK_MPM = 80;
-
-function walkMin(meters: number): number {
-	return Math.max(1, Math.round(meters / WALK_MPM));
-}
+const MAX_WALK_KM = 2.5; // beyond this, walk-only stops being a sensible option
+const MAX_AUTO_KM = 12;
 
 function busFareFor(km: number): number {
 	if (km <= 2) return 5;
@@ -54,125 +51,197 @@ function estimateMetroFare(km: number): number {
 	return 65;
 }
 
-export function buildCandidates(
-	answers: Answers,
-	metro: MetroLegInfo,
-	originBus: NearestBusStop | null,
-	destBus: NearestBusStop | null
-): RouteCandidate[] {
-	const dist = answers.distanceKm ?? 0;
-	const all: (RouteCandidate & { feasible: boolean })[] = [];
+function legMins(seconds: number): number {
+	return Math.max(1, Math.round(seconds / 60));
+}
 
-	all.push({
-		id: 'cab_direct',
-		kind: 'cab',
-		label: 'CAB',
-		etaMin: Math.max(8, Math.round(dist * 3)),
-		costINR: Math.round(dist * 15 + 40),
-		legs: [{ kind: 'cab' }],
-		glow: 'amber',
-		feasible: dist > 0
+// OTP's CAR routing is free-flow; Bengaluru traffic rarely is. Scale driving
+// time up by a congestion factor that depends on the current time of day
+// (the kiosk always plans a trip for "now").
+function istHour(d: Date): number {
+	// IST is UTC+5:30 — derive the hour from UTC so the machine's timezone
+	// doesn't matter.
+	const istMinutes = (d.getUTCHours() * 60 + d.getUTCMinutes() + 330) % 1440;
+	return Math.floor(istMinutes / 60);
+}
+
+function carTrafficFactor(hour: number): number {
+	if (hour >= 8 && hour < 11) return 1.65; // morning peak
+	if (hour >= 17 && hour < 21) return 1.85; // evening peak (worst)
+	if (hour >= 11 && hour < 17) return 1.4; // midday
+	if (hour >= 21 && hour < 23) return 1.35; // evening wind-down
+	if (hour >= 6 && hour < 8) return 1.3; // early morning ramp
+	return 1.15; // night / pre-dawn
+}
+
+function carMinutes(it: OtpItinerary, now: Date = new Date()): number {
+	const factor = carTrafficFactor(istHour(now));
+	return Math.max(1, Math.round((it.duration / 60) * factor));
+}
+
+// App-cab fare ≈ base + per-km + per-minute (Ola/Uber-style, Bengaluru).
+function cabFare(km: number, minutes: number): number {
+	return Math.max(80, Math.round(50 + 14 * km + 1.5 * minutes));
+}
+
+// Auto-rickshaw ≈ ₹30 flagdown (first ~2 km) then ~₹15/km.
+function autoFare(km: number): number {
+	return Math.max(40, Math.round(35 + 15 * km));
+}
+
+function kmOfMode(it: OtpItinerary, modes: OtpLeg['mode'][]): number {
+	return it.legs.filter((l) => modes.includes(l.mode)).reduce((s, l) => s + l.distance, 0) / 1000;
+}
+
+function legKindFor(mode: OtpLeg['mode'], candidateKind: CandidateKind): LegKind {
+	switch (mode) {
+		case 'SUBWAY':
+		case 'RAIL':
+		case 'TRAM':
+			return 'metro';
+		case 'BUS':
+			return 'bus';
+		case 'CAR':
+			return candidateKind === 'auto' ? 'auto' : 'cab';
+		default:
+			return 'walk';
+	}
+}
+
+function colorFor(leg: OtpLeg, kind: LegKind): string {
+	if (kind === 'metro') return leg.route?.color ? `#${leg.route.color}` : COLOR_METRO;
+	if (kind === 'bus') return leg.route?.color ? `#${leg.route.color}` : COLOR_BUS;
+	if (kind === 'cab' || kind === 'auto') return COLOR_ROAD;
+	return COLOR_WALK;
+}
+
+// Card leg list: one entry per OTP leg, in order.
+function legsFromItinerary(it: OtpItinerary, candidateKind: CandidateKind): Leg[] {
+	return it.legs.map((l) => {
+		const kind = legKindFor(l.mode, candidateKind);
+		const leg: Leg = { kind, mins: legMins(l.duration) };
+		if ((kind === 'bus' || kind === 'metro') && l.route?.shortName) {
+			leg.note = l.route.shortName;
+		}
+		return leg;
 	});
+}
 
-	all.push({
-		id: 'auto_direct',
-		kind: 'auto',
-		label: 'AUTO',
-		etaMin: Math.max(8, Math.round(dist * 3.5)),
-		costINR: Math.round(dist * 18 + 30),
-		legs: [{ kind: 'auto' }],
-		glow: 'amber',
-		feasible: dist > 0 && dist <= 12
-	});
+// Map geometry: one drawable stretch per OTP leg.
+export function itineraryToSegments(
+	it: OtpItinerary,
+	candidateKind: CandidateKind = 'cab'
+): RouteSegment[] {
+	return it.legs
+		.filter((l) => l.coords.length >= 2)
+		.map((l) => {
+			const kind = legKindFor(l.mode, candidateKind);
+			return { coords: l.coords, kind, color: colorFor(l, kind) };
+		});
+}
 
-	const metroOk =
-		!!metro.originStation && !!metro.destinationStation && (metro.totalMetroMin ?? 0) > 0;
+function transitStationNames(it: OtpItinerary): { origin?: string; destination?: string } {
+	const transit = it.legs.filter((l) => l.transitLeg);
+	if (transit.length === 0) return {};
+	return {
+		origin: transit[0].from.name,
+		destination: transit[transit.length - 1].to.name
+	};
+}
 
-	const oWalk = metro.originWalkMeters ?? 0;
-	const dWalk = metro.destinationWalkMeters ?? 0;
+type ScoredCandidate = RouteCandidate & { feasible: boolean };
 
-	if (metroOk) {
-		const metroMin = metro.totalMetroMin ?? 0;
-		const oFar = oWalk > MAX_WALK_M;
-		const dFar = dWalk > MAX_WALK_M;
+/**
+ * Build the ranked route options from OTP itineraries. Costs are estimated
+ * locally (the OTP instance doesn't expose fare data); everything else —
+ * geometry, durations, stops, routing — comes from OTP.
+ */
+export function buildOtpCandidates(answers: Answers, bundle: PlanBundle): RouteCandidate[] {
+	const all: ScoredCandidate[] = [];
 
-		// Pure walk both ends
+	// Metro (with walking access on either end, plus any in-network transfer).
+	const metroIt = firstWithMode(bundle.metro, 'SUBWAY');
+	if (metroIt) {
+		const km = kmOfMode(metroIt, ['SUBWAY', 'RAIL', 'TRAM']);
 		all.push({
-			id: 'metro_walk',
+			id: 'metro',
 			kind: 'metro',
 			label: 'METRO',
-			etaMin: walkMin(oWalk) + metroMin + walkMin(dWalk),
-			costINR: estimateMetroFare(dist),
-			legs: [
-				{ kind: 'walk', mins: walkMin(oWalk) },
-				{ kind: 'metro', mins: metroMin },
-				{ kind: 'walk', mins: walkMin(dWalk) }
-			],
+			etaMin: legMins(metroIt.duration),
+			costINR: estimateMetroFare(km),
+			legs: legsFromItinerary(metroIt, 'metro'),
 			glow: 'blue',
-			feasible: !oFar && !dFar
-		});
-
-		// Mixed: auto on whichever leg(s) are too far to walk. We keep this
-		// available even when the feeder auto is long — better to surface
-		// metro+auto than to drop metro entirely and confuse the user when
-		// the map is still showing the metro polyline.
-		const oLong = oWalk > 2500;
-		const dLong = dWalk > 2500;
-		const oLeg: Leg = oFar
-			? { kind: 'auto', mins: oLong ? LONG_AUTO_MIN : SHORT_AUTO_MIN }
-			: { kind: 'walk', mins: walkMin(oWalk) };
-		const dLeg: Leg = dFar
-			? { kind: 'auto', mins: dLong ? LONG_AUTO_MIN : SHORT_AUTO_MIN }
-			: { kind: 'walk', mins: walkMin(dWalk) };
-		const oCost = oFar ? (oLong ? LONG_AUTO_COST : SHORT_AUTO_COST) : 0;
-		const dCost = dFar ? (dLong ? LONG_AUTO_COST : SHORT_AUTO_COST) : 0;
-		const mixedLabel = oFar && dFar ? 'AUTO + METRO + AUTO' : 'METRO + AUTO';
-
-		all.push({
-			id: 'metro_mixed',
-			kind: 'metro',
-			label: mixedLabel,
-			etaMin: (oLeg.mins ?? 0) + metroMin + (dLeg.mins ?? 0),
-			costINR: estimateMetroFare(dist) + oCost + dCost,
-			legs: [oLeg, { kind: 'metro', mins: metroMin }, dLeg],
-			glow: 'blue',
-			feasible: oFar || dFar
+			segments: itineraryToSegments(metroIt, 'metro'),
+			itinerary: metroIt,
+			feasible: true
 		});
 	}
 
-	const busOk =
-		!!originBus && !!destBus && originBus.walkMeters <= 800 && destBus.walkMeters <= 800;
-
-	if (originBus && destBus) {
-		const headway = Math.max(originBus.headwayMin, destBus.headwayMin);
-		const busTime = Math.round(dist * 4) + BUS_WAIT_MIN;
-
+	// Bus (with walking access; OTP resolves any transfers).
+	const busIt = firstWithMode(bundle.bus, 'BUS');
+	if (busIt) {
+		const km = kmOfMode(busIt, ['BUS']);
 		all.push({
-			id: 'bus_direct',
+			id: 'bus',
 			kind: 'bus',
 			label: 'BUS',
-			etaMin: walkMin(originBus.walkMeters) + busTime + walkMin(destBus.walkMeters),
-			costINR: busFareFor(dist),
-			legs: [
-				{ kind: 'walk', mins: walkMin(originBus.walkMeters) },
-				{ kind: 'bus', note: `~${headway}m` },
-				{ kind: 'walk', mins: walkMin(destBus.walkMeters) }
-			],
+			etaMin: legMins(busIt.duration),
+			costINR: busFareFor(km),
+			legs: legsFromItinerary(busIt, 'bus'),
 			glow: 'green',
-			feasible: busOk && dist > 0
+			segments: itineraryToSegments(busIt, 'bus'),
+			itinerary: busIt,
+			feasible: true
 		});
 	}
 
-	all.push({
-		id: 'walk_only',
-		kind: 'walk',
-		label: 'WALK',
-		etaMin: Math.round((dist * 1000) / WALK_MPM),
-		costINR: 0,
-		legs: [{ kind: 'walk', mins: Math.round((dist * 1000) / WALK_MPM) }],
-		glow: 'green',
-		feasible: dist > 0 && dist <= 1.5
-	});
+	// Cab & auto share the same driving geometry from OTP's CAR plan.
+	const carIt = bundle.car[0] ?? null;
+	if (carIt && carIt.distanceKm > 0) {
+		const dist = carIt.distanceKm;
+		const carMin = carMinutes(carIt);
+		all.push({
+			id: 'cab',
+			kind: 'cab',
+			label: 'CAB',
+			etaMin: carMin,
+			costINR: cabFare(dist, carMin),
+			legs: legsFromItinerary(carIt, 'cab'),
+			glow: 'amber',
+			segments: itineraryToSegments(carIt, 'cab'),
+			itinerary: carIt,
+			feasible: true
+		});
+		all.push({
+			id: 'auto',
+			kind: 'auto',
+			label: 'AUTO',
+			etaMin: carMin,
+			costINR: autoFare(dist),
+			legs: legsFromItinerary(carIt, 'auto'),
+			glow: 'amber',
+			segments: itineraryToSegments(carIt, 'auto'),
+			itinerary: carIt,
+			feasible: dist <= MAX_AUTO_KM
+		});
+	}
+
+	// Walk-only (only sensible for short trips).
+	const walkIt = bundle.walk[0] ?? null;
+	if (walkIt && walkIt.distanceKm > 0) {
+		all.push({
+			id: 'walk',
+			kind: 'walk',
+			label: 'WALK',
+			etaMin: legMins(walkIt.duration),
+			costINR: 0,
+			legs: legsFromItinerary(walkIt, 'walk'),
+			glow: 'green',
+			segments: itineraryToSegments(walkIt, 'walk'),
+			itinerary: walkIt,
+			feasible: walkIt.distanceKm <= MAX_WALK_KM
+		});
+	}
 
 	const feasible = all.filter((c) => c.feasible);
 	const scored = feasible
@@ -182,7 +251,24 @@ export function buildCandidates(
 	return scored.slice(0, 3).map(({ c }) => stripFeasible(c));
 }
 
-function stripFeasible(c: RouteCandidate & { feasible: boolean }): RouteCandidate {
+/** Representative trip distance (km) for emissions/HUD, mode-independent. */
+export function tripDistanceKm(bundle: PlanBundle): number {
+	const primary =
+		firstWithMode(bundle.metro, 'SUBWAY') ??
+		firstWithMode(bundle.bus, 'BUS') ??
+		bundle.car[0] ??
+		bundle.walk[0] ??
+		null;
+	return primary ? primary.distanceKm : 0;
+}
+
+/** Origin/destination transit station names, taken from the metro itinerary. */
+export function stationNames(bundle: PlanBundle): { origin?: string; destination?: string } {
+	const metroIt = firstWithMode(bundle.metro, 'SUBWAY');
+	return metroIt ? transitStationNames(metroIt) : {};
+}
+
+function stripFeasible(c: ScoredCandidate): RouteCandidate {
 	return {
 		id: c.id,
 		kind: c.kind,
@@ -190,7 +276,9 @@ function stripFeasible(c: RouteCandidate & { feasible: boolean }): RouteCandidat
 		etaMin: c.etaMin,
 		costINR: c.costINR,
 		legs: c.legs,
-		glow: c.glow
+		glow: c.glow,
+		segments: c.segments,
+		itinerary: c.itinerary
 	};
 }
 

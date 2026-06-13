@@ -4,7 +4,7 @@ import type { Decider, Frequency, FunQuestion, Lifestyle, Mode } from './types';
 // walk/cycle are rare answers for "most regular trip" and were dropped.
 export const MODE_OPTIONS: { value: Mode; label: string; sub: string }[] = [
 	{ value: 'auto', label: 'AUTO', sub: 'three-wheeler' },
-	{ value: 'car', label: 'OWN CAR', sub: 'i drive myself' },
+	{ value: 'car', label: 'CAR', sub: 'car or cab' },
 	{ value: 'two_wheeler', label: 'TWO WHEELER', sub: 'bike / scooter' },
 	{ value: 'bus', label: 'BUS', sub: 'bmtc' },
 	{ value: 'metro', label: 'METRO', sub: 'namma metro' }

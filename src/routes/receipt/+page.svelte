@@ -103,7 +103,9 @@
 		{@const a = receipt.answers}
 		{@const originLabel = receipt.geo?.originLabel ?? r.trip.originStation ?? 'Origin'}
 		{@const destLabel = receipt.geo?.destinationLabel ?? r.trip.destinationStation ?? 'Destination'}
-		{@const segs = receipt.geo?.segments ?? [{ mode: r.trip.mode, lengthM: r.trip.distanceKm * 1000 }]}
+		{@const segs = receipt.geo?.segments ?? [
+			{ mode: r.trip.mode, lengthM: r.trip.distanceKm * 1000 }
+		]}
 		{@const route = routeStripSegments(segs)}
 		{@const stack = scaleStack(r.annualCommuteKg, r.annualAllInKg)}
 		{@const dist = distributionBell(r.multiplier)}
@@ -136,7 +138,9 @@
 				<p class="end-label right">[{destLabel}]</p>
 				{#if segs.length > 1}
 					<p class="tiny">
-						{#each segs as s, i (i)}{#if i > 0} · {/if}{Math.round(s.lengthM / 100) / 10} km
+						{#each segs as s, i (i)}{#if i > 0}
+								·
+							{/if}{Math.round(s.lengthM / 100) / 10} km
 							{s.mode === 'active' ? 'walk' : s.mode}{/each}
 					</p>
 				{/if}
@@ -251,7 +255,7 @@
 	.receipt {
 		width: 100%;
 		max-width: 420px;
-		background: #f4f1eb;
+		background: #ebd884;
 		color: #14110d;
 		padding: 36px 30px 32px;
 		position: relative;
@@ -269,7 +273,7 @@
 		left: 0;
 		right: 0;
 		height: 12px;
-		background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' preserveAspectRatio='none'><polygon points='0,12 6,0 12,12' fill='%23f4f1eb'/></svg>");
+		background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' preserveAspectRatio='none'><polygon points='0,12 6,0 12,12' fill='%23ebd884'/></svg>");
 		background-size: 12px 12px;
 		background-repeat: repeat-x;
 	}

@@ -3,15 +3,15 @@
 
 	import maplibre from 'maplibre-gl';
 	import 'maplibre-gl/dist/maplibre-gl.css';
-	import polyline from '@mapbox/polyline';
 
 	import { renderAllStationsAndLines } from '$lib/utils/mapHelpers';
+	import type { RouteSegment } from '$lib/exhibit/routeCandidates';
 
 	export let originPick: [number, number] | null = null;
 	export let destinationPick: [number, number] | null = null;
-	export let walkingRouteToStation: string | undefined = undefined;
-	export let walkingRouteFromStation: string | undefined = undefined;
-	export let metroSegments: GeoJSON.FeatureCollection | null = null;
+	// Ordered, per-leg drawable stretches of the selected route (already in
+	// [lng, lat]). Animated one after another in sequence.
+	export let segments: RouteSegment[] | null = null;
 
 	const dispatch = createEventDispatcher<{ pick: { lng: number; lat: number } }>();
 
@@ -110,27 +110,18 @@
 		]
 	};
 
-	const WALK_COLOR = '#666666';
-	const METRO_COLOR = '#000000';
-	const WALK_WIDTH = 3;
-	const METRO_WIDTH = 3.5;
-	const WALK_DURATION_MS = 500;
-	const METRO_DURATION_MS = 1200;
-
-	// @mapbox/polyline.decode returns [lat, lng] in degrees (precision 5 default).
-	// MapLibre wants [lng, lat]. The previous `/ 10` was a leftover and was plotting
-	// the walks at ~(1.3°, 7.7°) — off the coast of Africa, invisible on the BLR map.
-	const decodeWalk = (encoded: string): [number, number][] =>
-		polyline
-			.decode(encoded)
-			.map((point: [number, number]) => [point[1], point[0]] as [number, number]);
-
-	const flattenMetroCoords = (fc: GeoJSON.FeatureCollection | null): [number, number][] => {
-		if (!fc) return [];
-		return fc.features.flatMap((f) =>
-			f.geometry.type === 'LineString' ? (f.geometry.coordinates as [number, number][]) : []
-		);
+	// Per-leg-kind rendering. Walk legs are thinner/greyer and animate quickly;
+	// transit and road legs are bolder and reveal more slowly.
+	const widthForKind = (kind: RouteSegment['kind']): number => (kind === 'walk' ? 3 : 3.5);
+	const durationForKind = (kind: RouteSegment['kind']): number => {
+		if (kind === 'walk') return 500;
+		if (kind === 'cab' || kind === 'auto') return 1000;
+		return 1200; // metro / bus
 	};
+
+	// Layer/source ids created for the current journey, so we can tear them down
+	// before drawing the next one (segment count varies per route).
+	let journeyLayerIds: string[] = [];
 
 	const ensureLineLayer = (
 		layerId: string,
@@ -248,12 +239,12 @@
 
 	const clearJourneyLayers = () => {
 		if (!map) return;
-		['route-to-station-layer', 'route-from-station-layer', 'metro-highlight'].forEach((id) => {
-			if (map?.getLayer(id)) map.removeLayer(id);
-		});
-		['route-to-station', 'route-from-station', 'metro-highlight-source'].forEach((id) => {
-			if (map?.getSource(id)) map.removeSource(id);
-		});
+		for (const id of journeyLayerIds) {
+			const layerId = `${id}-layer`;
+			if (map.getLayer(layerId)) map.removeLayer(layerId);
+			if (map.getSource(id)) map.removeSource(id);
+		}
+		journeyLayerIds = [];
 	};
 
 	const animateJourney = async () => {
@@ -261,24 +252,23 @@
 		animationToken++;
 		const token = animationToken;
 
-		const walk1 = walkingRouteToStation ? decodeWalk(walkingRouteToStation) : [];
-		const walk2 = walkingRouteFromStation ? decodeWalk(walkingRouteFromStation) : [];
-		const metro = flattenMetroCoords(metroSegments);
+		clearJourneyLayers();
+		const legs = (segments ?? []).filter((s) => s.coords.length >= 2);
+		if (legs.length === 0) return;
 
-		// Create layers up-front in z-order: walk1 (bottom), metro, walk2 (top), then pick markers above all.
-		ensureLineLayer('route-to-station-layer', 'route-to-station', WALK_COLOR, WALK_WIDTH);
-		ensureLineLayer('metro-highlight', 'metro-highlight-source', METRO_COLOR, METRO_WIDTH);
-		ensureLineLayer('route-from-station-layer', 'route-from-station', WALK_COLOR, WALK_WIDTH);
-		setLineCoords('route-to-station', []);
-		setLineCoords('metro-highlight-source', []);
-		setLineCoords('route-from-station', []);
+		// Create every layer up-front so z-order is stable, then reveal in sequence.
+		legs.forEach((seg, i) => {
+			const sourceId = `journey-seg-${i}`;
+			ensureLineLayer(`${sourceId}-layer`, sourceId, seg.color, widthForKind(seg.kind));
+			setLineCoords(sourceId, []);
+			journeyLayerIds.push(sourceId);
+		});
 		ensurePickMarkersOnTop();
 
-		await animateCoords(walk1, 'route-to-station', WALK_DURATION_MS, token);
-		if (token !== animationToken) return;
-		await animateCoords(metro, 'metro-highlight-source', METRO_DURATION_MS, token);
-		if (token !== animationToken) return;
-		await animateCoords(walk2, 'route-from-station', WALK_DURATION_MS, token);
+		for (let i = 0; i < legs.length; i++) {
+			if (token !== animationToken) return;
+			await animateCoords(legs[i].coords, `journey-seg-${i}`, durationForKind(legs[i].kind), token);
+		}
 	};
 
 	onMount(() => {
@@ -306,7 +296,7 @@
 			if (!map) return;
 			renderAllStationsAndLines(map);
 			updatePickMarkers();
-			if (walkingRouteToStation && walkingRouteFromStation && metroSegments) {
+			if (segments && segments.length) {
 				animateJourney();
 			}
 		});
@@ -323,21 +313,12 @@
 		updatePickMarkers();
 	}
 
-	// Triggers on any render-relevant change: walk legs for metro mode, or
-	// a metroSegments-only payload (bus/cab/auto/walk modes pass straight lines
-	// via metroSegments).
-	$: if (styleReady && metroSegments) {
-		void walkingRouteToStation;
-		void walkingRouteFromStation;
+	// Redraw whenever the selected route's geometry changes.
+	$: if (styleReady && segments) {
 		animateJourney();
 	}
 
-	$: if (styleReady && (!originPick || !destinationPick)) {
-		animationToken++;
-		clearJourneyLayers();
-	}
-
-	$: if (styleReady && originPick && destinationPick && !metroSegments) {
+	$: if (styleReady && (!originPick || !destinationPick || !segments)) {
 		animationToken++;
 		clearJourneyLayers();
 	}

@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { Leg, RouteCandidate } from './routeCandidates';
+	import type { LegKind, RouteCandidate } from './routeCandidates';
 
 	let {
 		candidate,
@@ -13,23 +13,21 @@
 		onSelect: () => void;
 	} = $props();
 
-	function legText(l: Leg): string {
-		const verb =
-			l.kind === 'walk'
-				? 'WALK'
-				: l.kind === 'metro'
-					? 'METRO'
-					: l.kind === 'bus'
-						? 'BUS'
-						: l.kind === 'auto'
-							? 'AUTO'
-							: 'CAB';
-		if (l.note) return `${verb} ${l.note}`;
-		if (l.mins != null) return `${verb} ${l.mins} MIN`;
-		return verb;
-	}
+	// Split-bar fill colour per leg kind, in step with the map overlay.
+	const KIND_COLOR: Record<LegKind, string> = {
+		walk: '#8b94a3',
+		metro: '#5aa9f5',
+		bus: '#52c785',
+		cab: '#f7a73a',
+		auto: '#f7a73a'
+	};
 
-	const showLegs = $derived(candidate.legs.length > 1);
+	// Proportional, ordered legs for the split bar — only when modes actually mix.
+	const legs = $derived.by(() => {
+		const ls = candidate.legs.filter((l) => (l.mins ?? 0) > 0);
+		if (ls.length < 2 || new Set(ls.map((l) => l.kind)).size < 2) return [];
+		return ls.map((l) => ({ mins: l.mins ?? 0, color: KIND_COLOR[l.kind] }));
+	});
 </script>
 
 <button
@@ -39,137 +37,206 @@
 	{disabled}
 	onclick={onSelect}
 >
-	<div class="row">
-		<span class="eta">{candidate.etaMin}<em>MIN</em></span>
-		<span class="cost">{candidate.costINR === 0 ? 'FREE' : `₹${candidate.costINR}`}</span>
-	</div>
+	<span class="shadow" aria-hidden="true"></span>
+	<span class="edge" aria-hidden="true"></span>
+	<span class="front">
+		<span class="head">
+			<span class="mode">
+				<span class="dot"></span>
+				<span class="label">{candidate.label}</span>
+			</span>
+			<span class="cost">{candidate.costINR === 0 ? 'FREE' : `₹${candidate.costINR}`}</span>
+		</span>
 
-	<span class="via">{candidate.label}</span>
+		<span class="eta">
+			<span class="num">{candidate.etaMin}</span>
+			<span class="unit">min</span>
+		</span>
 
-	{#if showLegs}
-		<div class="legs">
-			{#each candidate.legs as l, i (i)}
-				{#if i > 0}<span class="sep" aria-hidden="true">›</span>{/if}
-				<span class="leg">{legText(l)}</span>
-			{/each}
-		</div>
-	{/if}
+		{#if legs.length > 0}
+			<span class="route" aria-hidden="true">
+				{#each legs as l, i (i)}
+					<span class="fill" style="flex-grow:{l.mins}; background:{l.color}"></span>
+				{/each}
+			</span>
+		{/if}
+	</span>
 </button>
 
 <style>
+	/* Pushable three-layer button (shadow / edge / front), matching TactileButton:
+	   the front face floats above the edge and presses down on tap. */
 	.card {
-		display: flex;
-		flex-direction: column;
-		gap: 4px;
+		position: relative;
+		display: block;
 		width: 100%;
-		padding: 14px 16px 14px;
-		background: #161616;
-		border: 1px solid #050505;
-		border-radius: 8px;
-		font-family: 'IBM Plex Mono', ui-monospace, monospace;
-		color: #b0b0b0;
-		text-align: left;
+		border: none;
+		background: transparent;
+		padding: 0;
 		cursor: pointer;
-		box-shadow:
-			inset 0 1px 0 rgba(255, 255, 255, 0.04),
-			0 2px 0 #050505;
-		transition:
-			transform 80ms ease,
-			box-shadow 140ms ease,
-			color 140ms ease,
-			border-color 160ms ease;
-	}
-	.card:hover:not(:disabled) {
-		color: #d4d4d4;
-		border-color: #2a2a2a;
-	}
-	.card:active:not(:disabled) {
-		transform: translateY(1px);
-		box-shadow:
-			inset 0 2px 4px rgba(0, 0, 0, 0.5),
-			0 0 0 #050505;
-	}
-	.card:disabled {
-		opacity: 0.45;
-		cursor: not-allowed;
-	}
-	.card.selected {
-		color: #ededed;
-		border-color: var(--glow);
-		box-shadow:
-			inset 0 1px 0 rgba(255, 255, 255, 0.06),
-			0 0 0 1px var(--glow),
-			0 0 14px rgba(var(--glow-rgb), 0.35);
-	}
-
-	.glow-amber {
-		--glow: #f59e0b;
-		--glow-rgb: 245, 158, 11;
+		outline-offset: 4px;
+		user-select: none;
+		-webkit-user-select: none;
+		touch-action: manipulation;
+		transition: filter 250ms;
+		--radius: 14px;
+		--off-bg: #161618;
+		--accent: #f7a73a;
 	}
 	.glow-blue {
-		--glow: #4faaff;
-		--glow-rgb: 79, 170, 255;
+		--accent: #5aa9f5;
 	}
 	.glow-green {
-		--glow: #6ee787;
-		--glow-rgb: 110, 231, 135;
+		--accent: #52c785;
 	}
 	.glow-red {
-		--glow: #ff7058;
-		--glow-rgb: 255, 112, 88;
+		--accent: #ff7058;
 	}
 
-	.row {
+	.shadow {
+		position: absolute;
+		inset: 0;
+		border-radius: var(--radius);
+		background: hsl(0deg 0% 0% / 0.55);
+		filter: blur(1px);
+		will-change: transform;
+		transform: translateY(4px);
+		transition: transform 600ms cubic-bezier(0.3, 0.7, 0.4, 1);
+	}
+	.edge {
+		position: absolute;
+		inset: 0;
+		border-radius: var(--radius);
+		background: #050505;
+		box-shadow: inset 0 -1px 0 rgba(0, 0, 0, 0.6);
+	}
+
+	.front {
+		position: relative;
 		display: flex;
-		align-items: baseline;
+		flex-direction: column;
+		gap: 13px;
+		padding: 16px 18px;
+		border-radius: var(--radius);
+		background: var(--off-bg);
+		text-align: left;
+		will-change: transform, background, box-shadow;
+		transform: translateY(-7px);
+		transition:
+			transform 600ms cubic-bezier(0.3, 0.7, 0.4, 1),
+			background 220ms ease,
+			box-shadow 220ms ease;
+		box-shadow:
+			inset 0 1px 0 rgba(255, 255, 255, 0.045),
+			inset 0 -2px 0 rgba(0, 0, 0, 0.5);
+	}
+	.card.selected .front {
+		background: #1b1b1e;
+		box-shadow:
+			inset 0 0 0 1.5px var(--accent),
+			inset 0 -2px 0 rgba(0, 0, 0, 0.5);
+	}
+
+	.card:hover:not(:disabled) .front {
+		transform: translateY(-9px);
+		transition: transform 250ms cubic-bezier(0.3, 0.7, 0.4, 1.5);
+	}
+	.card:hover:not(:disabled) .shadow {
+		transform: translateY(6px);
+		transition: transform 250ms cubic-bezier(0.3, 0.7, 0.4, 1.5);
+	}
+	.card:active:not(:disabled) .front {
+		transform: translateY(-2px);
+		transition: transform 34ms;
+	}
+	.card:active:not(:disabled) .shadow {
+		transform: translateY(1px);
+		transition: transform 34ms;
+	}
+	.card:disabled {
+		cursor: not-allowed;
+		filter: grayscale(0.4) brightness(0.55);
+	}
+	.card:focus:not(:focus-visible) {
+		outline: none;
+	}
+
+	.head {
+		display: flex;
+		align-items: center;
 		justify-content: space-between;
 		gap: 12px;
+		font-family: 'IBM Plex Mono', ui-monospace, monospace;
 	}
-	.eta {
-		font-size: 30px;
-		font-weight: 700;
-		line-height: 1;
-		color: #ededed;
-		letter-spacing: -0.01em;
+	.mode {
+		display: inline-flex;
+		align-items: center;
+		gap: 9px;
+		min-width: 0;
 	}
-	.eta em {
-		font-style: normal;
-		font-size: 11px;
+	.dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--accent);
+		flex-shrink: 0;
+	}
+	.label {
+		font-size: 12px;
 		font-weight: 600;
 		letter-spacing: 0.2em;
-		color: #6a6a6a;
-		margin-left: 5px;
+		color: #d3d3d7;
+		white-space: nowrap;
+		overflow: hidden;
+		text-overflow: ellipsis;
+	}
+	.card.selected .label {
+		color: #f3f3f5;
 	}
 	.cost {
-		font-size: 15px;
-		font-weight: 600;
-		color: var(--glow);
-		letter-spacing: 0.02em;
+		font-size: 16px;
+		font-weight: 700;
+		color: var(--accent);
+		letter-spacing: 0.01em;
+		flex-shrink: 0;
 	}
 
-	.via {
-		font-size: 11px;
-		letter-spacing: 0.22em;
-		color: #ededed;
-		font-weight: 600;
-	}
-
-	.legs {
+	.eta {
 		display: flex;
-		flex-wrap: wrap;
 		align-items: baseline;
-		gap: 6px;
-		margin-top: 4px;
-		font-size: 11px;
-		letter-spacing: 0.12em;
-		color: #8a8a8a;
-		font-weight: 500;
+		gap: 8px;
+		font-family: 'IBM Plex Mono', ui-monospace, monospace;
+		font-variant-numeric: tabular-nums;
+		line-height: 1;
 	}
-	.sep {
-		color: #4a4a4a;
+	.num {
+		font-size: 42px;
+		font-weight: 700;
+		color: #ffffff;
+		letter-spacing: -0.03em;
+	}
+	.unit {
 		font-size: 13px;
+		font-weight: 500;
+		letter-spacing: 0.04em;
+		color: #7a7a80;
 	}
-	.card.selected .via {
-		color: #9a9a9a;
+
+	/* Cohesive split bar: one rounded track, gapless coloured fills with hairline
+	   notches between segments. */
+	.route {
+		display: flex;
+		height: 7px;
+		border-radius: 4px;
+		overflow: hidden;
+		background: #0d0d0f;
+	}
+	.fill {
+		height: 100%;
+		flex-basis: 0;
+		min-width: 7px;
+	}
+	.fill:not(:last-child) {
+		box-shadow: inset -1.5px 0 0 #0d0d0f;
 	}
 </style>

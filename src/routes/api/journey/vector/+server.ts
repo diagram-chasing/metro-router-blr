@@ -1,19 +1,19 @@
 // GET /api/journey/vector?o=lng,lat&d=lng,lat
 // Returns a TouchDesigner-friendly VectorJourney JSON for the given origin/destination.
 //
+// Routing comes from the OpenTripPlanner instance (multimodal). We default to the
+// metro itinerary (falling back to bus, then car, then walk) and serialise it into
+// the flat points/segments VectorJourney shape.
+//
 // Notes:
-// - The project uses adapter-static; this endpoint runs only under `vite dev`
-//   (i.e. the dev server). For exhibition/installation use, run `pnpm dev` on
-//   the same machine that hosts TouchDesigner and point TD's Web Client DAT at
-//   http://localhost:5173/api/journey/vector
-// - event.fetch is threaded into JourneyCalculator/computeMetroSegments so that
-//   their relative-URL fetches (/voronoi.geojson, /points.geojson, /bmrcl.geojson)
-//   resolve against this request's origin.
+// - The project uses adapter-static; this endpoint runs only under `vite dev`.
+// - event.fetch is threaded into planAllModes so the OTP request is issued from
+//   the same context as the incoming request.
 
 import type { RequestHandler } from '@sveltejs/kit';
-import { JourneyCalculator } from '$lib/utils/JourneyCalculator';
-import { computeMetroSegments } from '$lib/utils/mapHelpers';
-import { buildVectorJourney } from '$lib/utils/vectorExport';
+
+import { planAllModes, firstWithMode } from '$lib/utils/otp';
+import { buildVectorJourneyFromItinerary } from '$lib/utils/vectorExport';
 
 export const prerender = false;
 
@@ -45,22 +45,23 @@ export const GET: RequestHandler = async ({ url, fetch }) => {
 		);
 	}
 
-	const calc = new JourneyCalculator(false, fetch);
-	await Promise.all([calc.loadVoronoiData(), calc.loadStationPoints()]);
+	const bundle = await planAllModes(origin, destination, fetch);
+	const itinerary =
+		firstWithMode(bundle.metro, 'SUBWAY') ??
+		firstWithMode(bundle.bus, 'BUS') ??
+		bundle.car[0] ??
+		bundle.walk[0] ??
+		null;
 
-	const [journey, segments] = await Promise.all([
-		calc.calculateJourney(origin, destination),
-		computeMetroSegments({ coordinates: origin }, { coordinates: destination }, fetch)
-	]);
-
-	if (!journey || !segments) {
+	if (!itinerary) {
 		return new Response(
 			JSON.stringify({ error: 'Could not compute journey for the given coordinates.' }),
 			{ status: 422, headers: { 'Content-Type': 'application/json', ...CORS } }
 		);
 	}
 
-	const vector = buildVectorJourney(origin, destination, journey, segments);
+	// OTP doesn't expose fares on this instance; leave price unset for the raw export.
+	const vector = buildVectorJourneyFromItinerary(origin, destination, itinerary, { priceINR: 0 });
 
 	return new Response(JSON.stringify(vector), {
 		status: 200,

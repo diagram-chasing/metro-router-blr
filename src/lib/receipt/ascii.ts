@@ -367,13 +367,13 @@ export function fingerprintBlurb(archetypeName: string, _funId?: FunQuestionId, 
 	switch (archetypeName) {
 		case 'The Lane-Splitter':
 			return 'Two-wheelers cover ground fast and emit roughly a third of a private car.';
-		case 'The Quiet Optimizer':
+		case 'The Optimizer':
 			return 'One of the lowest-emission commute patterns the city has.';
 		case 'The Auto-Pilot':
 			return 'Autos are usually a habit choice, not a cost or speed one.';
 		case 'The Meter Runner':
 			return 'Autos run around 110 g CO₂ per km. Half a private car, almost triple a bus.';
-		case 'The Comfort Cruiser':
+		case 'The Cruiser':
 			return 'Solo cabs and private cars have the highest per-km footprint of the common modes.';
 		case 'The Cab-and-Pray Commuter':
 			return 'Solo cabs average about 150 g CO₂ per km.';
