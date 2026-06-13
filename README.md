@@ -1,52 +1,63 @@
-# BMRCL Station App
+# Commute Emissions Exhibit
 
-An interactive metro map and journey planner that helps you explore the Namma Metro network and plan your journey with ease: https://metro.bengawalk.com
+An interactive exhibit for Bengaluru. A visitor answers a few questions about
+their regular trip; we route it, estimate its CO₂e and PM2.5, and print a
+receipt. Every visit also accumulates onto two live maps that TouchDesigner
+captures as visual inputs.
 
-Built with SvelteKit, MapLibre and Valhalla. Deployed on Cloudflare Pages.
+Built with SvelteKit, MapLibre, OpenTripPlanner (routing) and SQLite.
 
-## Development
+## Run
 
-- Install dependencies with `pnpm install` (or `npm install`)
-- Start local dev server with `pnpm run dev` (or `npm run dev`)
-- Build site deployment assets with `pnpm run build` (or `npm run build`)
+Runs as a single local server (the exhibit machine).
 
-### Code Structure
+```bash
+pnpm install   # builds the better-sqlite3 native binding
+pnpm dev
+```
 
-The codebase follows a SvelteKit project structure:
+Data accumulates in `data/exhibit.db` (gitignored). Reset it from `/admin`.
 
-- `src/` - Main source code
-  - `routes/` - SvelteKit route components and API endpoints
-  - `lib/` - Shared libraries and components
-    - `components/` - Reusable Svelte components
-    - `utils/` - Utility functions including journey calculation logic
-    - `config/` - Configuration files and constants
-    - `stores/` - Svelte stores for state management
-    - `types/` - TypeScript type definitions
-  - `app.html` - Main HTML template
-  - `app.css` - Global CSS styles
-- `static/` - Static assets served as-is
-  - `stations/` - Station floor plan SVGs and related assets
-  - `icons/` - UI and station details icons
-  - `*.geojson` - GeoJSON data files for the map and journey planning
+## Pages
 
-### Data
+| Path | What |
+|---|---|
+| `/exhibit` | The visitor flow: 6 questions → `PRINT RECEIPT` |
+| `/receipt?id=…` | The printed receipt (emissions, distribution, archetype) |
+| `/` | **Line map** — each chosen route as a grey line, shaded by emissions |
+| `/aqi` | **AQI raster** — accumulating emissions field over the city |
+| `/admin` | Live counts, purge lines / reset everything |
 
-The application uses several data sources:
+`/` and `/aqi` are the TouchDesigner inputs. Convention: black background,
+brightness rises with emissions (TD can invert via its LUT).
 
-- **Metro Network Data**
-  - `bmrcl.geojson` - Contains the Namma Metro network lines and station locations
-  - `points.geojson` - Exit gate points, platform points and other internal station points
-  - `voronoi.geojson` - Voronoi polygons for spatial indexing and nearest-station lookup
+## TouchDesigner layers (URL params)
 
-- **Station Floor Plans**
-  - SVG floor plans for each station stored in `static/stations/`
-  - Each station has multiple floors (Concourse, Platform, etc.)
+**Line map `/`** — `basemap` `lines` `recent` `stations` `hud` (0/1), `bg`, `poll` (ms).
+Set `basemap=0` for the clean grey-on-black input.
 
-- **Journey Planning**
-  - Uses Valhalla routing engine for walking directions
-  - Custom algorithm for calculating metro journeys including transfers
-  - Journey details include walking time, metro time, platform numbers, and exit information
+**AQI raster `/aqi`:**
+
+| Param | Default | Meaning |
+|---|---|---|
+| `metric` | `pm25` | `pm25` or `co2` |
+| `grid` | `raw` | `raw` (annual burden) or `diff` (excess vs a metro-clean choice) |
+| `base` | `0` | `1` overlays real observed PM2.5 (PM2.5 only) |
+| `decay` | `1.2` | kernel spread (km) |
+| `gamma` `invert` `smooth` `bg` `poll` | | display + refresh |
+
+e.g. `/aqi?metric=pm25&grid=diff` shows only the dirty legs glowing.
+
+## Layout
+
+- `src/routes/` — pages + API (`/api/receipt`, `/api/lines`, `/api/aqi`, `/api/stats`, `/api/admin`)
+- `src/lib/exhibit/` — questions, routing, emission factors (`emissions.ts`), grey buckets (`grey.ts`)
+- `src/lib/server/` — `db.ts` (SQLite), `computeReceipt.ts`, `aqiGrid.ts`, baked `aqiBase.json`
+- `src/lib/components/` — `Map`, `AccumulationMap`, `AqiRaster`
+- `static/*.geojson` — metro network geometry
+
+Emissions methodology and sources: [`docs/emissions-methodology.md`](docs/emissions-methodology.md).
 
 ## AI Declaration
 
-Components of this repository, including code and documentation, were written with assistance from Claude AI.
+Code and documentation in this repository were written with assistance from Claude.
