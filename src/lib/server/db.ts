@@ -251,6 +251,18 @@ export function allTripStats(): { distanceKm: number; co2PerTripKg: number }[] {
 		.all() as { distanceKm: number; co2PerTripKg: number }[];
 }
 
+/** Per-km CO2 (g) for every line submitted since local midnight — feeds the live
+ *  "where you sit today" histogram. Per-km is distance-independent, so a short dirty
+ *  trip and a long dirty trip land in the same place. */
+export function todayPerKmStats(): number[] {
+	const start = new Date();
+	start.setHours(0, 0, 0, 0);
+	const rows = getDb()
+		.prepare('SELECT co2_per_km_g AS g FROM lines WHERE created_at >= ?')
+		.all(start.getTime()) as { g: number }[];
+	return rows.map((r) => r.g);
+}
+
 // ── Purge / reset (operating the exhibit) ─────────────────────────────────────
 
 export function purgeLines(): void {

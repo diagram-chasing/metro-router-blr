@@ -38,7 +38,17 @@ const BASE_WEIGHT = 0.6;
 const FALLBACK_TRIPS_PER_YEAR = 288; // legacy rows with NULL trips_per_year
 
 export type Metric = 'co2' | 'pm25';
-export type GridType = 'raw' | 'diff';
+// raw — emissions as actually travelled.
+// diff — excess over metro along the same corridor (only dirty legs glow).
+// cf  — counterfactual "more public transport": walk and existing bus/metro legs
+//       keep their own factor; private legs (auto/cab) shift a *fraction* of
+//       their trips (CF_SHIFT) onto a bus+metro blend. A full switch is
+//       unrealistic — at most ~half of a person's trips move to transit.
+export type GridType = 'raw' | 'diff' | 'cf';
+
+// Share of private-leg trips assumed to move to public transport in the
+// counterfactual. 0.5 = half; the rest stay as driven.
+export const DEFAULT_CF_SHIFT = 0.5;
 
 export type Field = {
 	nLat: number;
@@ -59,6 +69,27 @@ function factorFor(metric: Metric, kind: LineRow['segments'][number]['legKind'])
 // the visitor's own corridor: excess = max(0, chosen − metro).
 function cleanFactor(metric: Metric): number {
 	return metric === 'co2' ? MODE_CO2E_G_PER_PKM.metro : MODE_PM25_MG_PER_PKM.metro;
+}
+
+// "Any public transport" — the bus/metro blend used to re-cost private legs in
+// the counterfactual grid. Walk and existing bus/metro legs keep their own.
+function publicTransitFactor(metric: Metric): number {
+	return metric === 'co2'
+		? (MODE_CO2E_G_PER_PKM.bus + MODE_CO2E_G_PER_PKM.metro) / 2
+		: (MODE_PM25_MG_PER_PKM.bus + MODE_PM25_MG_PER_PKM.metro) / 2;
+}
+
+function cfFactor(
+	metric: Metric,
+	kind: LineRow['segments'][number]['legKind'],
+	shift: number
+): number {
+	const own = factorFor(metric, kind);
+	const mode = legKindToMode(kind);
+	if (mode === 'active' || mode === 'bus' || mode === 'metro') return own; // already clean/transit
+	// Private leg: a fraction `shift` of trips move to public transport.
+	const pt = publicTransitFactor(metric);
+	return (1 - shift) * own + shift * pt;
 }
 
 function haversineKm(lng1: number, lat1: number, lng2: number, lat2: number): number {
@@ -107,13 +138,19 @@ function depositLine(
 	line: LineRow,
 	metric: Metric,
 	type: GridType,
-	decayKm: number
+	decayKm: number,
+	shift: number
 ): void {
 	const trips = line.tripsPerYear ?? FALLBACK_TRIPS_PER_YEAR;
 	const clean = cleanFactor(metric);
 	for (const seg of line.segments) {
 		const factor = factorFor(metric, seg.legKind);
-		const perKm = type === 'diff' ? Math.max(0, factor - clean) : factor;
+		const perKm =
+			type === 'cf'
+				? cfFactor(metric, seg.legKind, shift)
+				: type === 'diff'
+					? Math.max(0, factor - clean)
+					: factor;
 		if (perKm <= 0) continue;
 		const coords = seg.coords;
 		for (let k = 1; k < coords.length; k++) {
@@ -144,14 +181,15 @@ export type FieldOpts = {
 	type: GridType;
 	decayKm?: number;
 	base?: boolean;
+	shift?: number; // cf only: share of private-leg trips moved to transit
 };
 
 export function buildField(opts: FieldOpts): Field {
-	const { metric, type, decayKm = DEFAULT_DECAY_KM } = opts;
+	const { metric, type, decayKm = DEFAULT_DECAY_KM, shift = DEFAULT_CF_SHIFT } = opts;
 	const useBase = !!opts.base && metric === 'pm25';
 
 	const grid = new Float64Array(N_LAT * N_LON);
-	for (const line of listLines({})) depositLine(grid, line, metric, type, decayKm);
+	for (const line of listLines({})) depositLine(grid, line, metric, type, decayKm, shift);
 
 	let depMax = 0;
 	for (const v of grid) if (v > depMax) depMax = v;

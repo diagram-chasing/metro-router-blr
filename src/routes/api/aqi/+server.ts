@@ -11,12 +11,16 @@ export const prerender = false;
 
 export const GET: RequestHandler = async ({ url }) => {
 	const metric: Metric = url.searchParams.get('metric') === 'co2' ? 'co2' : 'pm25';
-	const type: GridType = url.searchParams.get('grid') === 'diff' ? 'diff' : 'raw';
+	const gridParam = url.searchParams.get('grid');
+	const type: GridType = gridParam === 'diff' || gridParam === 'cf' ? gridParam : 'raw';
 	const base = url.searchParams.get('base') === '1';
 	const decayParam = Number(url.searchParams.get('decay'));
 	const decayKm = isFinite(decayParam) && decayParam > 0 ? decayParam : undefined;
+	const shiftRaw = url.searchParams.get('shift');
+	const shiftParam = shiftRaw === null ? NaN : Number(shiftRaw);
+	const shift = isFinite(shiftParam) && shiftParam >= 0 && shiftParam <= 1 ? shiftParam : undefined;
 
-	const field = buildField({ metric, type, base, decayKm });
+	const field = buildField({ metric, type, base, decayKm, shift });
 
 	return new Response(JSON.stringify({ metric, grid: type, ...field }), {
 		headers: {

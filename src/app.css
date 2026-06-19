@@ -1,5 +1,14 @@
-/* Import IBM Plex Sans + Mono from Google Fonts */
+/* IBM Plex Sans + Mono drive the exhibit/kiosk UI (loaded from Google Fonts). */
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
+
+/* The printed receipt has its own voice: Space Mono is the body/ledger face,
+   Archivo (heavy) is the masthead wordmark only. Self-hosted via Fontsource so
+   the thermal raster never falls back to a system face mid-print. */
+@import '@fontsource/space-mono/400.css';
+@import '@fontsource/space-mono/400-italic.css';
+@import '@fontsource/space-mono/700.css';
+@import '@fontsource/space-mono/700-italic.css';
+@import '@fontsource-variable/archivo/standard.css';
 
 @import 'tailwindcss/base';
 @import 'tailwindcss/components';

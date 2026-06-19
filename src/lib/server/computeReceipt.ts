@@ -44,6 +44,83 @@ const LIFESTYLE_MULTIPLIER: Record<Lifestyle, number> = {
 // 21 is the "mature tree" figure and is labelled as such on the receipt.
 const KG_CO2_PER_TREE_YEAR = 21;
 
+// One 14.2 kg domestic LPG cylinder ≈ 42 kg CO2 when burnt (IPCC 2006 default).
+// Used for the beat-7 "cooking-gas cylinders" equivalence.
+const KG_CO2_PER_LPG_CYLINDER = 42;
+
+// All eight modes we rank against (beat 3, "the 8 ways to move in this city").
+const ALL_MODES: Mode[] = [
+	'cab_solo',
+	'car',
+	'auto',
+	'cab_shared',
+	'metro',
+	'two_wheeler',
+	'bus',
+	'active'
+];
+
+// Modeled corridor mode-share for a typical Bengaluru arterial (beat 4). These
+// are an illustrative split, NOT measured counts for the visitor's exact road —
+// the receipt flags the corridor numbers as a model. Shares must sum to 1.
+const CORRIDOR_SHARE: Record<string, number> = {
+	bus: 0.38,
+	two_wheeler: 0.26,
+	auto: 0.12,
+	car: 0.12,
+	cab: 0.07,
+	metro: 0.05
+};
+const CORRIDOR_KEY_LABEL: Record<string, string> = {
+	bus: 'bus',
+	two_wheeler: '2wh',
+	auto: 'auto',
+	car: 'car',
+	cab: 'cab',
+	metro: 'metro'
+};
+// The CO2e g/pkm rate shown on each corridor row maps each display key back to a
+// representative internal mode in MODE_CO2E_G_PER_PKM.
+const CORRIDOR_KEY_MODE: Record<string, Mode> = {
+	bus: 'bus',
+	two_wheeler: 'two_wheeler',
+	auto: 'auto',
+	car: 'car',
+	cab: 'cab_solo',
+	metro: 'metro'
+};
+
+// Real-estate beat (10): a parked car occupies ~13 m² of street. ratePerM2 is an
+// illustrative Bengaluru land value (~₹20k/sqft → ~₹2.15 lakh/m²), flagged in the
+// fine print as a convention, not an appraisal.
+const PARKING_AREA_M2 = 13;
+const PARKING_RATE_PER_M2 = 215000;
+
+// Map an internal mode to the corridor display key (cabs collapse; walk has no
+// corridor row).
+function corridorKeyFor(mode: Mode): string | null {
+	if (mode === 'cab_solo' || mode === 'cab_shared') return 'cab';
+	if (mode === 'active') return null;
+	return mode;
+}
+
+// Rank of `value` among `values`, 1 = highest (dirtiest). Ties share the rank of
+// the first value that beats them (strictly-greater count + 1).
+function rankFromDirtiest(value: number, values: number[]): number {
+	return values.filter((v) => v > value).length + 1;
+}
+
+// Small deterministic hash so the modeled corridor total is stable per receipt
+// but varies between routes (FNV-1a).
+function hashSeed(seed: string): number {
+	let h = 2166136261 >>> 0;
+	for (let i = 0; i < seed.length; i++) {
+		h ^= seed.charCodeAt(i);
+		h = Math.imul(h, 16777619) >>> 0;
+	}
+	return h >>> 0;
+}
+
 // Headline pitch by decider (recommendation strategy).
 const DECIDER_HEADLINE: Record<Decider, string> = {
 	speed: 'The metro version is only a few minutes more — and you skip the traffic.',
@@ -137,6 +214,42 @@ export type ComputedReceipt = {
 		subtitle: string;
 	};
 
+	// Beat 3 — where the visitor's mode sits among all 8 (1 = dirtiest)
+	modeRank: {
+		totalModes: number;
+		carbonRankFromDirtiest: number;
+		pm25RankFromDirtiest: number;
+		isClean: boolean; // bus / metro / walk-cycle — the "roast spoiled" branch
+		isTwoWheeler: boolean; // the carbon-clean / particulate-dirty trick branch
+	};
+
+	// Beat 4 — modeled corridor traffic (illustrative mode-share, not measured)
+	corridor: {
+		totalPerDay: number;
+		rows: { key: string; label: string; countPerDay: number; gPerKm: number; isYou: boolean }[];
+	};
+
+	// Beat 7 — equivalences for the YEAR-TOTAL commute (not the saving)
+	cylindersYear: number; // annualCommuteKg / 42
+	treesYear: number; // annualCommuteKg / 21
+
+	// Beat 8 — moving HALF the trips onto metro+auto (the spec swaps half, not all)
+	halfSwap: {
+		annualKg: number;
+		annualPm25G: number;
+		savedKg: number;
+		savedPm25G: number;
+		treesSaved: number;
+	};
+
+	// Beat 10 — the real estate a parked car sits on
+	parking: {
+		areaM2: number;
+		ratePerM2: number;
+		rupees: number;
+		areaLabel: string;
+	};
+
 	distanceBand: string; // e.g. "6-10 km"
 	personalNudge: string;
 	disclaimer: string;
@@ -163,7 +276,9 @@ function multiplierPhrase(m: number): string {
 }
 
 // Best realistic alternative for the same route: a short auto for the first/last
-// mile + metro for the trunk. Very short trips just walk. Returns both pollutants.
+// mile + public transport for the trunk. The trunk uses a bus-and-metro blend
+// (mirrors publicTransitFactor in aqiGrid.ts) rather than the metro alone, since
+// the realistic transit option is a mix of the two. Very short trips just walk.
 function bestCombo(distanceKm: number): {
 	co2Kg: number;
 	pm25Mg: number;
@@ -174,9 +289,11 @@ function bestCombo(distanceKm: number): {
 	}
 	const { firstMile, main, lastMile } = firstLastMileKm(distanceKm);
 	const accessKm = firstMile + lastMile;
-	const co2Kg = (accessKm * MODE_CO2E_G_PER_PKM.auto + main * MODE_CO2E_G_PER_PKM.metro) / 1000;
-	const pm25Mg = accessKm * MODE_PM25_MG_PER_PKM.auto + main * MODE_PM25_MG_PER_PKM.metro;
-	return { co2Kg, pm25Mg, comboLabel: 'metro + a short auto' };
+	const transitCo2 = (MODE_CO2E_G_PER_PKM.bus + MODE_CO2E_G_PER_PKM.metro) / 2;
+	const transitPm25 = (MODE_PM25_MG_PER_PKM.bus + MODE_PM25_MG_PER_PKM.metro) / 2;
+	const co2Kg = (accessKm * MODE_CO2E_G_PER_PKM.auto + main * transitCo2) / 1000;
+	const pm25Mg = accessKm * MODE_PM25_MG_PER_PKM.auto + main * transitPm25;
+	return { co2Kg, pm25Mg, comboLabel: 'public transport + a short auto' };
 }
 
 function archetypeFor(mode: Mode, decider: Decider): { name: string; subtitle: string } {
@@ -252,6 +369,42 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 		? FRICTION_OVERLAY[a.funQuestionId]
 		: 'One easy switch on the heaviest leg is the easiest place to start.';
 
+	// Beat 3 — mode ranking among all 8 ways to move
+	const carbonValues = ALL_MODES.map((m) => MODE_CO2E_G_PER_PKM[m]);
+	const pm25Values = ALL_MODES.map((m) => MODE_PM25_MG_PER_PKM[m]);
+	const carbonRankFromDirtiest = rankFromDirtiest(MODE_CO2E_G_PER_PKM[mode], carbonValues);
+	const pm25RankFromDirtiest = rankFromDirtiest(MODE_PM25_MG_PER_PKM[mode], pm25Values);
+
+	// Beat 4 — modeled corridor traffic
+	const seed = hashSeed(`${a.originStation ?? a.origin ?? ''}|${a.destinationStation ?? a.destination ?? ''}|${round(distanceKm, 1)}`);
+	const totalPerDay = 1150 + (seed % 351); // stable ~1,150–1,500 per route
+	const youKey = corridorKeyFor(mode);
+	const corridorRows = Object.keys(CORRIDOR_SHARE)
+		.map((key) => ({
+			key,
+			label: CORRIDOR_KEY_LABEL[key],
+			countPerDay: Math.round(totalPerDay * CORRIDOR_SHARE[key]),
+			gPerKm: Math.round(MODE_CO2E_G_PER_PKM[CORRIDOR_KEY_MODE[key]]),
+			isYou: key === youKey
+		}))
+		.sort((x, y) => y.gPerKm - x.gPerKm); // dirtiest first — bar length encodes g/km
+
+	// Beat 7 — year-total equivalences
+	const cylindersYear = annualCommuteKg / KG_CO2_PER_LPG_CYLINDER;
+	const treesYear = annualCommuteKg / KG_CO2_PER_TREE_YEAR;
+
+	// Beat 8 — move HALF the trips onto metro+auto
+	const halfAnnualKg = 0.5 * annualCommuteKg + 0.5 * annualSwitchedKg;
+	const halfAnnualPm25G = 0.5 * annualCommutePm25G + 0.5 * annualSwitchedPm25G;
+	const halfSavedKg = Math.max(0, annualCommuteKg - halfAnnualKg);
+	const halfSavedPm25G = Math.max(0, annualCommutePm25G - halfAnnualPm25G);
+
+	// Beat 10 — parking footprint as real estate
+	const parkingRupees = PARKING_AREA_M2 * PARKING_RATE_PER_M2;
+	const parkingAreaLabel = a.destinationStation ?? a.originStation ?? 'this part of the city';
+
+	const isClean = mode === 'bus' || mode === 'metro' || mode === 'active';
+
 	return {
 		trip: {
 			mode,
@@ -291,6 +444,32 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 		archetype: {
 			name: arch.name,
 			subtitle: subtitle || arch.subtitle
+		},
+		modeRank: {
+			totalModes: ALL_MODES.length,
+			carbonRankFromDirtiest,
+			pm25RankFromDirtiest,
+			isClean,
+			isTwoWheeler: mode === 'two_wheeler'
+		},
+		corridor: {
+			totalPerDay,
+			rows: corridorRows
+		},
+		cylindersYear: round(cylindersYear, 0),
+		treesYear: round(treesYear, 0),
+		halfSwap: {
+			annualKg: round(halfAnnualKg, 0),
+			annualPm25G: round(halfAnnualPm25G, 1),
+			savedKg: round(halfSavedKg, 0),
+			savedPm25G: round(halfSavedPm25G, 1),
+			treesSaved: round(halfSavedKg / KG_CO2_PER_TREE_YEAR, 0)
+		},
+		parking: {
+			areaM2: PARKING_AREA_M2,
+			ratePerM2: PARKING_RATE_PER_M2,
+			rupees: parkingRupees,
+			areaLabel: parkingAreaLabel
 		},
 		distanceBand: distanceBand(distanceKm),
 		personalNudge,
