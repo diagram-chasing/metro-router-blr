@@ -58,23 +58,72 @@ export function blockBars(
 	});
 }
 
-/** A framed hero stat: a labelled single-line box with a left and right value.
- *  Returns [top, content, bottom], each exactly `cols` wide. */
-export function statBox(label: string, left: string, right: string, cols = PRINT_COLS): string[] {
-	const head = `┌─ ${label.toUpperCase()} `;
-	const top = (head + '─'.repeat(Math.max(0, cols - head.length - 1)) + '┐').slice(0, cols);
-	const innerW = cols - 4; // '│ ' + inner + ' │'
-	const gap = Math.max(1, innerW - left.length - right.length);
-	const inner = (left + ' '.repeat(gap) + right).padEnd(innerW).slice(0, innerW);
-	const content = '│ ' + inner + ' │';
-	const bottom = '└' + '─'.repeat(cols - 2) + '┘';
-	return [top, content, bottom];
+/** An editorial section header, numbered like a bill line: `NN LABEL ──…── stat`.
+ *  One line, exactly `cols` wide. This is the divider, the header and the key stat
+ *  fused — so sections no longer need a separate full-width rule. */
+export function eyebrow(no: string, label: string, stat = '', cols = PRINT_COLS): string {
+	const left = `${no} ${label.toUpperCase()} `;
+	if (!stat) return (left + '─'.repeat(Math.max(0, cols - left.length))).slice(0, cols);
+	const fill = Math.max(1, cols - left.length - 1 - stat.length);
+	return (left + '─'.repeat(fill) + ' ' + stat).slice(0, cols);
 }
 
-/** A flow connector that descends from a stat box to the next: `│ text` then `v`. */
-export function connector(text: string, indent = 8): string[] {
-	const pad = ' '.repeat(indent);
-	return [`${pad}│  ${text}`, `${pad}v`];
+/** An instrument-panel row, both sides railed: `│ label … value │`, exactly `cols`. */
+export function panelRow(label: string, value = '', cols = PRINT_COLS): string {
+	const inner = cols - 4; // '│ ' + inner + ' │'
+	const gap = Math.max(1, inner - label.length - value.length);
+	const body = (label + ' '.repeat(gap) + value).padEnd(inner).slice(0, inner);
+	return '│ ' + body + ' │';
+}
+
+/** A double-rule "subtotal" line, optionally with embedded text: `═══ mid ═══`. */
+export function panelRule(mid = '', cols = PRINT_COLS): string {
+	if (!mid) return '═'.repeat(cols);
+	const t = ` ${mid} `;
+	const total = Math.max(0, cols - t.length);
+	const l = Math.floor(total / 2);
+	return ('═'.repeat(l) + t + '═'.repeat(total - l)).slice(0, cols);
+}
+
+/** A colon-aligned key:value row: `LABEL    : value` (the "report" look). */
+export function kv(label: string, value: string, w = 9, cols = PRINT_COLS): string {
+	return (label.toUpperCase().padEnd(w) + ' : ' + value).slice(0, cols);
+}
+
+/** A drawn LPG canister, 5 lines tall (top, 3 body rows, bottom). Pair the 3 body
+ *  rows with adjacent text in the caller. */
+export function canister(): string[] {
+	return ['┌──┐', '│██│', '│██│', '│██│', '└──┘'];
+}
+
+/** A titled, solid-filled footprint box (a plan-view "chunk of ground"): a centered
+ *  title in the top border, `fillRows` of `█`, a bottom border. Each line `cols` wide. */
+export function footprintBox(title: string, fillRows = 3, cols = 34): string[] {
+	const inner = cols - 2;
+	const t = ` ${title.toUpperCase()} `;
+	const pad = Math.max(0, inner - t.length);
+	const l = Math.floor(pad / 2);
+	const top = '┌' + '─'.repeat(l) + t + '─'.repeat(pad - l) + '┐';
+	const fill = '│ ' + '█'.repeat(Math.max(0, cols - 4)) + ' │';
+	const bottom = '└' + '─'.repeat(inner) + '┘';
+	return [top, ...Array.from({ length: fillRows }, () => fill), bottom];
+}
+
+/** A grouping rail (dispatch-form style): `┌ item / ├ item / └ item`. */
+export function treeList(items: string[]): string[] {
+	return items.map((it, i) => {
+		const lead = items.length === 1 ? '└' : i === 0 ? '┌' : i === items.length - 1 ? '└' : '├';
+		return `${lead} ${it}`;
+	});
+}
+
+/** Center text in a 24-char source field, so at width-2 magnification it spans the
+ *  full 48-col line as a single full-bleed band (used for the reverse hero number). */
+export function heroSrc(text: string, srcCols = PRINT_COLS / 2): string {
+	const t = text.length > srcCols ? text.slice(0, srcCols) : text;
+	const pad = srcCols - t.length;
+	const l = Math.floor(pad / 2);
+	return ' '.repeat(l) + t + ' '.repeat(pad - l);
 }
 
 /** A boxed-digit odometer: count -> 3 lines (border, digits, border). */
@@ -85,15 +134,6 @@ export function asciiOdometer(count: number, digits = 6): string[] {
 	const border = '+' + '---+'.repeat(s.length);
 	const cells = '|' + [...s].map((d) => ` ${d} |`).join('');
 	return [border, cells, border];
-}
-
-/** A spaced row of icons: `▐█▌` cylinders or `▲` trees, capped to fit `cols`. */
-export function pictoStack(count: number, kind: 'cylinder' | 'tree', cols = PRINT_COLS): string {
-	const glyph = kind === 'cylinder' ? '▐█▌' : '▲';
-	const per = glyph.length + 1; // glyph + joining space
-	const cap = Math.floor((cols + 1) / per);
-	const shown = Math.min(Math.max(count, 0), cap);
-	return Array.from({ length: shown }, () => glyph).join(' ');
 }
 
 /** Distribution as a full-width ASCII column chart with a YOU caret underneath. */

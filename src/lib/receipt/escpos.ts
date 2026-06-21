@@ -22,7 +22,7 @@ const CP437: Record<string, number> = {
 	// block shading + half blocks
 	'░': 0xb0, '▒': 0xb1, '▓': 0xb2, '█': 0xdb,
 	'▄': 0xdc, '▀': 0xdf, '▌': 0xdd, '▐': 0xde,
-	'■': 0xfe, '▲': 0x1e,
+	'■': 0xfe, '▲': 0x1e, '²': 0xfd, // 0xfd is the CP437 superscript-2 (for "m²")
 	// single-line box
 	'┌': 0xda, '┐': 0xbf, '└': 0xc0, '┘': 0xd9, '─': 0xc4, '│': 0xb3,
 	'├': 0xc3, '┤': 0xb4, '┬': 0xc2, '┴': 0xc1, '┼': 0xc5,
@@ -79,6 +79,11 @@ export class EscPos {
 	/** ESC E n — emphasis (bold). */
 	bold(on: boolean): this {
 		return this.push(ESC, 0x45, on ? 1 : 0);
+	}
+
+	/** GS B n — reverse (white-on-black). Used for the inverted annual-total hero. */
+	reverse(on: boolean): this {
+		return this.push(GS, 0x42, on ? 1 : 0);
 	}
 
 	/** ESC - n — underline (0 off, 1 thin, 2 thick). */

@@ -45,6 +45,7 @@ export type ReceiptView = {
 		totalPerDay: number;
 		rows: ComputedReceipt['corridor']['rows'];
 		copy: string;
+
 	};
 	oneTrip: { co2G: number; pm25Mg: number };
 	year: { co2Kg: number; pm25G: number; kgPerBlock: number; copy: string; isClean: boolean };
@@ -66,10 +67,12 @@ export type ReceiptView = {
 		stampSeed: string;
 		copy: string;
 		basis: string; // plain-language reason this profile was assigned
-		// Chladni "resonance" figure: n from per-km dirtiness, m from annual burden.
-		figure: { n: number; m: number };
+		// Chladni "resonance" figure: n from per-km dirtiness, m from annual burden,
+		// darkness (0..1) the overall ink — dirtier commutes print a darker seal.
+		figure: { n: number; m: number; darkness: number };
 	};
 	counter: { cityCount: number | null };
+	parking: { areaM2: number; valueLabel: string; copy: string };
 	finePrint: { psCopy: string; disclaimer: string; barcodeSeed: string };
 };
 
@@ -145,45 +148,32 @@ function modeRankCopy(c: ComputedReceipt, id: string): string {
 	const tot = c.modeRank.totalModes;
 	return pick(id, 'mode-dirty', [
 		`You travel by ${lc}. Per kilometre that's the ${ord} dirtiest of the ${tot} ways to move in this city.`,
-		`${modeLabel}. Per km, the ${ord} dirtiest of ${tot} ways this city gets around. Congratulations are not in order.`,
-		`You move by ${lc} — ${ord} dirtiest per km of ${tot} options. You had ${tot} doors; you took that one.`,
-		`${modeLabel}, per kilometre, ranks ${ord} dirtiest of ${tot}. The leaderboard is not flattering.`,
-		`Of the ${tot} ways to cross this city, ${lc} is the ${ord} dirtiest per km. Noted.`,
-		`Per km, ${lc} is the ${ord} dirtiest of ${tot} here. A choice was made — by you.`,
-		`You travel by ${lc}: ${ord} dirtiest per km among ${tot} modes. The city offers cleaner; you declined.`
+		`${modeLabel}. Per km, the ${ord} dirtiest of ${tot} ways this city gets around. Congratulations are not in order :/`,
+		`You move by ${lc}, which is ${ord} dirtiest per km of ${tot} options.`,
+		`${modeLabel}, per kilometre, ranks ${ord} dirtiest of ${tot}. Yer a cigarrete salesman, Harry.`,
+		`Of the ${tot} ways to cross this city, ${lc} is the ${ord} dirtiest per km. Come on man.`,
+		`Per km, ${lc} is the ${ord} dirtiest of ${tot} here. We're not judging but...eh.`,
+		`You travel by ${lc}: ${ord} dirtiest per km among ${tot} modes. Many cleaner options declined.`
 	]);
 }
 
-function corridorCopy(c: ComputedReceipt, id: string): string {
+// A tight 2-line factual deck. The daily total is shown in the section eyebrow, so
+// the deck never repeats it — it carries the same-road comparison instead.
+function corridorCopy(c: ComputedReceipt): string {
 	const rows = c.corridor.rows;
 	const bus = rows.find((r) => r.key === 'bus');
 	const you = rows.find((r) => r.isYou);
-	const total = comma(c.corridor.totalPerDay);
+	const cabG = rows.find((r) => r.key === 'cab')?.gPerKm ?? 0;
 	if (!you) {
-		return `About ${total} people run your corridor every day. You're not on the road for it — the cabs beside you pay ${
-			rows.find((r) => r.key === 'cab')?.gPerKm ?? 0
-		} g/km.`;
+		return `You skip the road entirely. The cabs on it still pay ${cabG} g/km.`;
 	}
 	if (c.modeRank.isClean) {
-		return `About ${total} people run your corridor every day. You're on the ${you.label} at ${you.gPerKm} g/km — the cheap seats, environmentally. The cabs beside you pay ${
-			rows.find((r) => r.key === 'cab')?.gPerKm ?? 0
-		}.`;
+		return `You ride the ${you.label} at ${you.gPerKm} g/km — the cheap seats, environmentally. Cabs pay ${cabG}.`;
 	}
-	const kicker = pick(id, 'corridor-kick', [
-		`You're on the premium plan and nobody upsold you.`,
-		`Same tarmac, premium fare — environmentally speaking.`,
-		`You bought the deluxe seat to the same destination.`,
-		`The bus got there too, cheaper for the air.`,
-		`You're paying first-class emissions for an economy trip.`,
-		`Same road, same city, fancier carbon footprint.`,
-		`Everyone else carpooled the atmosphere; you expensed it.`
-	]);
-	return `About ${total} people run your corridor every day. ${comma(
-		bus?.countPerDay ?? 0
-	)} are on the bus at ${bus?.gPerKm ?? 18} g/km, on the same road you pay ${
-		you.gPerKm
-	} for. ${kicker}`;
+	return `The bus does it at ${bus?.gPerKm ?? 18} g/km. You did ${you.gPerKm}  g/km.`;
 }
+
+
 
 function swapCopy(c: ComputedReceipt, a: Answers, id: string): string {
 	if (c.halfSwap.savedKg <= 0) {
@@ -216,6 +206,17 @@ function psCopy(c: ComputedReceipt, areaLabel: string): string {
 		return `PS: it isn't only the air. The cab you took still parks somewhere — about ${where}, roughly ${rupees} of ${areaLabel} sitting idle between fares.`;
 	}
 	return `PS: It isn't only the air. You parked nothing today. The car beside you sits on about ${where} — roughly ${rupees} of ${areaLabel}, used for free.`;
+}
+
+// A short, branch-aware deck for the parking real-estate graphic (numbers live in
+// the footprint box + panel, so the prose stays out of their way).
+function parkingCopy(c: ComputedReceipt): string {
+	const mode = c.trip.mode;
+	if (mode === 'car' || mode === 'two_wheeler')
+		return 'Your parked car squats on public street it never pays rent for.';
+	if (mode === 'cab_solo' || mode === 'cab_shared')
+		return 'The cab you rode still parks somewhere — idle, rent-free, between fares.';
+	return 'You parked nothing today. The car beside you sits free — on land you help pay for.';
 }
 
 const FINE_PRINT_CONVENTIONS =
@@ -278,6 +279,8 @@ export function buildReceiptView(
 	const mNorm = Math.min(1, Math.sqrt(c.annualCommuteKg / 800));
 	let figM = 2 + Math.round(mNorm * 6); // 2..8
 	if (figN === figM) figM = figM < 8 ? figM + 1 : figM - 1; // n==m → blank plate
+	// Overall seal darkness: mostly per-km dirtiness, with annual burden adding weight.
+	const dirtiness = Math.max(0, Math.min(1, 0.6 * nNorm + 0.4 * mNorm));
 
 	const DECIDER_WORD: Record<string, string> = {
 		habit: 'habit',
@@ -313,7 +316,12 @@ export function buildReceiptView(
 			histogram: hist ? { values: hist.values, mine: hist.mine } : null,
 			cleanerNote
 		},
-		corridor: { totalPerDay: c.corridor.totalPerDay, rows: c.corridor.rows, copy: corridorCopy(c, id) },
+		corridor: {
+			totalPerDay: c.corridor.totalPerDay,
+			rows: c.corridor.rows,
+			copy: corridorCopy(c),
+
+		},
 		oneTrip: { co2G: Math.round(c.perTripKg * 1000), pm25Mg: Math.round(c.perTripPm25Mg) },
 		year: {
 			co2Kg: c.annualCommuteKg,
@@ -322,14 +330,14 @@ export function buildReceiptView(
 			isClean: yearClean,
 			copy: yearClean
 				? pick(id, 'year-clean', [
-						'Barely a mark. The grid stays empty.',
-						'Hardly a smudge. The grid barely notices you.',
-						'Almost nothing to plot — the blocks stay hollow.',
-						"A rounding error, in the city's favour.",
-						'Too little to fill a single block. Good.',
-						"The tally can't find enough to draw. Keep it that way.",
-						'Negligible. We left the grid blank on purpose.'
-					])
+					'Barely a mark. The grid stays empty.',
+					'Hardly a smudge. The grid barely notices you.',
+					'Almost nothing to plot — the blocks stay hollow.',
+					"A rounding error, in the city's favour.",
+					'Too little to fill a single block. Good.',
+					"The tally can't find enough to draw. Keep it that way.",
+					'Negligible. We left the grid blank on purpose.'
+				])
 				: ''
 		},
 		units: {
@@ -338,14 +346,14 @@ export function buildReceiptView(
 			isClean: yearClean,
 			copy: yearClean
 				? pick(id, 'units-clean', [
-						"Not enough to need one. We keep a unit ready; you didn't fill it.",
-						'Too little to convert into anything. The conversion table shrugs.',
-						"No cylinders, no trees — there's nothing to translate.",
-						'Below the threshold for a single unit. Pleasantly anticlimactic.',
-						"The equivalents all come out zero. Nothing to make tangible.",
-						"Not enough to picture. We tried; the icons came up empty.",
-						"Doesn't add up to one of anything. That's the point."
-					])
+					"Not enough to need one. We keep a unit ready; you didn't fill it.",
+					'Too little to convert into anything. The conversion table shrugs.',
+					"No cylinders, no trees — there's nothing to translate.",
+					'Below the threshold for a single unit. Pleasantly anticlimactic.',
+					"The equivalents all come out zero. Nothing to make tangible.",
+					"Not enough to picture. We tried; the icons came up empty.",
+					"Doesn't add up to one of anything. That's the point."
+				])
 				: ''
 		},
 		swap: {
@@ -365,9 +373,14 @@ export function buildReceiptView(
 			stampSeed: `${a.mode}|${a.frequency}|${a.lifestyle}|${a.decider}|${a.funAnswer ?? ''}`,
 			copy: 'Generated from your four answers. No two are alike.',
 			basis: `Assigned from your mode (${c.trip.modeLabel.toLowerCase()}) and why you ride it — ${deciderWord}.`,
-			figure: { n: figN, m: figM }
+			figure: { n: figN, m: figM, darkness: dirtiness }
 		},
 		counter: { cityCount },
+		parking: {
+			areaM2: c.parking.areaM2,
+			valueLabel: rupeesLakh(c.parking.rupees),
+			copy: parkingCopy(c)
+		},
 		finePrint: {
 			psCopy: psCopy(c, areaLabel),
 			disclaimer: `${FINE_PRINT_CONVENTIONS} ${c.disclaimer}`,

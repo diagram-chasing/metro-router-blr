@@ -23,6 +23,7 @@
 			<div class="ln" style="text-align:{op.align ?? 'left'}; height:{24 * (op.h ?? 1)}px;">
 				<span
 					class:bold={op.bold}
+					class:rev={op.rev}
 					style="display:inline-block; transform:scale({op.w ?? 1},{op.h ?? 1}); transform-origin:{originX(op.align)} top;"
 					>{op.s || ' '}</span
 				>
@@ -40,6 +41,7 @@
 						n={view.archetype.figure.n}
 						m={view.archetype.figure.m}
 						seed={view.archetype.stampSeed}
+						darkness={view.archetype.figure.darkness}
 					/>
 				{/if}
 			</div>
@@ -71,6 +73,11 @@
 	}
 	.bold {
 		font-weight: 700;
+	}
+	/* reverse (white-on-black) — the inverted annual-total hero. */
+	.rev {
+		background: #000;
+		color: #fff;
 	}
 	.img {
 		display: flex;

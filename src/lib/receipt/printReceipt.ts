@@ -15,9 +15,14 @@ import { EscPos, DOTS_80MM } from './escpos';
 import {
 	PRINT_COLS,
 	blockBars,
-	statBox,
-	connector,
-	pictoStack,
+	eyebrow,
+	panelRow,
+	panelRule,
+	kv,
+	canister,
+	footprintBox,
+	treeList,
+	heroSrc,
 	asciiHistogram,
 	asciiOdometer,
 	wrapText,
@@ -30,7 +35,15 @@ const inr = (n: number) => n.toLocaleString('en-IN');
 type Align = 'left' | 'center' | 'right';
 
 export type PrintOp =
-	| { t: 'text'; s: string; align?: Align; bold?: boolean; w?: 1 | 2; h?: 1 | 2 }
+	| {
+		t: 'text';
+		s: string;
+		align?: Align;
+		bold?: boolean;
+		rev?: boolean;
+		w?: 1 | 2 | 3 | 4;
+		h?: 1 | 2 | 3 | 4;
+	}
 	| { t: 'rule' }
 	| { t: 'gap'; n?: number }
 	| { t: 'img'; id: 'map' | 'stamp' }
@@ -43,56 +56,65 @@ export function qrUrl(view: ReceiptView): string {
 		: `https://pollution.receipt/${view.finePrint.barcodeSeed}`;
 }
 
-/** Build the ordered print op-list. Pure: no DOM, no side effects. */
+/** Build the ordered print op-list. Pure: no DOM, no side effects.
+ *
+ * One visual language top-to-bottom: a heavy-ruled masthead, numbered editorial
+ * "eyebrow" section headers (the header, the divider and the key stat fused into one
+ * line — so sections need no separate rule), instrument-panel rows railed with `│`,
+ * and a single magnified, reverse-printed hero (the annual total). */
 export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	const ops: PrintOp[] = [];
 	const T = (s: string, o: Omit<Extract<PrintOp, { t: 'text' }>, 't' | 's'> = {}) =>
 		ops.push({ t: 'text', s, ...o });
-	const heading = (title: string, right = '') =>
-		T(right ? ledger(title, right) : title.toUpperCase(), { bold: true, h: 2 });
-	const body = (s: string) => wrapText(s).forEach((l) => T(l));
 	const gap = (n = 1) => ops.push({ t: 'gap', n });
-	const rule = () => ops.push({ t: 'rule' });
-	const statPair = (a: string, b: string) => T(ledger(a, b), { bold: true, h: 2 });
+	const deck = (s: string) => wrapText(s, PRINT_COLS - 3).forEach((l) => T('   ' + l));
+	const ind = (s: string) => T('   ' + s);
+	let sec = 0;
+	const eyebrowOp = (label: string, stat = '') =>
+		T(eyebrow(String(++sec).padStart(2, '0'), label, stat), { bold: true });
 
 	// masthead
+	T(ruleStr('═'));
 	T('THE POLLUTION', { align: 'center', bold: true, w: 2, h: 2 });
 	T("THAT WASN'T", { align: 'center', bold: true, w: 2, h: 2 });
-	T('- a commute emissions receipt -', { align: 'center' });
-	T(`${view.meta.dateLabel} / ${view.meta.timeLabel}`, { align: 'center' });
-	T(`Order no. ${view.meta.visitorNo}`, { align: 'center' });
+	T(ruleStr('═'));
+	T('A commute emissions receipt', { align: 'center' });
+	T(ledger(view.meta.dateLabel, view.meta.timeLabel));
+	T(`Order no. ${view.meta.visitorNo}`);
 	gap();
-	rule();
 
-	// where you go
-	heading('Your route');
-	T(view.item.origin.toUpperCase());
-	T('-> ' + view.item.dest.toUpperCase());
+	// 01 your route
+	eyebrowOp('Your Route');
+	ind(view.item.origin.toUpperCase());
+	ind('-> ' + view.item.dest.toUpperCase());
 	if (view.route.geo.some((g) => g.coords?.length >= 2)) {
 		ops.push({ t: 'img', id: 'map' });
-		T('.... cleaner leg     ==== dirtier leg');
+		ind('.... cleaner leg      ==== dirtier leg');
 	}
-	T(ledger('Distance', `${view.item.distanceKm.toFixed(1)} km each way`));
-	T(ledger('Frequency', `${inr(view.item.tripsPerYear)} trips / yr`));
-	T(ledger('Mode', `${view.item.modeLabel}, ${view.item.freqLabel}`));
-	rule();
+	gap();
+	ind(kv('Distance', `${view.item.distanceKm.toFixed(1)} km each way`));
+	ind(kv('Frequency', `${inr(view.item.tripsPerYear)} trips / yr`));
+	ind(kv('Mode', `${view.item.modeLabel}, ${view.item.freqLabel}`));
+	gap();
 
-	// your mode
-	heading('Your mode', view.modeRank.histogram ? 'commuters so far' : '');
-	body(view.modeRank.copy);
+	// 02 your mode
+	eyebrowOp('Compared to people here', view.modeRank.histogram ? '' : '');
+	deck(view.modeRank.copy);
 	if (view.modeRank.histogram) {
 		gap();
 		asciiHistogram(view.modeRank.histogram.values, view.modeRank.histogram.mine).forEach((l) => T(l));
 	}
-	if (view.modeRank.cleanerNote) body(view.modeRank.cleanerNote);
-	rule();
+	if (view.modeRank.cleanerNote) deck(view.modeRank.cleanerNote);
+	gap();
 
-	// your corridor
-	heading('Your corridor', `~${inr(view.corridor.totalPerDay)}/day`);
+	// 03 your corridor
+	eyebrowOp('Compared to route', `~${inr(view.corridor.totalPerDay)}/day`);
 	gap();
-	body(view.corridor.copy);
+	deck(view.corridor.copy);
 	gap();
-	T('g/km');
+	T('   '.padEnd(PRINT_COLS - 'g/km'.length) + 'g/km');
+	const cLabelW = Math.max(...view.corridor.rows.map((r) => r.label.length));
+	const noteIndent = ' '.repeat(2 + cLabelW + 1);
 	blockBars(
 		view.corridor.rows.map((r) => ({
 			label: r.label,
@@ -100,79 +122,93 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 			right: `${r.gPerKm}`,
 			mark: r.isYou
 		}))
-	).forEach((l) => T(l.text, { bold: l.mark }));
-	rule();
+	).forEach((l) => {
+		T(l.text, { bold: l.mark });
+	});
+	gap();
 
-	// the damage -> one year (two framed hero numbers, normal height)
-	heading('The damage');
-	gap();
-	statBox('per trip', `${inr(view.oneTrip.co2G)} g CO2`, `${inr(view.oneTrip.pm25Mg)} mg PM2.5`).forEach(
-		(l) => T(l, { bold: true })
-	);
-	gap();
-	connector(`x ${inr(view.item.tripsPerYear)} trips / year`).forEach((l) => T(l));
-	gap();
-	statBox('one year', `${inr(view.year.co2Kg)} kg CO2`, `${inr(view.year.pm25G)} g PM2.5`).forEach(
-		(l) => T(l, { bold: true })
-	);
-	if (view.year.copy) {
-		gap();
-		body(view.year.copy);
-	}
-	rule();
-
-	// that much, in things
-	heading('That much, in things', `${inr(view.year.co2Kg)} kg =`);
-	gap();
-	if (view.units.isClean) {
-		body(view.units.copy);
+	// 04 the damage -> annual total (the centerpiece)
+	eyebrowOp('The Damage', 'per trip');
+	T(panelRow('CO2', `${inr(view.oneTrip.co2G)} g`));
+	T(panelRow('PM2.5', `${inr(view.oneTrip.pm25Mg)} mg`));
+	T(panelRule(`x ${inr(view.item.tripsPerYear)} trips / year`));
+	if (view.year.isClean) {
+		T(panelRow('ANNUAL', `${inr(view.year.co2Kg)} kg CO2`));
+		if (view.year.copy) deck(view.year.copy);
 	} else {
-		T(`${view.units.cylinders}  gas cylinders`, { bold: true });
-		T(pictoStack(view.units.cylinders, 'cylinder'));
-		gap();
-		T(`${view.units.trees}  trees, full-time`, { bold: true });
-		T(pictoStack(view.units.trees, 'tree'));
+		const heroText = `${inr(view.year.co2Kg)} KG CO2`;
+		const w: 1 | 2 = heroText.length > PRINT_COLS / 2 ? 1 : 2;
+		T(' '.repeat(PRINT_COLS), { rev: true });
+		T(heroSrc(heroText, w === 2 ? PRINT_COLS / 2 : PRINT_COLS), { rev: true, w, h: 3 });
+		T(' '.repeat(PRINT_COLS), { rev: true });
+		T(panelRow(`and ${view.year.pm25G} g PM2.5 you breathe a year`));
 	}
-	rule();
-
-	// suggested swap
-	heading('Suggested swap');
-	body(view.swap.copy);
 	gap();
-	if (view.swap.show) {
-		blockBars([
-			{ label: 'now', value: view.swap.nowKg, right: `${inr(view.swap.nowKg)} kg` },
-			{ label: 'swap', value: view.swap.swapKg, right: `${inr(view.swap.swapKg)} kg` }
-		]).forEach((l) => T(l.text));
-		gap();
-		statPair(`-${inr(view.swap.savedKg)} kg/yr`, `~${view.swap.treesSaved} trees`);
-		body(`PM2.5 ${inr(view.swap.nowPm25G)} -> ${inr(view.swap.swapPm25G)} g/yr`);
-	}
-	rule();
 
+	// 05 in things
+	eyebrowOp('In Things', `${inr(view.year.co2Kg)} kg =`);
+	if (view.units.isClean) {
+		deck(view.units.copy);
+	} else {
+		const can = canister();
+		const div = '─'.repeat(PRINT_COLS - 9);
+		T('   ' + can[0]);
+		T('   ' + can[1] + '  ' + `${view.units.cylinders}  gas cylinders, burned`);
+		T('   ' + can[2] + '  ' + div);
+		T('   ' + can[3] + '  ' + `▲ ${view.units.trees} trees, a full year to undo it`);
+		T('   ' + can[4]);
+	}
+	gap();
+
+	// 06 suggested swap
+	eyebrowOp('What if...', view.swap.show ? `-${inr(view.swap.savedKg)} kg/yr` : '');
+	deck(view.swap.copy);
+	if (view.swap.show) {
+		gap();
+
+		T(panelRow('Today', `${inr(view.swap.nowKg)} kg`));
+		T(panelRow('Better', `${inr(view.swap.swapKg)} kg`));
+		T(panelRule(`saves ${inr(view.swap.savedKg)} kg/yr  ~${view.swap.treesSaved} trees`));
+		// ind(`PM2.5 ${inr(view.swap.nowPm25G)} -> ${inr(view.swap.swapPm25G)} g/yr`);
+	}
+	gap();
+
+	// the profile seal (Chladni resonance), bracketed like a stamp
+	// T(ruleStr('*'));
 	ops.push({ t: 'img', id: 'stamp' });
 	T(view.archetype.name.toUpperCase(), { align: 'center', bold: true });
 	if (view.archetype.subtitle) T(view.archetype.subtitle, { align: 'center' });
-	rule();
+	// T(ruleStr('*'));
+	gap();
 
-	// while you read
+	// by the way — parking as real-estate: a footprint diagram + an itemized
+	// "land you use free" panel, then the city's live car-registration odometer.
+	eyebrowOp('By The Way...');
+	deck(view.parking.copy);
+	gap();
+	footprintBox('one parked car').forEach((l, i) =>
+		T('   ' + l + (i === 2 ? `  ${view.parking.areaM2} m²` : ''))
+	);
+	ind(`= standing room for ~${Math.round(view.parking.areaM2)} people`);
+	gap();
+	T(panelRow('Market value of that land', `~${view.parking.valueLabel}`));
+	T(panelRow('Rent the driver pays', '₹0'));
+	T(panelRule('Paid for by everyone else!'));
 	if (view.counter.cityCount != null) {
-		heading('By the way,');
-		body(view.finePrint.psCopy);
-		// fine print
 		gap();
+		T('cars newly registered in BLR today', { align: 'center' });
 		asciiOdometer(view.counter.cityCount).forEach((l) => T(l, { align: 'center' }));
-		rule();
 	}
-
-	body(view.finePrint.disclaimer);
-	rule();
-
 	gap();
 
-	T(`A project by Diagram Chasing`, { align: 'center' });
-	T(`https://diagramchasing.fun`, { align: 'center' });
+	// fine print + footer
+	wrapText(view.finePrint.disclaimer).forEach((l) => T(l));
 	gap();
+	T(ruleStr('*'));
+	T('A project by Diagram Chasing', { align: 'center' });
+	T('https://diagramchasing.fun', { align: 'center' });
+	gap();
+	ops.push({ t: 'cut' });
 	return ops;
 }
 
@@ -226,11 +262,13 @@ export async function opsToEscPos(ops: PrintOp[], node: HTMLElement): Promise<Ui
 			case 'text': {
 				const big = (op.w ?? 1) > 1 || (op.h ?? 1) > 1;
 				p.align(op.align ?? 'left');
+				if (op.rev) p.reverse(true);
 				if (op.bold) p.bold(true);
 				if (big) p.size(op.w ?? 1, op.h ?? 1);
 				p.line(op.s);
 				if (big) p.size(1, 1);
 				if (op.bold) p.bold(false);
+				if (op.rev) p.reverse(false);
 				break;
 			}
 			case 'rule':
