@@ -13,6 +13,7 @@ import { computeReceipt, distanceBand } from '$lib/receipt/receipt';
 import { allTripStats, insertLine, stats, allPerKmStats } from '$lib/server/db';
 import { reverseGeocodeArea } from '$lib/server/reverseGeocode';
 import { getReceipt, putReceipt, type GeoSnapshot } from '$lib/server/receiptStore';
+import { swapSuggestion } from '$lib/utils/otp';
 
 export const prerender = false;
 
@@ -38,7 +39,7 @@ function makeId(): string {
 	return `${ts}-${rand}`;
 }
 
-export const POST: RequestHandler = async ({ request }) => {
+export const POST: RequestHandler = async ({ request, fetch }) => {
 	let body: unknown;
 	try {
 		body = await request.json();
@@ -59,7 +60,7 @@ export const POST: RequestHandler = async ({ request }) => {
 
 	const a = answers as Answers;
 	const computed = computeReceipt(a);
-	const geo = await buildGeoSnapshot(a);
+	const geo = await buildGeoSnapshot(a, fetch);
 	const id = makeId();
 	const createdAt = Date.now();
 
@@ -85,11 +86,16 @@ export const POST: RequestHandler = async ({ request }) => {
 	return json({ id }, 201);
 };
 
-async function buildGeoSnapshot(a: Answers): Promise<GeoSnapshot> {
+async function buildGeoSnapshot(a: Answers, fetcher: typeof fetch): Promise<GeoSnapshot> {
 	const segments = pickSegments(a);
 	const originLabel = await resolveLabel(a.originStation, a.origin);
 	const destinationLabel = await resolveLabel(a.destinationStation, a.destination);
-	return { originLabel, destinationLabel, segments };
+	// Best viable cleaner alternative for this trip — feeds the swap section.
+	const swap =
+		a.origin && a.destination
+			? ((await swapSuggestion(a.origin, a.destination, { fetcher })) ?? undefined)
+			: undefined;
+	return { originLabel, destinationLabel, segments, swap };
 }
 
 function pickSegments(a: Answers): GeoSnapshot['segments'] {

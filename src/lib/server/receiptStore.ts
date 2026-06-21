@@ -5,6 +5,7 @@ import type { Answers } from '$lib/exhibit/types';
 import type { ComputedReceipt } from '$lib/receipt/receipt';
 
 import type { Mode } from '$lib/exhibit/types';
+import type { SwapSuggestion } from '$lib/utils/otp';
 import { getSubmission, insertSubmission, listSubmissions } from './db';
 
 export type GeoSnapshot = {
@@ -13,6 +14,8 @@ export type GeoSnapshot = {
 	// Per-leg breakdown so the receipt strip can render mode splits
 	// (e.g. walk + metro + walk for a metro-mixed route).
 	segments?: { mode: Mode; lengthM: number }[];
+	// Best viable cleaner alternative for this trip, for the swap section.
+	swap?: SwapSuggestion;
 };
 
 export type StoredReceipt = {

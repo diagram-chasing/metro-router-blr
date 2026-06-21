@@ -152,6 +152,11 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	eyebrowOp('What if...', view.swap.show ? `-${inr(view.swap.savedKg)} kg/yr` : '');
 	deck(view.swap.copy);
 	if (view.swap.show) {
+		if (view.swap.ideas.length) {
+			gap();
+			T('A cleaner way to make this trip:');
+			view.swap.ideas.forEach((line) => T(line));
+		}
 		gap();
 
 		T(panelRow('Today', `${inr(view.swap.nowKg)} kg`));

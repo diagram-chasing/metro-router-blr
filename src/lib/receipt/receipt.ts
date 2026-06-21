@@ -148,6 +148,9 @@ export type ReceiptView = {
 		savedPm25G: number;
 		treesSaved: number;
 		copy: string;
+		// Concrete greener options within walking distance of the start, one
+		// formatted line each ([] when no nearby-transit data is available).
+		ideas: string[];
 	};
 	archetype: {
 		name: string;
@@ -431,6 +434,27 @@ function swapCopy(c: ComputedReceipt, a: Answers, id: string): string {
 	)} kg. You keep ${comma(c.halfSwap.savedKg)} kg out of the air — roughly ${comma(
 		c.halfSwap.treesSaved
 	)} trees' worth.`;
+}
+
+// Compact lines describing the single best cleaner alternative for this trip,
+// from the OTP swap suggestion. Kept under the 48-col Font A budget (plain ASCII).
+function fmtDist(m: number): string {
+	return m < 1000 ? `${m} m` : `${(m / 1000).toFixed(1)} km`;
+}
+
+function swapIdeas(geo: GeoSnapshot | undefined): string[] {
+	const s = geo?.swap;
+	if (!s) return [];
+	const head = s.mode === 'SUBWAY' ? `Metro ${s.routeName} Line` : `Bus ${s.routeName}`;
+	const freq = s.headwayMin ? `, ~every ${s.headwayMin} min` : '';
+	const board = s.boardName.length > 36 ? s.boardName.slice(0, 33) + '...' : s.boardName;
+	const leg = (l: { meters: number; auto: boolean }) =>
+		`${fmtDist(l.meters)} ${l.auto ? 'auto' : 'walk'}`;
+	return [
+		`  ${head}${freq}`,
+		`  Board: ${board}`,
+		`  ${leg(s.access)} in, ${leg(s.egress)} out`
+	];
 }
 
 function psCopy(c: ComputedReceipt, areaLabel: string): string {
@@ -819,7 +843,8 @@ export function buildReceiptView(
 			swapPm25G: c.halfSwap.annualPm25G,
 			savedPm25G: c.halfSwap.savedPm25G,
 			treesSaved: c.halfSwap.treesSaved,
-			copy: swapCopy(c, a, id)
+			copy: swapCopy(c, a, id),
+			ideas: swapIdeas(geo)
 		},
 		archetype: {
 			name: c.archetype.name.toUpperCase(),
