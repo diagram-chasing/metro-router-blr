@@ -38,7 +38,7 @@ export type ReceiptView = {
 	};
 	modeRank: {
 		copy: string;
-		histogram: { values: number[]; mine: number } | null; // today's per-km spread + you
+		histogram: { values: number[]; mine: number } | null; // per-km spread of all so far + you
 		cleanerNote: string | null;
 	};
 	corridor: {
@@ -210,16 +210,16 @@ function psCopy(c: ComputedReceipt, areaLabel: string): string {
 	const rupees = rupeesLakh(c.parking.rupees);
 	const where = `${c.parking.areaM2} m² of the city`;
 	if (mode === 'car' || mode === 'two_wheeler') {
-		return `PS: it isn't only the air. Your parked vehicle sits on about ${where}. At ${areaLabel} rates that's roughly ${rupees} of real estate — used for free, paid for by everyone who isn't parked on it.`;
+		return `PS: It isn't only the air. Your parked vehicle sits on about ${where}. At ${areaLabel} rates that's roughly ${rupees} of real estate. Prime real-estate for free! Paid for by everyone who isn't parked on it.`;
 	}
 	if (mode === 'cab_solo' || mode === 'cab_shared') {
 		return `PS: it isn't only the air. The cab you took still parks somewhere — about ${where}, roughly ${rupees} of ${areaLabel} sitting idle between fares.`;
 	}
-	return `PS: it isn't only the air. You parked nothing today. The car beside you sits on about ${where} — roughly ${rupees} of ${areaLabel}, used for free.`;
+	return `PS: It isn't only the air. You parked nothing today. The car beside you sits on about ${where} — roughly ${rupees} of ${areaLabel}, used for free.`;
 }
 
 const FINE_PRINT_CONVENTIONS =
-	'Fuel and power only — not the vehicle, not the metro build. Occupancy is a standard convention. The year is one trip times a year, flagged where it shows. The metro runs on the ordinary grid. Not flattered.';
+	'';
 
 export function buildReceiptView(
 	c: ComputedReceipt,
@@ -249,8 +249,8 @@ export function buildReceiptView(
 	});
 	const visitorNo = (id.split('-')[1] ?? id).padStart(4, '0').slice(-4).toUpperCase();
 
-	// "Cleaner than you" prefers today's live histogram (per-km), falling back to the
-	// same-band distribution if the histogram is too sparse to show.
+	// "Cleaner than you" prefers the per-km histogram of everyone so far, falling back
+	// to the same-band distribution if the histogram is too sparse to show.
 	let cleanerPct: number | null = null;
 	if (hist && hist.values.length) {
 		cleanerPct = Math.round((hist.values.filter((v) => v < hist.mine).length / hist.values.length) * 100);
@@ -259,7 +259,7 @@ export function buildReceiptView(
 	}
 	const cleanerNote =
 		cleanerPct != null && !c.modeRank.isClean
-			? `About ${Math.round(cleanerPct / 10)} in 10 of today's commuters travel cleaner than you.`
+			? `About ${Math.round(cleanerPct / 10)} in 10 commuters so far travel cleaner than you.`
 			: null;
 
 	const areaLabel = geo?.destinationLabel ?? geo?.originLabel ?? c.parking.areaLabel;

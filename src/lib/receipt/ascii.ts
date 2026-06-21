@@ -72,6 +72,16 @@ export function asciiSlab(
 	return rows;
 }
 
+/** A boxed-digit odometer: count -> 3 lines (border, digits, border). */
+export function asciiOdometer(count: number, digits = 6): string[] {
+	const s = String(Math.max(0, Math.floor(count)))
+		.padStart(digits, '0')
+		.slice(-digits);
+	const border = '+' + '---+'.repeat(s.length);
+	const cells = '|' + [...s].map((d) => ` ${d} |`).join('');
+	return [border, cells, border];
+}
+
 /** A row of ASCII icons: '8' cylinders, '^' trees, capped. */
 export function asciiPictoRow(count: number, kind: 'cylinder' | 'tree'): string {
 	const shown = Math.min(Math.max(count, 0), 24);
@@ -79,11 +89,11 @@ export function asciiPictoRow(count: number, kind: 'cylinder' | 'tree'): string 
 	return Array.from({ length: shown }, () => glyph).join(' ');
 }
 
-/** Distribution as a short ASCII column chart with a YOU caret underneath. */
-export function asciiHistogram(values: number[], mine: number): string[] {
-	const N = 12;
+/** Distribution as a full-width ASCII column chart with a YOU caret underneath. */
+export function asciiHistogram(values: number[], mine: number, cols = PRINT_COLS): string[] {
+	const N = Math.floor(cols / 2); // one bin per 2 columns → fills the full width
 	const MAXX = 180;
-	const H = 4;
+	const H = 5;
 	const clampI = (i: number) => Math.max(0, Math.min(N - 1, i));
 
 	const counts = Array(N).fill(0);
@@ -93,11 +103,12 @@ export function asciiHistogram(values: number[], mine: number): string[] {
 
 	const out: string[] = [];
 	for (let lvl = H; lvl >= 1; lvl--) {
-		out.push(hgt.map((h) => (h >= lvl ? ':' : ' ') + ' ').join('').replace(/\s+$/, ''));
+		out.push(hgt.map((h) => (h >= lvl ? '[]' : '  ')).join('').replace(/\s+$/, ''));
 	}
 	out.push('+' + '-'.repeat(N * 2 - 2) + '+');
 	const youI = clampI(Math.floor((mine / MAXX) * N));
-	out.push(' '.repeat(youI * 2) + '^ YOU = ' + mine + ' g/km');
-	out.push('cleaner' + ' '.repeat(Math.max(1, N * 2 - 14)) + 'dirtier');
+	out.push(' '.repeat(youI * 2) + '^');
+	out.push(`YOU = ${mine} g/km`);
+	out.push('cleaner' + ' '.repeat(cols - 14) + 'dirtier');
 	return out;
 }

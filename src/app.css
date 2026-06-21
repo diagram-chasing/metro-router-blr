@@ -1,29 +1,9 @@
-/* IBM Plex Sans + Mono drive the exhibit/kiosk UI (loaded from Google Fonts). */
+/* IBM Plex Sans + Mono drive the exhibit/kiosk UI (loaded from Google Fonts).
+   The printed receipt and its on-screen preview (ReceiptDoc.svelte) render in plain
+   monospace to mirror the thermal printer's built-in font, so no bundled receipt
+   face is needed. */
 @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
-
-/* The printed receipt has its own voice: Departure Mono — a single-weight pixel
-   face — is the masthead / headings / big-number display type; Space Mono is the
-   body/ledger face (the one place we still need real bold + italic). Both are
-   self-hosted so the thermal raster never falls back to a system face mid-print. */
-@import '@fontsource/space-mono/400.css';
-@import '@fontsource/space-mono/400-italic.css';
-@import '@fontsource/space-mono/700.css';
-@import '@fontsource/space-mono/700-italic.css';
 
 @import 'tailwindcss/base';
 @import 'tailwindcss/components';
 @import 'tailwindcss/utilities';
-
-/* Departure Mono v1.500 — SIL OFL (see lib/assets/fonts/DepartureMono-LICENSE.txt).
-   Must sit AFTER every @import: CSS requires @import to precede all other rules, so
-   a @font-face placed above them silently drops the Tailwind imports. `font-display:
-   block` so capture never races a fallback (cf. rasterize.ts). */
-@font-face {
-	font-family: 'Departure Mono';
-	src:
-		url('./lib/assets/fonts/DepartureMono-Regular.woff2') format('woff2'),
-		url('./lib/assets/fonts/DepartureMono-Regular.woff') format('woff');
-	font-weight: 400;
-	font-style: normal;
-	font-display: block;
-}

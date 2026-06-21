@@ -10,7 +10,7 @@ import type { RequestHandler } from '@sveltejs/kit';
 import type { Answers, Mode } from '$lib/exhibit/types';
 import { blendedCo2PerKm, greyBucket, legKindToMode } from '$lib/exhibit/grey';
 import { computeReceipt, distanceBand } from '$lib/server/computeReceipt';
-import { allTripStats, insertLine, stats, todayPerKmStats } from '$lib/server/db';
+import { allTripStats, insertLine, stats, allPerKmStats } from '$lib/server/db';
 import { reverseGeocodeArea } from '$lib/server/reverseGeocode';
 import { getReceipt, putReceipt, type GeoSnapshot } from '$lib/server/receiptStore';
 
@@ -173,16 +173,16 @@ export const GET: RequestHandler = async ({ url }) => {
 	// Live odometer for beat 9: how many trips have been registered so far.
 	const cityCount = stats().count;
 
-	// Live histogram (beat 2): per-km dirtiness of everyone who submitted today, and
+	// Histogram (beat 2): per-km dirtiness of everyone who has submitted so far, and
 	// where this visitor lands on it. Per-km so distance doesn't confound the spread.
-	const todayPerKm = todayPerKmStats();
+	const allPerKm = allPerKmStats();
 	const minePerKm =
 		rec.computed.trip.distanceKm > 0
 			? (rec.computed.perTripKg * 1000) / rec.computed.trip.distanceKm
 			: 0;
 	const histogram =
-		todayPerKm.length >= 5
-			? { values: todayPerKm, mine: Math.round(minePerKm * 10) / 10, n: todayPerKm.length }
+		allPerKm.length >= 5
+			? { values: allPerKm, mine: Math.round(minePerKm * 10) / 10, n: allPerKm.length }
 			: undefined;
 
 	return json({ ...rec, distribution, cityCount, histogram }, 200, {

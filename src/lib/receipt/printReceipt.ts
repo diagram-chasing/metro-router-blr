@@ -18,6 +18,7 @@ import {
 	asciiSlab,
 	asciiPictoRow,
 	asciiHistogram,
+	asciiOdometer,
 	wrapText,
 	ledger,
 	rule as ruleStr
@@ -63,7 +64,7 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	rule();
 
 	// where you go
-	heading('Where you go');
+	heading('Your route');
 	T(view.item.origin.toUpperCase());
 	T('-> ' + view.item.dest.toUpperCase());
 	if (view.route.geo.some((g) => g.coords?.length >= 2)) {
@@ -76,7 +77,7 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	rule();
 
 	// your mode
-	heading('Your mode', view.modeRank.histogram ? "today's commuters" : '');
+	heading('Your mode', view.modeRank.histogram ? 'commuters so far' : '');
 	body(view.modeRank.copy);
 	if (view.modeRank.histogram) {
 		gap();
@@ -140,25 +141,20 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	}
 	rule();
 
-	// emissions resonance
-	T('EMISSIONS RESONANCE', { align: 'center', bold: true, h: 2 });
 	ops.push({ t: 'img', id: 'stamp' });
-	T(`Figure ${view.archetype.figure.n}x${view.archetype.figure.m}`, { align: 'center' });
 	T(view.archetype.name.toUpperCase(), { align: 'center', bold: true });
 	if (view.archetype.subtitle) T(view.archetype.subtitle, { align: 'center' });
-	gap();
-	body(`Your commute drawn as a Chladni resonance. ${view.archetype.basis}`);
 	rule();
 
 	// while you read
 	if (view.counter.cityCount != null) {
-		heading('While you read');
-		T(ledger('Trips to date', inr(view.counter.cityCount)));
+		heading('While you read...');
+		T('Cars that newly registered in BLR today:', { align: 'center' });
+		asciiOdometer(view.counter.cityCount).forEach((l) => T(l, { align: 'center' }));
 		rule();
 	}
 
 	// fine print
-	heading('The fine print');
 	body(view.finePrint.psCopy);
 	gap();
 	body(view.finePrint.disclaimer);
@@ -270,8 +266,7 @@ export async function printReceipt(view: ReceiptView, node: HTMLElement): Promis
 	const bytes = await opsToEscPos(buildReceiptOps(view), node);
 	const res = await fetch('/api/print', {
 		method: 'POST',
-		headers: { 'content-type': 'application/octet-stream' },
-		body: bytes
+		body: new Blob([bytes.buffer as ArrayBuffer], { type: 'application/octet-stream' })
 	});
 	if (!res.ok) {
 		const msg = await res.text().catch(() => '');

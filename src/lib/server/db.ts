@@ -254,12 +254,12 @@ export function allTripStats(): { distanceKm: number; co2PerTripKg: number }[] {
 /** Per-km CO2 (g) for every line submitted since local midnight — feeds the live
  *  "where you sit today" histogram. Per-km is distance-independent, so a short dirty
  *  trip and a long dirty trip land in the same place. */
-export function todayPerKmStats(): number[] {
-	const start = new Date();
-	start.setHours(0, 0, 0, 0);
+// Per-km dirtiness of every trip logged so far (not just today), for the "your mode"
+// histogram. Per-km so distance doesn't confound the spread.
+export function allPerKmStats(): number[] {
 	const rows = getDb()
-		.prepare('SELECT co2_per_km_g AS g FROM lines WHERE created_at >= ?')
-		.all(start.getTime()) as { g: number }[];
+		.prepare('SELECT co2_per_km_g AS g FROM lines WHERE co2_per_km_g IS NOT NULL')
+		.all() as { g: number }[];
 	return rows.map((r) => r.g);
 }
 

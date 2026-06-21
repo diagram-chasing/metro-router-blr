@@ -53,22 +53,24 @@
 		return a && b ? { a, b } : null;
 	});
 
-	// Print weight for an emission intensity (g CO2/pkm). Thresholds track the
-	// emissions table: walk 0 / bus 18 / metro 40 / auto 74 / car 120 / cab 172.
-	// Intensity is encoded as dash DENSITY, not ink mass — every leg stays a thin
-	// hairline so even a dirty cross-city haul prints fast (no 6px solid bars).
-	function stroke(gPerKm: number): { width: number; dash: string } {
-		if (gPerKm < 5) return { width: 1.5, dash: '1 6' }; // walk — sparse dotted
-		if (gPerKm < 50) return { width: 2, dash: '6 5' }; // metro / bus — dashed
-		if (gPerKm < 100) return { width: 2, dash: '8 4' }; // auto — tighter dash
-		return { width: 2.5, dash: '10 3' }; // car / cab — dense dash (still broken)
+	// Intensity is encoded by PRINT STYLE, not colour (thresholds track the emissions
+	// table: walk 0 / bus 18 / metro 40 / auto 74 / car 120 / cab 172). A clean leg is
+	// a faint dotted hairline (....); a dirty leg is a DOUBLE line (====) — two thin
+	// parallel rules with a white gap, so it reads heavy without flooding the head.
+	function legStyle(gPerKm: number): { double: boolean; width: number; dash: string } {
+		if (gPerKm < 50) return { double: false, width: 1.8, dash: '1 5' }; // walk/metro/bus — dotted
+		return { double: true, width: gPerKm < 100 ? 8 : 10, dash: 'none' }; // auto/car/cab — double line
 	}
+
+	// White carve width for a double leg: leaves ~2px black rails with a clear gap.
+	const carveWidth = (w: number) => w - 4;
 </script>
 
 <svg viewBox="0 0 {width} {height}" {width} class="block w-full" role="img" aria-label="your route">
 	{#if path && ends}
+		<!-- outer black stroke for every leg -->
 		{#each legs as leg, i (i)}
-			{@const s = stroke(leg.gPerKm)}
+			{@const s = legStyle(leg.gPerKm)}
 			<path
 				d={path(features[i]) ?? ''}
 				fill="none"
@@ -78,6 +80,20 @@
 				stroke-linecap="round"
 				stroke-linejoin="round"
 			/>
+		{/each}
+		<!-- carve the centre of dirty legs with white, leaving a double line (====) -->
+		{#each legs as leg, i (i)}
+			{@const s = legStyle(leg.gPerKm)}
+			{#if s.double}
+				<path
+					d={path(features[i]) ?? ''}
+					fill="none"
+					stroke="#fff"
+					stroke-width={carveWidth(s.width)}
+					stroke-linecap="round"
+					stroke-linejoin="round"
+				/>
+			{/if}
 		{/each}
 		<!-- origin (hollow) -> destination (filled) -->
 		<circle cx={ends.a[0]} cy={ends.a[1]} r="4" fill="#fff" stroke="#000" stroke-width="2" />
