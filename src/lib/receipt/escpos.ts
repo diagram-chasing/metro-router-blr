@@ -14,12 +14,31 @@ const LF = 0x0a;
 
 export const DOTS_80MM = 576; // print width in dots for an 80mm head at 203 dpi
 
-/** Map a string to bytes; anything non-ASCII becomes '?' (the receipt is all ASCII). */
-function encodeAscii(s: string): number[] {
+// Unicode -> CP437 (PC437) byte, for the box-drawing / block glyphs the receipt draws.
+// CP437 is selected at init() via `ESC t 0`; only the glyphs we actually print are
+// mapped — anything else degrades to '?'. If the physical printer numbers PC437
+// differently, this map + the `ESC t` arg in init() are the two points to change.
+const CP437: Record<string, number> = {
+	// block shading + half blocks
+	'░': 0xb0, '▒': 0xb1, '▓': 0xb2, '█': 0xdb,
+	'▄': 0xdc, '▀': 0xdf, '▌': 0xdd, '▐': 0xde,
+	'■': 0xfe, '▲': 0x1e,
+	// single-line box
+	'┌': 0xda, '┐': 0xbf, '└': 0xc0, '┘': 0xd9, '─': 0xc4, '│': 0xb3,
+	'├': 0xc3, '┤': 0xb4, '┬': 0xc2, '┴': 0xc1, '┼': 0xc5,
+	// double-line box
+	'╔': 0xc9, '╗': 0xbb, '╚': 0xc8, '╝': 0xbc, '═': 0xcd, '║': 0xba,
+	'╠': 0xcc, '╣': 0xb9, '╦': 0xcb, '╩': 0xca, '╬': 0xce
+};
+
+/** Map a string to CP437 bytes; ASCII passes through, mapped glyphs use the table,
+ *  anything unknown becomes '?'. Iterates code points so astral chars degrade cleanly. */
+function encodeCp437(s: string): number[] {
 	const out: number[] = [];
-	for (let i = 0; i < s.length; i++) {
-		const c = s.charCodeAt(i);
-		out.push(c < 0x80 ? c : 0x3f);
+	for (const ch of s) {
+		const c = ch.codePointAt(0)!;
+		if (c < 0x80) out.push(c);
+		else out.push(CP437[ch] ?? 0x3f);
 	}
 	return out;
 }
@@ -37,13 +56,15 @@ export class EscPos {
 		return this;
 	}
 
-	/** ESC @ — reset to a known state. */
+	/** ESC @ — reset to a known state, then `ESC t 0` — select the PC437 code page so
+	 *  the box-drawing / block glyphs print as glyphs (ESC @ resets the page, so this
+	 *  must follow it). */
 	init(): this {
-		return this.push(ESC, 0x40);
+		return this.push(ESC, 0x40).push(ESC, 0x74, 0x00);
 	}
 
 	text(s: string): this {
-		return this.raw(encodeAscii(s));
+		return this.raw(encodeCp437(s));
 	}
 
 	line(s = ''): this {
@@ -88,7 +109,7 @@ export class EscPos {
 	/** GS ( k — native QR. The printer renders it in hardware: fast and sharp. */
 	qr(data: string, moduleSize = 6, ec: 'L' | 'M' | 'Q' | 'H' = 'M'): this {
 		const ecByte = { L: 48, M: 49, Q: 50, H: 51 }[ec];
-		const d = encodeAscii(data);
+		const d = encodeCp437(data);
 		const storeLen = d.length + 3;
 		return this.push(GS, 0x28, 0x6b, 0x04, 0x00, 0x31, 0x41, 0x32, 0x00) // model 2
 			.push(GS, 0x28, 0x6b, 0x03, 0x00, 0x31, 0x43, Math.max(1, Math.min(16, moduleSize))) // size

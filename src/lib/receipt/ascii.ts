@@ -34,42 +34,47 @@ export function rule(ch = '-', cols = PRINT_COLS): string {
 
 type BarRow = { label: string; value: number; right: string; mark?: boolean };
 
-/** Horizontal bars: `> LABEL [==== ]  right`. Widths auto-fit to `cols`. */
-export function asciiBars(rows: BarRow[], cols = PRINT_COLS): { text: string; mark: boolean }[] {
+/** Horizontal block bars: `> LABEL ███████       right`. A solid `█` run sized to the
+ *  largest value; `>` + bold marks "you". `rail:true` fills the remainder with `░` for a
+ *  visible track (default off — whitespace reads cleaner on thermal). Auto-fits `cols`. */
+export function blockBars(
+	rows: BarRow[],
+	opts: { rail?: boolean; cols?: number } = {}
+): { text: string; mark: boolean }[] {
 	if (!rows.length) return [];
+	const cols = opts.cols ?? PRINT_COLS;
 	const labelW = Math.max(...rows.map((r) => r.label.length));
 	const rightW = Math.max(...rows.map((r) => r.right.length));
 	const max = Math.max(1, ...rows.map((r) => r.value));
-	// line = rail(2) + label + ' ' + bar + '  ' + right ; bar = '[' + inner + ']'
+	// line = rail(2) + label + ' ' + track + '  ' + right
 	const track = Math.max(6, cols - (2 + labelW + 1 + 2 + rightW));
-	const inner = track - 2;
 	return rows.map((r) => {
-		const fill = Math.max(0, Math.min(inner, Math.round((r.value / max) * inner)));
-		const bar = '[' + '='.repeat(fill) + ' '.repeat(inner - fill) + ']';
+		const fill = Math.max(0, Math.min(track, Math.round((r.value / max) * track)));
+		const bar = '█'.repeat(fill) + (opts.rail ? '░' : ' ').repeat(track - fill);
 		const rail = r.mark ? '> ' : '  ';
-		const text = rail + r.label.toUpperCase().padEnd(labelW) + ' ' + bar + '  ' + r.right.padStart(rightW);
+		const text =
+			rail + r.label.toUpperCase().padEnd(labelW) + ' ' + bar + '  ' + r.right.padStart(rightW);
 		return { text, mark: !!r.mark };
 	});
 }
 
-/** The year as a field of light 'o' marks (each ~ kgPerBlock), '.' when clean. */
-export function asciiSlab(
-	co2Kg: number,
-	kgPerBlock: number,
-	isClean = false,
-	cols = PRINT_COLS
-): string[] {
-	const perRow = Math.floor((cols + 1) / 2); // 'o ' pairs
-	const cap = perRow * 16;
-	const raw = Math.max(1, Math.round(co2Kg / kgPerBlock));
-	const count = isClean ? perRow * 2 : Math.min(cap, raw);
-	const glyph = isClean ? '.' : 'o';
-	const rows: string[] = [];
-	for (let i = 0; i < count; i += perRow) {
-		rows.push(Array.from({ length: Math.min(perRow, count - i) }, () => glyph).join(' '));
-	}
-	if (!isClean && raw > cap) rows.push('...and then some');
-	return rows;
+/** A framed hero stat: a labelled single-line box with a left and right value.
+ *  Returns [top, content, bottom], each exactly `cols` wide. */
+export function statBox(label: string, left: string, right: string, cols = PRINT_COLS): string[] {
+	const head = `┌─ ${label.toUpperCase()} `;
+	const top = (head + '─'.repeat(Math.max(0, cols - head.length - 1)) + '┐').slice(0, cols);
+	const innerW = cols - 4; // '│ ' + inner + ' │'
+	const gap = Math.max(1, innerW - left.length - right.length);
+	const inner = (left + ' '.repeat(gap) + right).padEnd(innerW).slice(0, innerW);
+	const content = '│ ' + inner + ' │';
+	const bottom = '└' + '─'.repeat(cols - 2) + '┘';
+	return [top, content, bottom];
+}
+
+/** A flow connector that descends from a stat box to the next: `│ text` then `v`. */
+export function connector(text: string, indent = 8): string[] {
+	const pad = ' '.repeat(indent);
+	return [`${pad}│  ${text}`, `${pad}v`];
 }
 
 /** A boxed-digit odometer: count -> 3 lines (border, digits, border). */
@@ -82,10 +87,12 @@ export function asciiOdometer(count: number, digits = 6): string[] {
 	return [border, cells, border];
 }
 
-/** A row of ASCII icons: '8' cylinders, '^' trees, capped. */
-export function asciiPictoRow(count: number, kind: 'cylinder' | 'tree'): string {
-	const shown = Math.min(Math.max(count, 0), 24);
-	const glyph = kind === 'cylinder' ? '8' : '^';
+/** A spaced row of icons: `▐█▌` cylinders or `▲` trees, capped to fit `cols`. */
+export function pictoStack(count: number, kind: 'cylinder' | 'tree', cols = PRINT_COLS): string {
+	const glyph = kind === 'cylinder' ? '▐█▌' : '▲';
+	const per = glyph.length + 1; // glyph + joining space
+	const cap = Math.floor((cols + 1) / per);
+	const shown = Math.min(Math.max(count, 0), cap);
 	return Array.from({ length: shown }, () => glyph).join(' ');
 }
 

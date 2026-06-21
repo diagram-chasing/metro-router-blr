@@ -14,9 +14,10 @@ import type { ReceiptView } from './model';
 import { EscPos, DOTS_80MM } from './escpos';
 import {
 	PRINT_COLS,
-	asciiBars,
-	asciiSlab,
-	asciiPictoRow,
+	blockBars,
+	statBox,
+	connector,
+	pictoStack,
 	asciiHistogram,
 	asciiOdometer,
 	wrapText,
@@ -88,54 +89,62 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 
 	// your corridor
 	heading('Your corridor', `~${inr(view.corridor.totalPerDay)}/day`);
+	gap();
 	body(view.corridor.copy);
 	gap();
-	asciiBars(
+	T('g/km');
+	blockBars(
 		view.corridor.rows.map((r) => ({
 			label: r.label,
 			value: r.gPerKm,
-			right: `${r.gPerKm} g/km`,
+			right: `${r.gPerKm}`,
 			mark: r.isYou
 		}))
 	).forEach((l) => T(l.text, { bold: l.mark }));
 	rule();
 
-	// the damage
-	heading('The damage', 'per trip');
-	statPair(`${inr(view.oneTrip.co2G)} g CO2`, `${inr(view.oneTrip.pm25Mg)} mg PM2.5`);
-	T(`x ${inr(view.item.tripsPerYear)} trips / year`);
+	// the damage -> one year (two framed hero numbers, normal height)
+	heading('The damage');
 	gap();
-	T(ledger('Total / one year', `each o ~ ${view.year.kgPerBlock} kg`), { bold: true });
-	statPair(`${inr(view.year.co2Kg)} kg CO2`, `${inr(view.year.pm25G)} g PM2.5`);
-	asciiSlab(view.year.co2Kg, view.year.kgPerBlock, view.year.isClean).forEach((l) => T(l));
-	if (view.year.copy) body(view.year.copy);
+	statBox('per trip', `${inr(view.oneTrip.co2G)} g CO2`, `${inr(view.oneTrip.pm25Mg)} mg PM2.5`).forEach(
+		(l) => T(l, { bold: true })
+	);
+	gap();
+	connector(`x ${inr(view.item.tripsPerYear)} trips / year`).forEach((l) => T(l));
+	gap();
+	statBox('one year', `${inr(view.year.co2Kg)} kg CO2`, `${inr(view.year.pm25G)} g PM2.5`).forEach(
+		(l) => T(l, { bold: true })
+	);
+	if (view.year.copy) {
+		gap();
+		body(view.year.copy);
+	}
 	rule();
 
 	// that much, in things
 	heading('That much, in things', `${inr(view.year.co2Kg)} kg =`);
+	gap();
 	if (view.units.isClean) {
 		body(view.units.copy);
 	} else {
 		T(`${view.units.cylinders}  gas cylinders`, { bold: true });
-		T(asciiPictoRow(view.units.cylinders, 'cylinder'));
+		T(pictoStack(view.units.cylinders, 'cylinder'));
+		gap();
 		T(`${view.units.trees}  trees, full-time`, { bold: true });
-		T(asciiPictoRow(view.units.trees, 'tree'));
+		T(pictoStack(view.units.trees, 'tree'));
 	}
 	rule();
 
 	// suggested swap
 	heading('Suggested swap');
 	body(view.swap.copy);
+	gap();
 	if (view.swap.show) {
-		gap();
-		T('[ ] Shift half your trips to metro');
-		T('[ ] Walk the first & last mile');
-		T(`[ ] Keep ~${inr(view.swap.savedKg)} kg CO2 out of the air`);
-		gap();
-		asciiBars([
+		blockBars([
 			{ label: 'now', value: view.swap.nowKg, right: `${inr(view.swap.nowKg)} kg` },
 			{ label: 'swap', value: view.swap.swapKg, right: `${inr(view.swap.swapKg)} kg` }
 		]).forEach((l) => T(l.text));
+		gap();
 		statPair(`-${inr(view.swap.savedKg)} kg/yr`, `~${view.swap.treesSaved} trees`);
 		body(`PM2.5 ${inr(view.swap.nowPm25G)} -> ${inr(view.swap.swapPm25G)} g/yr`);
 	}
@@ -148,28 +157,22 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 
 	// while you read
 	if (view.counter.cityCount != null) {
-		heading('While you read...');
-		T('Cars that newly registered in BLR today:', { align: 'center' });
+		heading('By the way,');
+		body(view.finePrint.psCopy);
+		// fine print
+		gap();
 		asciiOdometer(view.counter.cityCount).forEach((l) => T(l, { align: 'center' }));
 		rule();
 	}
 
-	// fine print
-	body(view.finePrint.psCopy);
-	gap();
 	body(view.finePrint.disclaimer);
 	rule();
 
-	// QR + footer
-	T('Scan to keep this receipt', { align: 'center' });
 	gap();
-	ops.push({ t: 'qr', data: qrUrl(view) });
-	gap();
-	T(`No. ${view.meta.visitorNo}`, { align: 'center' });
-	gap();
-	T('>> RETAIN FOR YOUR RECORDS <<', { align: 'center' });
-	ops.push({ t: 'cut' });
 
+	T(`A project by Diagram Chasing`, { align: 'center' });
+	T(`https://diagramchasing.fun`, { align: 'center' });
+	gap();
 	return ops;
 }
 
