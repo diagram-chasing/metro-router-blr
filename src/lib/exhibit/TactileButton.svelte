@@ -1,7 +1,6 @@
 <script lang="ts">
-	// Inspired by the "button-82" pushable button pattern: three stacked layers
-	// (shadow, edge, front) so the front face can lift off the edge with a
-	// smooth cubic-bezier motion and press down on tap.
+	// Three stacked layers (shadow, edge, front): the front face lifts off the edge
+	// and presses down on tap.
 
 	type Glow = 'amber' | 'red' | 'green' | 'blue';
 	type Size = 'md' | 'lg' | 'xl';

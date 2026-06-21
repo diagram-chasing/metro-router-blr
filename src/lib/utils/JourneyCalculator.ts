@@ -41,33 +41,33 @@ interface ValhallaResponse {
 }
 
 export interface JourneyDetails {
-	originStation: string; // was sourceStation
-	destinationStation: string; // no change
-	requiresTransfer: boolean; // was hasTransfer
+	originStation: string;
+	destinationStation: string;
+	requiresTransfer: boolean;
 
-	firstLegExit: string; // was sourceStationRef
-	firstLegWalkTime: number; // was walkingTimeToStation, in minutes
-	firstLegWalkDistance: number; // was walkingDistanceToStation, in meters
-	firstLegPlatform: number; // was platformBeforeTransfer
-	firstLegWalkRoute: string; // was walkingRouteToStation, encoded polyline
-	firstLegMetroTime: number; // was metroTimeBeforeTransfer, in minutes
-	firstLegMetroStops: number; // was metroStopsBeforeTransfer
-	firstLegDirectionName: string; // name of the terminal station in direction of travel
+	firstLegExit: string;
+	firstLegWalkTime: number; // minutes
+	firstLegWalkDistance: number; // meters
+	firstLegPlatform: number;
+	firstLegWalkRoute: string; // encoded polyline
+	firstLegMetroTime: number; // minutes
+	firstLegMetroStops: number;
+	firstLegDirectionName: string; // terminal station in direction of travel
 
-	secondLegExit: string; // was destStationRef
-	secondLegWalkTime: number; // was walkingTimeFromStation, in minutes
-	secondLegWalkDistance: number; // was walkingDistanceFromStation, in meters
-	secondLegPlatform: number; // was platformAfterTransfer
-	secondLegWalkRoute: string; // was walkingRouteFromStation, encoded polyline
-	secondLegMetroTime: number; // was metroTimeAfterTransfer, in minutes
-	secondLegMetroStops: number; // was metroStopsAfterTransfer
-	secondLegDirectionName: string; // name of the terminal station in direction of travel
+	secondLegExit: string;
+	secondLegWalkTime: number; // minutes
+	secondLegWalkDistance: number; // meters
+	secondLegPlatform: number;
+	secondLegWalkRoute: string; // encoded polyline
+	secondLegMetroTime: number; // minutes
+	secondLegMetroStops: number;
+	secondLegDirectionName: string; // terminal station in direction of travel
 
-	transferToColor?: string; // line color to transfer to for interchange trips
+	transferToColor?: string; // line color for interchange trips
 
-	totalTime: number; // no change, in minutes
-	totalDistanceKm: number; // no change, total distance in kilometers
-	price: number; // no change, in currency
+	totalTime: number; // minutes
+	totalDistanceKm: number; // kilometers
+	price: number;
 }
 
 type Fetcher = typeof fetch;

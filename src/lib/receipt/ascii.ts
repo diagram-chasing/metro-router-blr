@@ -1,7 +1,5 @@
-// Pure monospace builders for the printed receipt's ASCII charts. These mirror the
-// on-screen Svelte components (Bars / Slab / Pictograph / Histogram) but are tuned to
-// the printer's fixed column grid (80mm Font A = 48 cols) instead of the 576px raster
-// width. Kept dependency-free and DOM-free so the print path can run anywhere.
+// Monospace builders for the printed receipt's ASCII charts, on the printer's fixed
+// column grid (80mm Font A = 48 cols). Dependency-free and DOM-free.
 
 export const PRINT_COLS = 48; // 80mm, Font A (12-dot glyphs)
 

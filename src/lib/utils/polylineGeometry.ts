@@ -1,7 +1,5 @@
-// Ported from docs/transitrouter-main/assets/utils/geometry.js — the nearest-
-// vertex shortcut was leaving the cropped bus polyline obviously off the
-// actual road and sometimes returning the wrong span. Projecting each stop
-// onto its closest segment fixes both.
+// Projects each stop onto its closest segment. The nearest-vertex shortcut left
+// cropped bus polylines off the actual road and sometimes returned the wrong span.
 
 export type LngLat = [number, number];
 

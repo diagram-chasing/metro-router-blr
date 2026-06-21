@@ -1,21 +1,3 @@
-// Per-passenger emission factors for Bengaluru commute modes.
-//
-// Every number here is sourced; swap the BASE constants below and every derived
-// figure (per-passenger-km CO2e and PM2.5) updates with it.
-//
-// ── Basis ────────────────────────────────────────────────────────────────────
-// • Operational / use-phase only. Excludes vehicle manufacturing and metro
-//   construction (embodied carbon is real but a separate accounting boundary —
-//   see the Mumbai LCA papers).
-// • All modes are put on a comparable WELL-TO-WHEEL footing: road tailpipe is
-//   uplifted ~20% for the fuel supply chain, and the metro is counted on its
-//   grid electricity (which is inherently upstream). Without this, a metro
-//   (power-plant emissions) and a car (tailpipe only) would not be comparable.
-// • Headline metric is per PASSENGER-km: vehicle emissions divided by typical
-//   occupancy. This is the standard modal-comparison basis and the story the
-//   numbers support — shared/transit modes beat a solo car several times over.
-//
-// ── Primary sources ──────────────────────────────────────────────────────────
 // [1] Aryan, Shinde & Dikshit (2025), "Evaluating the emission reduction
 //     potential of first underground metro rail in Mumbai", Discover
 //     Sustainability, doi:10.1007/s43621-025-01994-0. Tables 2 & 3 — India
@@ -27,17 +9,10 @@
 // [5] EMEP/EEA Air Pollutant Emission Inventory Guidebook; Timmers & Achten
 //     (2016) — non-exhaust (brake/tyre/road) PM2.5.
 // [6] Coal-share PM2.5: Cropper et al. 2021 (PNAS); CREA 2024. (High uncertainty.)
-//
-// ── Known caveats (carried into the receipt disclaimer) ──────────────────────
-// • No India-specific well-to-wheel per-km factor exists; +20% is a global
-//   default. • ARAI factors top out at BS-IV; BS-VI bus/auto PM is estimated.
-// • Occupancy values are conventions, not measured Bengaluru loads. • The grid
-//   PM2.5 factor is the single least-certain number (range 20-100 mg/kWh).
-// • Metro specific energy assumes near-design loading; per-pkm rises at low load.
 
 import type { Mode } from './types';
 
-// ── BASE: road tailpipe CO2 (g per VEHICLE-km), India fleet-weighted ─────────
+// road tailpipe CO2 (g per VEHICLE-km), India fleet-weighted
 // Source [1] Table 2, except auto (LPG, Bengaluru) from [3] and bus from [4].
 const TAILPIPE_CO2_G_PER_VKM: Record<Mode, number> = {
 	car: 130, // private petrol car, BS-IV/VI weighted [1]
@@ -50,7 +25,7 @@ const TAILPIPE_CO2_G_PER_VKM: Record<Mode, number> = {
 	active: 0
 };
 
-// ── BASE: average occupancy (passengers per vehicle), urban India ────────────
+// average occupancy (passengers per vehicle), urban India
 // Source [1] Table 3 and Indian urban conventions. Bus is an average city load.
 const OCCUPANCY: Record<Mode, number> = {
 	car: 1.3,
@@ -63,7 +38,7 @@ const OCCUPANCY: Record<Mode, number> = {
 	active: 1
 };
 
-// ── BASE: total PM2.5 (mg per VEHICLE-km) = exhaust + non-exhaust ────────────
+// total PM2.5 (mg per VEHICLE-km)
 // Exhaust from [1] Table 2 ([3] for auto, [4] for bus); non-exhaust (brake +
 // tyre + road wear) from [5]. Non-exhaust matters: modern petrol cars emit
 // little exhaust PM, so brake/tyre wear dominates their PM2.5.
@@ -81,7 +56,7 @@ const PM25_MG_PER_VKM: Record<Mode, number> = {
 // Well-to-wheel uplift over tailpipe for fuel extraction/refining/distribution.
 const WTW_UPLIFT = 1.2;
 
-// ── Metro: grid-electricity attribution (operational, well-to-wheel) ─────────
+// Metro
 // Specific energy consumption per passenger-km. Anchor: Mumbai Line 3 [1]
 // (1207 MWh/day ÷ 18.72M pkm/day ≈ 64 Wh/pkm at design load), nudged down for
 // Namma Metro's mostly-elevated network (lower auxiliary/AC load). Range 50-110.
@@ -101,7 +76,6 @@ const METRO_CO2E_G_PER_PKM =
 const METRO_PM25_MG_PER_PKM =
 	(METRO_SEC_WH_PER_PKM / 1000) * GRID_PM25_MG_PER_KWH * (1 - METRO_SOLAR_SHARE);
 
-// ── DERIVED: the public per-passenger-km tables ──────────────────────────────
 
 function derive<T extends Record<Mode, number>>(
 	special: Partial<Record<Mode, number>>,

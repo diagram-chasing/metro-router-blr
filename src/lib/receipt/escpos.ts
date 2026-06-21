@@ -1,10 +1,10 @@
 // A tiny ESC/POS byte builder for a generic 80mm (576-dot) thermal printer.
 //
-// Why this exists: printing the receipt as a tall raster bitmap is slow (~40s) —
-// the head heats every dot-row. Native ESC/POS text streams from the printer's ROM
-// font at full mechanical speed (~5-8s for this receipt). Since the redesign is now
-// monospace-ASCII + a QR + two small graphics, almost all of it maps to native text;
-// only the Chladni stamp and route map need a small raster blit (see printReceipt.ts).
+// ESC/POS text streams from the printer's ROM font at full mechanical speed (~5-8s),
+// versus ~40s to print the whole receipt as a raster bitmap (the head heats every
+// dot-row). Most of the receipt is monospace-ASCII + a QR + two small graphics, so it
+// maps to native text; only the Chladni stamp and route map need a small raster blit
+// (see printReceipt.ts).
 //
 // Commands used are the ESC/POS standard supported by virtually all generic printers.
 

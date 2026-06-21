@@ -217,7 +217,6 @@ export const computeMetroSegments = async (
 	}
 };
 
-// Create a new function to render all station icons and metro lines
 export const renderAllStationsAndLines = async (map: maplibre.Map) => {
 	if (!map) return;
 

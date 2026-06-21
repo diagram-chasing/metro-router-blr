@@ -1,12 +1,8 @@
-// Accumulating emissions raster over the city.
-//
-// Borrows the *technique* from docs/metro-aqi-exhibition-main (a city grid + a
-// spatial decay kernel + a grayscale field) but NOT its model. There is no
-// ridership and nothing metro-specific. Each accumulated route deposits its own
-// emissions — by the mode actually chosen, per the per-passenger-km factors in
-// emissions.ts — smeared along the real polyline. Same corridor glows ~10× more
-// for a solo cab than a bus; the "difference your choice makes" falls straight
-// out of the factors.
+// Accumulating emissions raster over the city: a city grid + a spatial decay kernel
+// + a grayscale field. Each accumulated route deposits its own emissions — by the
+// mode actually chosen, per the per-passenger-km factors in emissions.ts — smeared
+// along the real polyline. Same corridor glows ~10× more for a solo cab than a bus;
+// the "difference your choice makes" falls straight out of the factors.
 //
 // Two grid types:
 //   raw  — absolute annual emissions burden along the corridors people travel.

@@ -9,7 +9,6 @@ export type Glow = 'amber' | 'blue' | 'green' | 'red';
 export type LegKind = 'walk' | 'bus' | 'metro' | 'cab' | 'auto';
 export type Leg = { kind: LegKind; mins?: number; note?: string };
 
-/** A drawable stretch of the route, in [lng, lat] coordinates. */
 export type RouteSegment = { coords: [number, number][]; kind: LegKind; color: string };
 
 export type RouteCandidate = {
@@ -32,15 +31,13 @@ const COLOR_METRO = '#000000';
 const COLOR_BUS = '#0f883b';
 const COLOR_ROAD = '#1c1c1c';
 
-// ── Tunable knobs ─────────────────────────────────────────────────────────────
 // Distance limits past which an option stops being offered.
 const THRESHOLDS = {
 	walkKm: 2.5, // beyond this, walk-only stops being sensible
 	autoKm: 12 // beyond this, auto stops being offered
 };
 
-// How the visitor's answers nudge the ranking. (Decider is collected after this
-// step, so it is intentionally not scored.)
+// How the visitor's answers nudge the ranking.
 const SCORING = {
 	modeMatch: 30, // Q1: option matches the visitor's usual mode
 	modeMap: {
@@ -85,12 +82,8 @@ function legMins(seconds: number): number {
 	return Math.max(1, Math.round(seconds / 60));
 }
 
-// OTP's CAR routing is free-flow; Bengaluru traffic rarely is. Scale driving
-// time up by a congestion factor that depends on the current time of day
-// (the kiosk always plans a trip for "now").
+
 function istHour(d: Date): number {
-	// IST is UTC+5:30 — derive the hour from UTC so the machine's timezone
-	// doesn't matter.
 	const istMinutes = (d.getUTCHours() * 60 + d.getUTCMinutes() + 330) % 1440;
 	return Math.floor(istMinutes / 60);
 }
@@ -109,7 +102,7 @@ function carMinutes(it: OtpItinerary, now: Date = new Date()): number {
 	return Math.max(1, Math.round((it.duration / 60) * factor));
 }
 
-// App-cab fare ≈ base + per-km + per-minute (Ola/Uber-style, Bengaluru).
+// App-cab fare ≈ base + per-km + per-minute
 function cabFare(km: number, minutes: number): number {
 	return Math.max(80, Math.round(50 + 14 * km + 1.5 * minutes));
 }
@@ -195,7 +188,7 @@ function makeCandidate(
 /**
  * Build the ranked route options from OTP itineraries. Costs are estimated
  * locally (the OTP instance doesn't expose fare data); everything else —
- * geometry, durations, stops, routing — comes from OTP. Options past their
+ * geometry, durations, stops, routing comes from OTP. Options past their
  * distance limit (auto/walk) are simply never added.
  */
 export function buildOtpCandidates(answers: Answers, bundle: PlanBundle): RouteCandidate[] {
@@ -305,14 +298,14 @@ export function stationNames(bundle: PlanBundle): { origin?: string; destination
 function score(c: RouteCandidate, a: Answers): number {
 	let s = 0;
 
-	// Q1 — usual mode.
+	// Q1 usual mode.
 	if (a.mode && SCORING.modeMap[a.mode] === c.kind) s += SCORING.modeMatch;
 
-	// Q2 — how often the trip is made.
+	// Q2 how often the trip is made.
 	if (a.frequency === 'daily' || a.frequency === 'few_weekly') s += SCORING.frequent[c.kind] ?? 0;
 	else if (a.frequency === 'occasional') s += SCORING.occasional[c.kind] ?? 0;
 
-	// Q3 — trip length.
+	// Q3 trip length.
 	const dist = a.distanceKm ?? 0;
 	if (dist <= SCORING.veryShortKm) {
 		s +=
