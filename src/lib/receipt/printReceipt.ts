@@ -126,7 +126,6 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	// 04 the damage -> annual total (the centerpiece)
 	eyebrowOp('The Damage', 'per trip');
 	T(panelRow('CO2', `${inr(view.oneTrip.co2G)} g`));
-	T(panelRow('PM2.5', `${inr(view.oneTrip.pm25Mg)} mg`));
 	T(panelRule(`x ${inr(view.item.tripsPerYear)} trips / year`));
 	if (view.year.isClean) {
 		T(panelRow('ANNUAL', `${inr(view.year.co2Kg)} kg CO2`));
@@ -137,7 +136,6 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 		T(' '.repeat(PRINT_COLS), { rev: true });
 		T(heroSrc(heroText, w === 2 ? PRINT_COLS / 2 : PRINT_COLS), { rev: true, w, h: 3 });
 		T(' '.repeat(PRINT_COLS), { rev: true });
-		T(panelRow(`and ${view.year.pm25G} g PM2.5 you breathe a year`));
 	}
 	gap();
 

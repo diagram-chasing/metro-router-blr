@@ -1,39 +1,34 @@
 // Accumulating emissions raster over the city: a city grid + a spatial decay kernel
-// + a grayscale field. Each accumulated route deposits its own emissions — by the
-// mode actually chosen, per the per-passenger-km factors in emissions.ts — smeared
-// along the real polyline. Same corridor glows ~10× more for a solo cab than a bus;
-// the "difference your choice makes" falls straight out of the factors.
+// + a grayscale field. Each accumulated route deposits its own CO₂e — by the mode
+// actually chosen, per the per-passenger-km factors in emissions.ts — smeared along
+// the real polyline. Same corridor glows ~10× more for a solo cab than a bus; the
+// "difference your choice makes" falls straight out of the factors.
 //
-// Two grid types:
+// Three grid types:
 //   raw  — absolute annual emissions burden along the corridors people travel.
 //   diff — excess over a cleaner choice along the same route (factor − metro),
 //          so transit/walk legs go dark and only the dirty legs glow.
-// Two metrics: CO₂ (g/pkm) and PM2.5 (mg/pkm).
-// Optional observed-PM2.5 backdrop (baked, see aqiBase.json) — PM2.5 only.
+//   cf   — counterfactual "more public transport" (see GridType below).
 
-import { MODE_CO2E_G_PER_PKM, MODE_PM25_MG_PER_PKM } from '$lib/exhibit/emissions';
+import { MODE_CO2E_G_PER_PKM } from '$lib/exhibit/emissions';
 import { legKindToMode } from '$lib/exhibit/grey';
-import baseJson from './aqiBase.json';
 import { listLines, type LineRow } from './db';
 
-// ── Grid: cell centres on a 0.01° lattice, identical extent to the baked data ──
+// ── Grid: cell centres on a 0.01° lattice over Bengaluru ──
 const CELL = 0.01;
-const LAT_MIN = baseJson.latMin; // 12.8235
-const LON_MIN = baseJson.lonMin; // 77.4499
-const N_LAT = baseJson.nLat; // 34
-const N_LON = baseJson.nLon; // 35
-const LAT_MAX = baseJson.latMax;
-const LON_MAX = baseJson.lonMax;
+const LAT_MIN = 12.8235;
+const LON_MIN = 77.4499;
+const N_LAT = 34;
+const N_LON = 35;
+const LAT_MAX = 13.1535;
+const LON_MAX = 77.7899;
 
 // Resampling + kernel.
 const STEP_KM = 0.25; // polyline sample spacing
 const KM_PER_DEG_LAT = 111.32;
 const DEFAULT_DECAY_KM = 1.2;
-// When base + deposit are combined, how strongly the observed backdrop shows.
-const BASE_WEIGHT = 0.6;
 const FALLBACK_TRIPS_PER_YEAR = 288; // legacy rows with NULL trips_per_year
 
-export type Metric = 'co2' | 'pm25';
 // raw — emissions as actually travelled.
 // diff — excess over metro along the same corridor (only dirty legs glow).
 // cf  — counterfactual "more public transport": walk and existing bus/metro legs
@@ -52,40 +47,31 @@ export type Field = {
 	bbox: [number, number, number, number]; // [lonMin, latMin, lonMax, latMax]
 	values: number[]; // row-major lat(asc) × lon(asc), normalised 0..1
 	rawMax: number; // pre-normalisation peak of the deposit (for reference)
-	hasBase: boolean;
 };
 
-function factorFor(metric: Metric, kind: LineRow['segments'][number]['legKind']): number {
-	const mode = legKindToMode(kind);
-	return metric === 'co2' ? MODE_CO2E_G_PER_PKM[mode] : MODE_PM25_MG_PER_PKM[mode];
+function factorFor(kind: LineRow['segments'][number]['legKind']): number {
+	return MODE_CO2E_G_PER_PKM[legKindToMode(kind)];
 }
 
 // The "cleaner choice" baseline for diff = the metro per-pkm factor. We store the
 // chosen route, not the alternative's geometry, so we apply metro's factor along
 // the visitor's own corridor: excess = max(0, chosen − metro).
-function cleanFactor(metric: Metric): number {
-	return metric === 'co2' ? MODE_CO2E_G_PER_PKM.metro : MODE_PM25_MG_PER_PKM.metro;
+function cleanFactor(): number {
+	return MODE_CO2E_G_PER_PKM.metro;
 }
 
 // "Any public transport" — the bus/metro blend used to re-cost private legs in
 // the counterfactual grid. Walk and existing bus/metro legs keep their own.
-function publicTransitFactor(metric: Metric): number {
-	return metric === 'co2'
-		? (MODE_CO2E_G_PER_PKM.bus + MODE_CO2E_G_PER_PKM.metro) / 2
-		: (MODE_PM25_MG_PER_PKM.bus + MODE_PM25_MG_PER_PKM.metro) / 2;
+function publicTransitFactor(): number {
+	return (MODE_CO2E_G_PER_PKM.bus + MODE_CO2E_G_PER_PKM.metro) / 2;
 }
 
-function cfFactor(
-	metric: Metric,
-	kind: LineRow['segments'][number]['legKind'],
-	shift: number
-): number {
-	const own = factorFor(metric, kind);
+function cfFactor(kind: LineRow['segments'][number]['legKind'], shift: number): number {
+	const own = factorFor(kind);
 	const mode = legKindToMode(kind);
 	if (mode === 'active' || mode === 'bus' || mode === 'metro') return own; // already clean/transit
 	// Private leg: a fraction `shift` of trips move to public transport.
-	const pt = publicTransitFactor(metric);
-	return (1 - shift) * own + shift * pt;
+	return (1 - shift) * own + shift * publicTransitFactor();
 }
 
 function haversineKm(lng1: number, lat1: number, lng2: number, lat2: number): number {
@@ -132,18 +118,17 @@ function stamp(
 function depositLine(
 	grid: Float64Array,
 	line: LineRow,
-	metric: Metric,
 	type: GridType,
 	decayKm: number,
 	shift: number
 ): void {
 	const trips = line.tripsPerYear ?? FALLBACK_TRIPS_PER_YEAR;
-	const clean = cleanFactor(metric);
+	const clean = cleanFactor();
 	for (const seg of line.segments) {
-		const factor = factorFor(metric, seg.legKind);
+		const factor = factorFor(seg.legKind);
 		const perKm =
 			type === 'cf'
-				? cfFactor(metric, seg.legKind, shift)
+				? cfFactor(seg.legKind, shift)
 				: type === 'diff'
 					? Math.max(0, factor - clean)
 					: factor;
@@ -165,55 +150,29 @@ function depositLine(
 	}
 }
 
-export function loadBaseGrid(): Float64Array {
-	const out = new Float64Array(N_LAT * N_LON);
-	const vals = baseJson.values as (number | null)[];
-	for (let i = 0; i < out.length; i++) out[i] = vals[i] ?? 0;
-	return out;
-}
-
 export type FieldOpts = {
-	metric: Metric;
 	type: GridType;
 	decayKm?: number;
-	base?: boolean;
 	shift?: number; // cf only: share of private-leg trips moved to transit
 };
 
 export function buildField(opts: FieldOpts): Field {
-	const { metric, type, decayKm = DEFAULT_DECAY_KM, shift = DEFAULT_CF_SHIFT } = opts;
-	const useBase = !!opts.base && metric === 'pm25';
+	const { type, decayKm = DEFAULT_DECAY_KM, shift = DEFAULT_CF_SHIFT } = opts;
 
 	const grid = new Float64Array(N_LAT * N_LON);
-	for (const line of listLines({})) depositLine(grid, line, metric, type, decayKm, shift);
+	for (const line of listLines({})) depositLine(grid, line, type, decayKm, shift);
 
 	let depMax = 0;
 	for (const v of grid) if (v > depMax) depMax = v;
 
 	const values = new Array<number>(grid.length);
-	if (useBase) {
-		const base = loadBaseGrid();
-		let baseMax = 0;
-		for (const v of base) if (v > baseMax) baseMax = v;
-		let combinedMax = 0;
-		for (let i = 0; i < grid.length; i++) {
-			const baseN = baseMax > 0 ? base[i] / baseMax : 0;
-			const depN = depMax > 0 ? grid[i] / depMax : 0;
-			const c = BASE_WEIGHT * baseN + depN;
-			values[i] = c;
-			if (c > combinedMax) combinedMax = c;
-		}
-		for (let i = 0; i < values.length; i++) values[i] = combinedMax > 0 ? values[i] / combinedMax : 0;
-	} else {
-		for (let i = 0; i < grid.length; i++) values[i] = depMax > 0 ? grid[i] / depMax : 0;
-	}
+	for (let i = 0; i < grid.length; i++) values[i] = depMax > 0 ? grid[i] / depMax : 0;
 
 	return {
 		nLat: N_LAT,
 		nLon: N_LON,
 		bbox: [LON_MIN, LAT_MIN, LON_MAX, LAT_MAX],
 		values,
-		rawMax: depMax,
-		hasBase: useBase
+		rawMax: depMax
 	};
 }

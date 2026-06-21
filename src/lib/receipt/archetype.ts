@@ -12,7 +12,7 @@ type Archetype = { key: string; name: string };
 export function assignArchetype(mode: Mode, decider: Decider): Archetype {
 	if (mode === 'active') return { key: 'featherweight', name: 'The Featherweight' };
 	if (mode === 'bus' || mode === 'metro') return { key: 'offgrid', name: 'The Off-Grid Commuter' };
-	if (mode === 'two_wheeler') return { key: 'split', name: 'The Split Decision' };
+	if (mode === 'two_wheeler') return { key: 'lightweight', name: 'The Lightweight' };
 	switch (decider) {
 		case 'no_option':
 			return { key: 'stranded', name: 'The Stranded' };
@@ -29,7 +29,7 @@ export function assignArchetype(mode: Mode, decider: Decider): Archetype {
 }
 
 // ── Basis lines ──
-// Slots: {mult} {cRank} {pRank} {tot} {kg} {savedKg}. Each dirty-premium type keeps a
+// Slots: {mult} {cRank} {tot} {kg} {savedKg}. Each dirty-premium type keeps a
 // {mult}-free variant so the line still works when the multiplier is too small to
 // quote (very short trips, where switching saves little).
 
@@ -42,9 +42,9 @@ const BASIS: Record<string, string[]> = {
 		"you ride what's already running. your slice of the air is a fraction of what the cab beside you spends.",
 		'shared transit, shared engine — the bus was making that trip with or without you on it.'
 	],
-	split: [
-		'carbon rank {cRank} of {tot}, particulate rank {pRank} of {tot}. the two scores never agree.',
-		'clean for the city, harder on the air you personally breathe. two verdicts, both yours.'
+	lightweight: [
+		'carbon rank {cRank} of {tot} — lighter than the cars and autos around you, but still your own engine, your own fuel.',
+		'low carbon per km, for a private vehicle. that is the kind reading. it is still petrol, still this traffic.'
 	],
 	stranded: [
 		"no transit line reaches you. the {kg} kg a year is the network's gap, not a choice you were given.",
@@ -74,7 +74,6 @@ export function archetypeBasis(c: ComputedReceipt, id: string): string {
 	const vars = {
 		mult: String(Math.round(mult)),
 		cRank: String(c.modeRank.carbonRankFromDirtiest),
-		pRank: String(c.modeRank.pm25RankFromDirtiest),
 		tot: String(c.modeRank.totalModes),
 		kg: comma(c.annualCommuteKg),
 		savedKg: comma(c.halfSwap.savedKg)

@@ -1,14 +1,11 @@
 // [1] Aryan, Shinde & Dikshit (2025), "Evaluating the emission reduction
 //     potential of first underground metro rail in Mumbai", Discover
 //     Sustainability, doi:10.1007/s43621-025-01994-0. Tables 2 & 3 — India
-//     BS-IV/BS-VI fleet-weighted tailpipe CO2/PM factors and occupancies.
+//     BS-IV/BS-VI fleet-weighted tailpipe CO2 factors and occupancies.
 // [2] CEA CO2 Baseline Database v20.0 (Dec 2024), FY2023-24 — all-India grid
 //     emission factor (weighted average 0.727 kg CO2/kWh).
 // [3] TERI (2017), "Estimating vehicular emissions" (Bengaluru) — LPG auto.
 // [4] CPCB (2015) / ARAI (2011) road-transport six-cities study — bus factors.
-// [5] EMEP/EEA Air Pollutant Emission Inventory Guidebook; Timmers & Achten
-//     (2016) — non-exhaust (brake/tyre/road) PM2.5.
-// [6] Coal-share PM2.5: Cropper et al. 2021 (PNAS); CREA 2024. (High uncertainty.)
 
 import type { Mode } from './types';
 
@@ -38,21 +35,6 @@ const OCCUPANCY: Record<Mode, number> = {
 	active: 1
 };
 
-// total PM2.5 (mg per VEHICLE-km)
-// Exhaust from [1] Table 2 ([3] for auto, [4] for bus); non-exhaust (brake +
-// tyre + road wear) from [5]. Non-exhaust matters: modern petrol cars emit
-// little exhaust PM, so brake/tyre wear dominates their PM2.5.
-const PM25_MG_PER_VKM: Record<Mode, number> = {
-	car: 5.5, // 2.0 exhaust + 3.5 non-exhaust
-	cab_solo: 9.2, // 5.7 exhaust + 3.5 non-exhaust
-	cab_shared: 9.2,
-	auto: 14.5, // 13 exhaust (4-stroke LPG) + 1.5 non-exhaust
-	two_wheeler: 20.3, // 18.8 exhaust + 1.5 non-exhaust
-	bus: 64, // 51 exhaust (BS-IV) + 13 non-exhaust
-	metro: 0, // rail non-exhaust ignored; grid PM handled below
-	active: 0
-};
-
 // Well-to-wheel uplift over tailpipe for fuel extraction/refining/distribution.
 const WTW_UPLIFT = 1.2;
 
@@ -64,18 +46,13 @@ const METRO_SEC_WH_PER_PKM = 60;
 // All-India grid factor [2]. (CEA publishes no separate Karnataka factor — one
 // synchronized grid — so the national average is the correct attribution basis.)
 const GRID_CO2_G_PER_KWH = 710;
-// Grid PM2.5 from the coal share [6]. Most uncertain figure in this file.
-const GRID_PM25_MG_PER_KWH = 40;
 // BMRCL on-site rooftop solar is ~2-3% of consumption with no large green PPA
 // confirmed; a small 5% share is generous. (Contrast DMRC's ~35% via Rewa.)
 const METRO_SOLAR_SHARE = 0.05;
 
-// Wh × (g/kWh) cancels to g/pkm (Wh→kWh is ÷1000, kept as g). PM stays in mg.
+// Wh × (g/kWh) cancels to g/pkm (Wh→kWh is ÷1000, kept as g).
 const METRO_CO2E_G_PER_PKM =
 	(METRO_SEC_WH_PER_PKM / 1000) * GRID_CO2_G_PER_KWH * (1 - METRO_SOLAR_SHARE);
-const METRO_PM25_MG_PER_PKM =
-	(METRO_SEC_WH_PER_PKM / 1000) * GRID_PM25_MG_PER_KWH * (1 - METRO_SOLAR_SHARE);
-
 
 function derive<T extends Record<Mode, number>>(
 	special: Partial<Record<Mode, number>>,
@@ -100,18 +77,9 @@ export const MODE_CO2E_G_PER_PKM: Record<Mode, number> = derive(
 	WTW_UPLIFT
 );
 
-/** Milligrams PM2.5 per passenger-km (exhaust + non-exhaust; grid for metro). */
-export const MODE_PM25_MG_PER_PKM: Record<Mode, number> = derive(
-	{ metro: METRO_PM25_MG_PER_PKM, active: 0 },
-	PM25_MG_PER_VKM,
-	1 // PM is not given a fuel-supply uplift
-);
-
 // Resulting central values (for reference):
 //   CO2e g/pkm : cab_solo 172 · car 120 · auto 74 · cab_shared 69 · metro 40 ·
 //                two_wheeler 40 · bus 18 · active 0
-//   PM2.5 mg/pkm: two_wheeler 16.9 · auto 9.7 · cab_solo 9.2 · car 4.2 ·
-//                cab_shared 3.7 · metro 2.3 · bus 1.6 · active 0
 
 export const MODE_LABEL: Record<Mode, string> = {
 	auto: 'Auto',

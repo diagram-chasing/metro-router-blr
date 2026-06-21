@@ -1,26 +1,23 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 
-	// Accumulating emissions field, drawn as a grayscale raster.
-	// The grid comes from /api/aqi; brightness = normalised value.
+	// Accumulating CO₂e emissions field, drawn as a grayscale raster.
+	// The grid comes from /api/emissions; brightness = normalised value.
 	// Params (read once on mount):
-	//   ?metric=pm25|co2  ?grid=raw|diff  ?base=0|1
-	//   ?decay=<km>  ?gamma=<n>  ?invert=0|1  ?smooth=0|1  ?bg=<css>  ?poll=<ms>
+	//   ?grid=raw|diff  ?decay=<km>  ?gamma=<n>  ?invert=0|1  ?smooth=0|1
+	//   ?bg=<css>  ?poll=<ms>
 	type FieldResp = {
 		nLat: number;
 		nLon: number;
 		values: number[];
 		rawMax: number;
-		hasBase: boolean;
 	};
 
 	let canvas: HTMLCanvasElement;
 	let pollTimer: ReturnType<typeof setInterval> | undefined;
 	let field: FieldResp | null = null;
 
-	let metric = 'pm25';
 	let grid = 'raw';
-	let base = false;
 	let decay = 1.2;
 	let gamma = 1;
 	let invert = false;
@@ -34,8 +31,8 @@
 	};
 
 	function apiUrl(): string {
-		const q = new URLSearchParams({ metric, grid, base: base ? '1' : '0', decay: String(decay) });
-		return `/api/aqi?${q}`;
+		const q = new URLSearchParams({ grid, decay: String(decay) });
+		return `/api/emissions?${q}`;
 	}
 
 	function draw() {
@@ -90,15 +87,13 @@
 			field = (await res.json()) as FieldResp;
 			draw();
 		} catch (err) {
-			console.warn('AQI refresh failed:', err);
+			console.warn('emissions raster refresh failed:', err);
 		}
 	}
 
 	onMount(() => {
 		const p = new URLSearchParams(window.location.search);
-		metric = p.get('metric') === 'co2' ? 'co2' : 'pm25';
 		grid = p.get('grid') === 'diff' ? 'diff' : 'raw';
-		base = flag(p, 'base', false);
 		const d = Number(p.get('decay'));
 		decay = isFinite(d) && d > 0 ? d : 1.2;
 		const g = Number(p.get('gamma'));

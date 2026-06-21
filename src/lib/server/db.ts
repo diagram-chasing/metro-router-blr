@@ -43,7 +43,6 @@ function getDb(): Database.Database {
 			distance_km     REAL,
 			co2_per_trip_kg REAL,
 			co2_per_km_g    REAL,
-			pm25_per_trip_mg REAL,
 			grey_bucket     INTEGER,
 			trips_per_year  INTEGER,
 			segments        TEXT NOT NULL
@@ -128,7 +127,6 @@ export type LineInput = {
 	distanceKm: number;
 	co2PerTripKg: number;
 	co2PerKmG: number;
-	pm25PerTripMg: number;
 	greyBucket: number;
 	tripsPerYear: number;
 	segments: LineSegment[];
@@ -141,7 +139,6 @@ export type LineRow = {
 	distanceKm: number;
 	co2PerTripKg: number;
 	co2PerKmG: number;
-	pm25PerTripMg: number;
 	greyBucket: number;
 	tripsPerYear: number | null;
 	segments: LineSegment[];
@@ -151,9 +148,9 @@ export function insertLine(line: LineInput): number {
 	const info = getDb()
 		.prepare(
 			`INSERT INTO lines (submission_id, created_at, chosen_mode, distance_km,
-				co2_per_trip_kg, co2_per_km_g, pm25_per_trip_mg, grey_bucket, trips_per_year, segments)
+				co2_per_trip_kg, co2_per_km_g, grey_bucket, trips_per_year, segments)
 			 VALUES (@submissionId, @createdAt, @chosenMode, @distanceKm,
-				@co2PerTripKg, @co2PerKmG, @pm25PerTripMg, @greyBucket, @tripsPerYear, @segments)`
+				@co2PerTripKg, @co2PerKmG, @greyBucket, @tripsPerYear, @segments)`
 		)
 		.run({
 			submissionId: line.submissionId,
@@ -162,7 +159,6 @@ export function insertLine(line: LineInput): number {
 			distanceKm: line.distanceKm,
 			co2PerTripKg: line.co2PerTripKg,
 			co2PerKmG: line.co2PerKmG,
-			pm25PerTripMg: line.pm25PerTripMg,
 			greyBucket: line.greyBucket,
 			tripsPerYear: line.tripsPerYear,
 			segments: JSON.stringify(line.segments)
@@ -177,7 +173,6 @@ type RawLine = {
 	distance_km: number;
 	co2_per_trip_kg: number;
 	co2_per_km_g: number;
-	pm25_per_trip_mg: number;
 	grey_bucket: number;
 	trips_per_year: number | null;
 	segments: string;
@@ -191,7 +186,6 @@ function parseLine(r: RawLine): LineRow {
 		distanceKm: r.distance_km,
 		co2PerTripKg: r.co2_per_trip_kg,
 		co2PerKmG: r.co2_per_km_g,
-		pm25PerTripMg: r.pm25_per_trip_mg,
 		greyBucket: r.grey_bucket,
 		tripsPerYear: r.trips_per_year,
 		segments: JSON.parse(r.segments) as LineSegment[]

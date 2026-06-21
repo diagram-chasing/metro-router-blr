@@ -64,12 +64,10 @@
 		<code>/?recent=1</code>, <code>/?stations=1&hud=1</code>.
 	</p>
 	<p class="hint">
-		AQI raster: <a href="/aqi">/aqi</a> ·
-		<a href="/aqi?metric=pm25&grid=raw">pm25 raw</a> ·
-		<a href="/aqi?metric=pm25&grid=diff">pm25 diff</a> ·
-		<a href="/aqi?metric=co2&grid=raw">co2 raw</a> ·
-		<a href="/aqi?metric=co2&grid=diff">co2 diff</a> ·
-		<a href="/aqi?metric=pm25&grid=raw&base=1">pm25 + base</a>
+		Emissions raster: <a href="/emissions">/emissions</a> ·
+		<a href="/emissions?grid=raw">raw</a> ·
+		<a href="/emissions?grid=diff">diff</a> ·
+		<a href="/emissions?grid=cf">cf</a>
 	</p>
 </main>
 

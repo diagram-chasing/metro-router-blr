@@ -76,7 +76,6 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
 			distanceKm: a.distanceKm,
 			co2PerTripKg: computed.perTripKg,
 			co2PerKmG,
-			pm25PerTripMg: computed.perTripPm25Mg,
 			greyBucket: greyBucket(co2PerKmG),
 			tripsPerYear: computed.tripsPerYear,
 			segments: a.route.segments

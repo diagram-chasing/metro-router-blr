@@ -1,9 +1,4 @@
-import {
-	MODE_CO2E_G_PER_PKM,
-	MODE_PM25_MG_PER_PKM,
-	MODE_LABEL,
-	firstLastMileKm
-} from '$lib/exhibit/emissions';
+import { MODE_CO2E_G_PER_PKM, MODE_LABEL, firstLastMileKm } from '$lib/exhibit/emissions';
 import { legKindToMode } from '$lib/exhibit/grey';
 import type { Answers, Decider, Frequency, FunQuestionId, Lifestyle, Mode } from '$lib/exhibit/types';
 import type { GeoSnapshot } from '$lib/server/receiptStore';
@@ -27,9 +22,7 @@ export type ComputedReceipt = {
 
 	// Per-trip emissions (their mode vs the best transit-led alternative)
 	perTripKg: number; // CO2e, kg
-	perTripPm25Mg: number; // PM2.5, mg
 	bestComboPerTripKg: number; // CO2e, kg
-	bestComboPerTripPm25Mg: number; // PM2.5, mg
 	multiplier: number; // CO2 perTripKg / bestComboPerTripKg
 	multiplierPhrase: string; // human ("about 3×")
 	comboLabel: string; // the recommended alternative
@@ -42,12 +35,6 @@ export type ComputedReceipt = {
 	annualSavingKg: number;
 	twoYearSavingKg: number;
 	treeYearsEquivalent: number; // annualSavingKg / 21
-
-	// Yearly PM2.5 (grams)
-	annualCommutePm25G: number;
-	annualAllInPm25G: number;
-	annualSwitchedPm25G: number;
-	annualSavingPm25G: number;
 
 	// Recommendation
 	recommendation: {
@@ -65,9 +52,7 @@ export type ComputedReceipt = {
 	modeRank: {
 		totalModes: number;
 		carbonRankFromDirtiest: number;
-		pm25RankFromDirtiest: number;
 		isClean: boolean; // bus / metro / walk-cycle — the "roast spoiled" branch
-		isTwoWheeler: boolean; // the carbon-clean / particulate-dirty trick branch
 	};
 
 	// Beat 4 — modeled corridor traffic (illustrative mode-share, not measured)
@@ -83,9 +68,7 @@ export type ComputedReceipt = {
 	// Beat 8 — moving HALF the trips onto metro+auto (the spec swaps half, not all)
 	halfSwap: {
 		annualKg: number;
-		annualPm25G: number;
 		savedKg: number;
-		savedPm25G: number;
 		treesSaved: number;
 	};
 
@@ -135,17 +118,14 @@ export type ReceiptView = {
 		rows: ComputedReceipt['corridor']['rows'];
 		copy: string;
 	};
-	oneTrip: { co2G: number; pm25Mg: number };
-	year: { co2Kg: number; pm25G: number; kgPerBlock: number; copy: string; isClean: boolean };
+	oneTrip: { co2G: number };
+	year: { co2Kg: number; kgPerBlock: number; copy: string; isClean: boolean };
 	units: { cylinders: number; trees: number; copy: string; isClean: boolean };
 	swap: {
 		show: boolean;
 		nowKg: number;
 		swapKg: number;
 		savedKg: number;
-		nowPm25G: number;
-		swapPm25G: number;
-		savedPm25G: number;
 		treesSaved: number;
 		copy: string;
 		// Concrete greener options within walking distance of the start, one
@@ -473,17 +453,6 @@ const VERDICTS_CLEAN = [
 	"clean enough that the verdict won't load."
 ];
 
-const VERDICTS_2W = [
-	'clean for the sky, rough on your own lungs.',
-	'near-innocent on carbon, less so on what you breathe.',
-	'light on the air, heavy on the air you personally inhale.',
-	// 'two scores, and they refuse to agree.',
-	'the atmosphere is fine. you, slowly, less so.',
-	'kind to the planet, unkind to the bit of it in your chest.',
-	'low carbon, high particulate. a riddle no one requested.',
-	'the sky forgives you. your lungs are still reviewing.'
-];
-
 function modeRankCopy(c: ComputedReceipt, id: string): string {
 	const lc = c.trip.modeLabel.toLowerCase();
 	const tot = c.modeRank.totalModes;
@@ -496,8 +465,6 @@ function modeRankCopy(c: ComputedReceipt, id: string): string {
 	let verdict: string;
 	if (c.modeRank.isClean) {
 		verdict = pick(id, 'mr-verdict', VERDICTS_CLEAN);
-	} else if (c.modeRank.isTwoWheeler) {
-		verdict = pick(id, 'mr-verdict', VERDICTS_2W);
 	} else if (rank === 1) {
 		verdict = interp(pick(id, 'mr-verdict', VERDICTS_DIRTIEST), { tot: String(tot) });
 	} else {
@@ -750,19 +717,17 @@ function rupeesLakh(r: number): string {
 
 // Best realistic alternative for the same route: a short auto for the first/last
 // mile + public transport for the trunk. The trunk uses a bus-and-metro blend
-// (mirrors publicTransitFactor in aqiGrid.ts) rather than the metro alone, since
+// (mirrors publicTransitFactor in emissionsGrid.ts) rather than the metro alone, since
 // the realistic transit option is a mix of the two. Very short trips just walk.
-function bestCombo(distanceKm: number): { co2Kg: number; pm25Mg: number; comboLabel: string } {
+function bestCombo(distanceKm: number): { co2Kg: number; comboLabel: string } {
 	if (distanceKm < 2) {
-		return { co2Kg: 0, pm25Mg: 0, comboLabel: 'a 15-min walk' };
+		return { co2Kg: 0, comboLabel: 'a 15-min walk' };
 	}
 	const { firstMile, main, lastMile } = firstLastMileKm(distanceKm);
 	const accessKm = firstMile + lastMile;
 	const transitCo2 = (MODE_CO2E_G_PER_PKM.bus + MODE_CO2E_G_PER_PKM.metro) / 2;
-	const transitPm25 = (MODE_PM25_MG_PER_PKM.bus + MODE_PM25_MG_PER_PKM.metro) / 2;
 	const co2Kg = (accessKm * MODE_CO2E_G_PER_PKM.auto + main * transitCo2) / 1000;
-	const pm25Mg = accessKm * MODE_PM25_MG_PER_PKM.auto + main * transitPm25;
-	return { co2Kg, pm25Mg, comboLabel: 'public transport + a short auto' };
+	return { co2Kg, comboLabel: 'public transport + a short auto' };
 }
 
 export function computeReceipt(a: Answers): ComputedReceipt {
@@ -776,7 +741,6 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 
 	// Per-trip
 	const perTripKg = (distanceKm * MODE_CO2E_G_PER_PKM[mode]) / 1000;
-	const perTripPm25Mg = distanceKm * MODE_PM25_MG_PER_PKM[mode];
 	const combo = bestCombo(distanceKm);
 	const multiplier = combo.co2Kg > 0 ? perTripKg / combo.co2Kg : 0;
 
@@ -788,12 +752,6 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 	const twoYearSavingKg = annualSavingKg * 2;
 	const treeYearsEquivalent = annualSavingKg / KG_CO2_PER_TREE_YEAR;
 
-	// Annual PM2.5 (grams = mg/trip × trips ÷ 1000)
-	const annualCommutePm25G = (perTripPm25Mg * tripsPerYear) / 1000;
-	const annualAllInPm25G = annualCommutePm25G * lifestyleMul;
-	const annualSwitchedPm25G = (combo.pm25Mg * tripsPerYear) / 1000;
-	const annualSavingPm25G = Math.max(0, annualCommutePm25G - annualSwitchedPm25G);
-
 	const arch = assignArchetype(mode, decider);
 	const subtitle = subtitleFor(a.funQuestionId, a.funAnswer);
 
@@ -803,9 +761,7 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 
 	// Beat 3 — mode ranking among all 8 ways to move
 	const carbonValues = ALL_MODES.map((m) => MODE_CO2E_G_PER_PKM[m]);
-	const pm25Values = ALL_MODES.map((m) => MODE_PM25_MG_PER_PKM[m]);
 	const carbonRankFromDirtiest = rankFromDirtiest(MODE_CO2E_G_PER_PKM[mode], carbonValues);
-	const pm25RankFromDirtiest = rankFromDirtiest(MODE_PM25_MG_PER_PKM[mode], pm25Values);
 
 	// Beat 4 — modeled corridor traffic
 	const seed = hashSeed(`${a.originStation ?? a.origin ?? ''}|${a.destinationStation ?? a.destination ?? ''}|${round(distanceKm, 1)}`);
@@ -827,9 +783,7 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 
 	// Beat 8 — move HALF the trips onto metro+auto
 	const halfAnnualKg = 0.5 * annualCommuteKg + 0.5 * annualSwitchedKg;
-	const halfAnnualPm25G = 0.5 * annualCommutePm25G + 0.5 * annualSwitchedPm25G;
 	const halfSavedKg = Math.max(0, annualCommuteKg - halfAnnualKg);
-	const halfSavedPm25G = Math.max(0, annualCommutePm25G - halfAnnualPm25G);
 
 	// Beat 10 — parking footprint as real estate
 	const parkingRupees = PARKING_AREA_M2 * PARKING_RATE_PER_M2;
@@ -852,9 +806,7 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 			deciderLabel: DECIDER_LABEL[decider]
 		},
 		perTripKg: round(perTripKg, 2),
-		perTripPm25Mg: round(perTripPm25Mg, 1),
 		bestComboPerTripKg: round(combo.co2Kg, 2),
-		bestComboPerTripPm25Mg: round(combo.pm25Mg, 1),
 		multiplier: round(multiplier, 1),
 		multiplierPhrase: multiplierPhrase(multiplier),
 		comboLabel: combo.comboLabel,
@@ -865,10 +817,6 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 		annualSavingKg: round(annualSavingKg, 0),
 		twoYearSavingKg: round(twoYearSavingKg, 0),
 		treeYearsEquivalent: round(treeYearsEquivalent, 0),
-		annualCommutePm25G: round(annualCommutePm25G, 1),
-		annualAllInPm25G: round(annualAllInPm25G, 1),
-		annualSwitchedPm25G: round(annualSwitchedPm25G, 1),
-		annualSavingPm25G: round(annualSavingPm25G, 1),
 		recommendation: {
 			deciderHeadline: deciderHeadline(decider, decider),
 			recommendedCombo: combo.comboLabel
@@ -880,9 +828,7 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 		modeRank: {
 			totalModes: ALL_MODES.length,
 			carbonRankFromDirtiest,
-			pm25RankFromDirtiest,
-			isClean,
-			isTwoWheeler: mode === 'two_wheeler'
+			isClean
 		},
 		corridor: {
 			totalPerDay,
@@ -892,9 +838,7 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 		treesYear: round(treesYear, 0),
 		halfSwap: {
 			annualKg: round(halfAnnualKg, 0),
-			annualPm25G: round(halfAnnualPm25G, 1),
 			savedKg: round(halfSavedKg, 0),
-			savedPm25G: round(halfSavedPm25G, 1),
 			treesSaved: round(halfSavedKg / KG_CO2_PER_TREE_YEAR, 0)
 		},
 		parking: {
@@ -999,10 +943,9 @@ export function buildReceiptView(
 			rows: c.corridor.rows,
 			copy: corridorCopy(c, id)
 		},
-		oneTrip: { co2G: Math.round(c.perTripKg * 1000), pm25Mg: Math.round(c.perTripPm25Mg) },
+		oneTrip: { co2G: Math.round(c.perTripKg * 1000) },
 		year: {
 			co2Kg: c.annualCommuteKg,
-			pm25G: c.annualCommutePm25G,
 			kgPerBlock: KG_PER_BLOCK,
 			isClean: yearClean,
 			copy: yearClean ? pick(id, 'year-clean', YEAR_CLEAN) : ''
@@ -1018,9 +961,6 @@ export function buildReceiptView(
 			nowKg: c.annualCommuteKg,
 			swapKg: c.halfSwap.annualKg,
 			savedKg: c.halfSwap.savedKg,
-			nowPm25G: c.annualCommutePm25G,
-			swapPm25G: c.halfSwap.annualPm25G,
-			savedPm25G: c.halfSwap.savedPm25G,
 			treesSaved: c.halfSwap.treesSaved,
 			copy: swapCopy(c, a, id),
 			ideas: swapIdeas(geo)
