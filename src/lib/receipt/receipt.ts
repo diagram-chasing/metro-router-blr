@@ -477,7 +477,7 @@ const VERDICTS_2W = [
 	'clean for the sky, rough on your own lungs.',
 	'near-innocent on carbon, less so on what you breathe.',
 	'light on the air, heavy on the air you personally inhale.',
-	'two scores, and they refuse to agree.',
+	// 'two scores, and they refuse to agree.',
 	'the atmosphere is fine. you, slowly, less so.',
 	'kind to the planet, unkind to the bit of it in your chest.',
 	'low carbon, high particulate. a riddle no one requested.',
