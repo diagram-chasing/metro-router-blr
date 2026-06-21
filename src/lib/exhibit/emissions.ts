@@ -1,6 +1,5 @@
 // Per-passenger emission factors for Bengaluru commute modes.
 //
-// Single source of truth for the exhibit. Used by the server (receipt math).
 // Every number here is sourced; swap the BASE constants below and every derived
 // figure (per-passenger-km CO2e and PM2.5) updates with it.
 //

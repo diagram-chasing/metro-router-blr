@@ -6,6 +6,7 @@
 	import Map from '$lib/components/Map.svelte';
 	import { planAllModes, type PlanBundle } from '$lib/utils/otp';
 
+	import { COPY } from './questions';
 	import { buildOtpCandidates, stationNames, tripDistanceKm } from './routeCandidates';
 	import RouteOptions from './RouteOptions.svelte';
 	import { answers, setAnswer } from './store.svelte';
@@ -19,11 +20,7 @@
 	const routeReady = $derived(!!originPick && !!destinationPick && !!bundle);
 
 	const statusLabel = $derived(
-		!originPick
-			? 'Tap map to set origin'
-			: !destinationPick
-				? 'Tap to set destination'
-				: 'Total distance'
+		!originPick ? COPY.mapSetOrigin : !destinationPick ? COPY.mapSetDestination : COPY.mapDistance
 	);
 
 	const candidates = $derived(bundle ? buildOtpCandidates(answers, bundle) : []);
@@ -82,7 +79,7 @@
 			const hasAny =
 				b.metro.length > 0 || b.bus.length > 0 || b.car.length > 0 || b.walk.length > 0;
 			if (!hasAny) {
-				lastError = 'Could not find a route — try different pins.';
+				lastError = COPY.mapNoRoute;
 				return;
 			}
 
@@ -94,7 +91,7 @@
 			setAnswer('destinationStation', stns.destination);
 		} catch (err) {
 			console.error('Journey calculation failed:', err);
-			lastError = err instanceof Error ? err.message : 'Route calculation failed.';
+			lastError = err instanceof Error ? err.message : COPY.mapFailed;
 		} finally {
 			isLoading = false;
 		}
@@ -167,7 +164,7 @@
 		</div>
 
 		{#if isLoading}
-			<div class="loading">CRUNCHING ROUTE…</div>
+			<div class="loading">{COPY.mapCrunching}</div>
 		{/if}
 
 		{#if lastError}

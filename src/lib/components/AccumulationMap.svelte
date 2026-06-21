@@ -27,7 +27,7 @@
 
 	let stats = $state<Stats | null>(null);
 
-	// ── URL-param layer config (read once on mount; a TD source sets these per URL) ──
+	// ── URL-param layer config (read once on mount; set per URL) ──
 	// ?basemap=0|1  ?lines=0|1  ?recent=0|1  ?stations=0|1  ?hud=0|1
 	// ?bg=<css color>  ?poll=<ms>
 	let showBasemap = true;
@@ -104,7 +104,7 @@
 			const sid = `line-${line.id}-${i}`;
 			if (!map.getSource(sid)) map.addSource(sid, { type: 'geojson', data: feature(seg.coords) });
 			// On the white base map a dark casing keeps even near-white (dirty)
-			// lines legible. Skipped when the base map is off so the TD input stays
+			// lines legible. Skipped when the base map is off so the layer stays
 			// a clean grey-on-black luminance ramp with nothing bleeding into it.
 			if (showBasemap && !map.getLayer(`${sid}-casing`)) {
 				map.addLayer({

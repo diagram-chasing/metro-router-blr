@@ -60,7 +60,7 @@
 	{#if note}<p class="note">{note}</p>{/if}
 
 	<p class="hint">
-		Line map: <a href="/">/</a> · TD layers via params, e.g. <code>/?basemap=0</code>,
+		Line map: <a href="/">/</a> · layer toggles via params, e.g. <code>/?basemap=0</code>,
 		<code>/?recent=1</code>, <code>/?stations=1&hud=1</code>.
 	</p>
 	<p class="hint">

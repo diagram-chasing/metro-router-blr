@@ -1,5 +1,4 @@
-// OpenTripPlanner client — replaces the hand-rolled metro/bus/road routing with
-// real multimodal trip planning from the OTP2 GTFS GraphQL API.
+// OpenTripPlanner client for multimodal trip planning (OTP2 GTFS GraphQL API).
 //
 // Endpoint: https://opentripplanner.diagramchasing.fun/otp/gtfs/v1
 // Open instance, no auth. Returns full itineraries with per-leg geometry

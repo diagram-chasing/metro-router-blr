@@ -1,7 +1,7 @@
 import type { OtpItinerary, OtpLeg } from '$lib/utils/otp';
 import { firstWithMode, type PlanBundle } from '$lib/utils/otp';
 
-import type { Answers, Frequency, Mode } from './types';
+import type { Answers, Mode } from './types';
 
 export type CandidateKind = 'cab' | 'auto' | 'metro' | 'bus' | 'walk';
 export type Glow = 'amber' | 'blue' | 'green' | 'red';
@@ -32,8 +32,38 @@ const COLOR_METRO = '#000000';
 const COLOR_BUS = '#0f883b';
 const COLOR_ROAD = '#1c1c1c';
 
-const MAX_WALK_KM = 2.5; // beyond this, walk-only stops being a sensible option
-const MAX_AUTO_KM = 12;
+// ── Tunable knobs ─────────────────────────────────────────────────────────────
+// Distance limits past which an option stops being offered.
+const THRESHOLDS = {
+	walkKm: 2.5, // beyond this, walk-only stops being sensible
+	autoKm: 12 // beyond this, auto stops being offered
+};
+
+// How the visitor's answers nudge the ranking. (Decider is collected after this
+// step, so it is intentionally not scored.)
+const SCORING = {
+	modeMatch: 30, // Q1: option matches the visitor's usual mode
+	modeMap: {
+		auto: 'auto',
+		cab_solo: 'cab',
+		cab_shared: 'cab',
+		car: 'cab',
+		two_wheeler: 'auto',
+		bus: 'bus',
+		metro: 'metro',
+		active: 'walk'
+	} as Record<Mode, CandidateKind>,
+	// Q2: frequent trips favour cheap transit; rare trips tolerate a cab.
+	frequent: { bus: 8, metro: 6, cab: -8 } as Partial<Record<CandidateKind, number>>,
+	occasional: { cab: 6, metro: 3, bus: -4 } as Partial<Record<CandidateKind, number>>,
+	// Q3: trip length, in km, and the nudges for each band.
+	veryShortKm: 1,
+	shortKm: 3,
+	longKm: 12,
+	veryShort: { walk: 40, auto: 4, other: -8 },
+	short: { auto: 8, walk: 4 } as Partial<Record<CandidateKind, number>>,
+	long: { metro: 10, cab: 6, bus: -4 } as Partial<Record<CandidateKind, number>>
+};
 
 function busFareFor(km: number): number {
 	if (km <= 2) return 5;
@@ -149,106 +179,109 @@ function transitStationNames(it: OtpItinerary): { origin?: string; destination?:
 	};
 }
 
-type ScoredCandidate = RouteCandidate & { feasible: boolean };
+// Per-leg display + map geometry, derived from the OTP itinerary.
+function makeCandidate(
+	it: OtpItinerary,
+	base: Omit<RouteCandidate, 'legs' | 'segments' | 'itinerary'>
+): RouteCandidate {
+	return {
+		...base,
+		legs: legsFromItinerary(it, base.kind),
+		segments: itineraryToSegments(it, base.kind),
+		itinerary: it
+	};
+}
 
 /**
  * Build the ranked route options from OTP itineraries. Costs are estimated
  * locally (the OTP instance doesn't expose fare data); everything else —
- * geometry, durations, stops, routing — comes from OTP.
+ * geometry, durations, stops, routing — comes from OTP. Options past their
+ * distance limit (auto/walk) are simply never added.
  */
 export function buildOtpCandidates(answers: Answers, bundle: PlanBundle): RouteCandidate[] {
-	const all: ScoredCandidate[] = [];
+	const all: RouteCandidate[] = [];
 
-	// Metro (with walking access on either end, plus any in-network transfer).
+	// Metro (walking access on either end, plus any in-network transfer).
 	const metroIt = firstWithMode(bundle.metro, 'SUBWAY');
 	if (metroIt) {
 		const km = kmOfMode(metroIt, ['SUBWAY', 'RAIL', 'TRAM']);
-		all.push({
-			id: 'metro',
-			kind: 'metro',
-			label: 'METRO',
-			etaMin: legMins(metroIt.duration),
-			costINR: estimateMetroFare(km),
-			legs: legsFromItinerary(metroIt, 'metro'),
-			glow: 'blue',
-			segments: itineraryToSegments(metroIt, 'metro'),
-			itinerary: metroIt,
-			feasible: true
-		});
+		all.push(
+			makeCandidate(metroIt, {
+				id: 'metro',
+				kind: 'metro',
+				label: 'METRO',
+				etaMin: legMins(metroIt.duration),
+				costINR: estimateMetroFare(km),
+				glow: 'blue'
+			})
+		);
 	}
 
-	// Bus (with walking access; OTP resolves any transfers).
+	// Bus (walking access; OTP resolves any transfers).
 	const busIt = firstWithMode(bundle.bus, 'BUS');
 	if (busIt) {
 		const km = kmOfMode(busIt, ['BUS']);
-		all.push({
-			id: 'bus',
-			kind: 'bus',
-			label: 'BUS',
-			etaMin: legMins(busIt.duration),
-			costINR: busFareFor(km),
-			legs: legsFromItinerary(busIt, 'bus'),
-			glow: 'green',
-			segments: itineraryToSegments(busIt, 'bus'),
-			itinerary: busIt,
-			feasible: true
-		});
+		all.push(
+			makeCandidate(busIt, {
+				id: 'bus',
+				kind: 'bus',
+				label: 'BUS',
+				etaMin: legMins(busIt.duration),
+				costINR: busFareFor(km),
+				glow: 'green'
+			})
+		);
 	}
 
-	// Cab & auto share the same driving geometry from OTP's CAR plan.
+	// Cab & auto share OTP's CAR geometry; auto only when the trip is short enough.
 	const carIt = bundle.car[0] ?? null;
 	if (carIt && carIt.distanceKm > 0) {
 		const dist = carIt.distanceKm;
 		const carMin = carMinutes(carIt);
-		all.push({
-			id: 'cab',
-			kind: 'cab',
-			label: 'CAB',
-			etaMin: carMin,
-			costINR: cabFare(dist, carMin),
-			legs: legsFromItinerary(carIt, 'cab'),
-			glow: 'amber',
-			segments: itineraryToSegments(carIt, 'cab'),
-			itinerary: carIt,
-			feasible: true
-		});
-		all.push({
-			id: 'auto',
-			kind: 'auto',
-			label: 'AUTO',
-			etaMin: carMin,
-			costINR: autoFare(dist),
-			legs: legsFromItinerary(carIt, 'auto'),
-			glow: 'amber',
-			segments: itineraryToSegments(carIt, 'auto'),
-			itinerary: carIt,
-			feasible: dist <= MAX_AUTO_KM
-		});
+		all.push(
+			makeCandidate(carIt, {
+				id: 'cab',
+				kind: 'cab',
+				label: 'CAB',
+				etaMin: carMin,
+				costINR: cabFare(dist, carMin),
+				glow: 'amber'
+			})
+		);
+		if (dist <= THRESHOLDS.autoKm) {
+			all.push(
+				makeCandidate(carIt, {
+					id: 'auto',
+					kind: 'auto',
+					label: 'AUTO',
+					etaMin: carMin,
+					costINR: autoFare(dist),
+					glow: 'amber'
+				})
+			);
+		}
 	}
 
-	// Walk-only (only sensible for short trips).
+	// Walk-only, sensible only for short trips.
 	const walkIt = bundle.walk[0] ?? null;
-	if (walkIt && walkIt.distanceKm > 0) {
-		all.push({
-			id: 'walk',
-			kind: 'walk',
-			label: 'WALK',
-			etaMin: legMins(walkIt.duration),
-			costINR: 0,
-			legs: legsFromItinerary(walkIt, 'walk'),
-			glow: 'green',
-			segments: itineraryToSegments(walkIt, 'walk'),
-			itinerary: walkIt,
-			feasible: walkIt.distanceKm <= MAX_WALK_KM
-		});
+	if (walkIt && walkIt.distanceKm > 0 && walkIt.distanceKm <= THRESHOLDS.walkKm) {
+		all.push(
+			makeCandidate(walkIt, {
+				id: 'walk',
+				kind: 'walk',
+				label: 'WALK',
+				etaMin: legMins(walkIt.duration),
+				costINR: 0,
+				glow: 'green'
+			})
+		);
 	}
 
-	const feasible = all.filter((c) => c.feasible);
-	const scored = feasible
-		.map((c) => ({ c, score: scoreCandidate(c, answers) }))
-		.sort((a, b) => b.score - a.score || a.c.etaMin - b.c.etaMin);
-
-	return scored.slice(0, 3).map(({ c }) => stripFeasible(c));
+	return all
+		.map((c) => ({ c, s: score(c, answers) }))
+		.sort((a, b) => b.s - a.s || a.c.etaMin - b.c.etaMin)
+		.slice(0, 3)
+		.map(({ c }) => c);
 }
 
 /** Representative trip distance (km) for emissions/HUD, mode-independent. */
@@ -268,74 +301,31 @@ export function stationNames(bundle: PlanBundle): { origin?: string; destination
 	return metroIt ? transitStationNames(metroIt) : {};
 }
 
-function stripFeasible(c: ScoredCandidate): RouteCandidate {
-	return {
-		id: c.id,
-		kind: c.kind,
-		label: c.label,
-		etaMin: c.etaMin,
-		costINR: c.costINR,
-		legs: c.legs,
-		glow: c.glow,
-		segments: c.segments,
-		itinerary: c.itinerary
-	};
-}
+// Rank an option against the visitor's answers; higher is better.
+function score(c: RouteCandidate, a: Answers): number {
+	let s = 0;
 
-// Mode preference is a soft +30 nudge. Decider is collected after this step,
-// so don't read it here.
-function scoreCandidate(c: RouteCandidate, a: Answers): number {
-	let score = 0;
-	score += modeBonus(c.kind, a.mode);
-	score += frequencyBonus(c, a.frequency);
-	score += distanceBonus(c, a.distanceKm ?? 0);
-	return score;
-}
+	// Q1 — usual mode.
+	if (a.mode && SCORING.modeMap[a.mode] === c.kind) s += SCORING.modeMatch;
 
-function modeBonus(kind: CandidateKind, mode: Mode | undefined): number {
-	if (!mode) return 0;
-	const map: Record<Mode, CandidateKind[]> = {
-		auto: ['auto'],
-		cab_solo: ['cab'],
-		cab_shared: ['cab'],
-		car: ['cab'],
-		two_wheeler: ['auto'],
-		bus: ['bus'],
-		metro: ['metro'],
-		active: ['walk']
-	};
-	return (map[mode] ?? []).includes(kind) ? 30 : 0;
-}
+	// Q2 — how often the trip is made.
+	if (a.frequency === 'daily' || a.frequency === 'few_weekly') s += SCORING.frequent[c.kind] ?? 0;
+	else if (a.frequency === 'occasional') s += SCORING.occasional[c.kind] ?? 0;
 
-function frequencyBonus(c: RouteCandidate, freq: Frequency | undefined): number {
-	if (!freq) return 0;
-	if (freq === 'daily' || freq === 'few_weekly') {
-		if (c.kind === 'bus') return 8;
-		if (c.kind === 'metro') return 6;
-		if (c.kind === 'cab') return -8;
+	// Q3 — trip length.
+	const dist = a.distanceKm ?? 0;
+	if (dist <= SCORING.veryShortKm) {
+		s +=
+			c.kind === 'walk'
+				? SCORING.veryShort.walk
+				: c.kind === 'auto'
+					? SCORING.veryShort.auto
+					: SCORING.veryShort.other;
+	} else if (dist <= SCORING.shortKm) {
+		s += SCORING.short[c.kind] ?? 0;
+	} else if (dist >= SCORING.longKm) {
+		s += SCORING.long[c.kind] ?? 0;
 	}
-	if (freq === 'occasional') {
-		if (c.kind === 'cab') return 6;
-		if (c.kind === 'metro') return 3;
-		if (c.kind === 'bus') return -4;
-	}
-	return 0;
-}
 
-function distanceBonus(c: RouteCandidate, dist: number): number {
-	if (dist <= 1) {
-		if (c.kind === 'walk') return 40;
-		if (c.kind === 'auto') return 4;
-		return -8;
-	}
-	if (dist <= 3) {
-		if (c.kind === 'auto') return 8;
-		if (c.kind === 'walk') return 4;
-	}
-	if (dist >= 12) {
-		if (c.kind === 'metro') return 10;
-		if (c.kind === 'cab') return 6;
-		if (c.kind === 'bus') return -4;
-	}
-	return 0;
+	return s;
 }

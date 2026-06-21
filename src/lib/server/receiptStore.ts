@@ -1,11 +1,8 @@
 // Receipt persistence, backed by the local SQLite store (see db.ts).
-//
-// Exhibition/dev only — a single local server owns the database file. The API
-// here is unchanged from the previous in-memory implementation so callers
-// (the /api/receipt endpoint) don't need to change.
+// Exhibition/dev only — a single local server owns the database file.
 
 import type { Answers } from '$lib/exhibit/types';
-import type { ComputedReceipt } from './computeReceipt';
+import type { ComputedReceipt } from '$lib/receipt/receipt';
 
 import type { Mode } from '$lib/exhibit/types';
 import { getSubmission, insertSubmission, listSubmissions } from './db';

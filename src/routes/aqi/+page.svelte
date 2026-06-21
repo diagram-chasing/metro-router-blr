@@ -1,7 +1,7 @@
 <script lang="ts">
-	// Accumulating emissions raster — a second TouchDesigner input alongside the
-	// line map at `/`. Brightness = where the room's real travel choices load the
-	// air. Layers are picked via URL params so TD can pull each as its own source:
+	// Accumulating emissions raster — a companion to the line map at `/`.
+	// Brightness = where the room's real travel choices load the air. Each layer is
+	// picked via URL params so it can be rendered one at a time:
 	//   ?metric=pm25|co2   pollutant
 	//   ?grid=raw|diff     raw annual burden vs excess over a metro-clean choice
 	//   ?base=0|1          overlay the baked observed PM2.5 backdrop (PM2.5 only)

@@ -1,5 +1,33 @@
 import type { Decider, Frequency, FunQuestion, Lifestyle, Mode } from './types';
 
+// Step prompts (Q6 uses the picked fun question's own prompt).
+export const PROMPTS: Record<number, string> = {
+	1: 'When you make your most regular trip across the city, how do you usually get there?',
+	2: 'How often is that trip?',
+	3: "Drop two pins. Then pick how you'd make this trip.",
+	4: 'Apart from that trip, how much are you out in a normal week?',
+	5: 'What mostly decides how you travel?'
+};
+
+export const COPY = {
+	welcomeTitle: 'How heavy is your everyday travel?',
+	start: "LET'S GO",
+	print: 'PRINT RECEIPT',
+	printing: 'PRINTING…',
+	submitFailed: 'SUBMIT FAILED —',
+	// Map question (Q3)
+	mapSetOrigin: 'Tap map to set origin',
+	mapSetDestination: 'Tap to set destination',
+	mapDistance: 'Total distance',
+	mapCrunching: 'CRUNCHING ROUTE…',
+	mapNoRoute: 'Could not find a route — try different pins.',
+	mapFailed: 'Route calculation failed.',
+	// Route options panel
+	routeTitle: 'CHOOSE A ROUTE',
+	routeDropPins: 'DROP TWO PINS',
+	routeNoOptions: 'NO USABLE OPTIONS FOR THIS ROUTE'
+};
+
 // Q1 shows six chunky options — kept tight for the kiosk. Cab pooled and
 // walk/cycle are rare answers for "most regular trip" and were dropped.
 export const MODE_OPTIONS: { value: Mode; label: string; sub: string }[] = [

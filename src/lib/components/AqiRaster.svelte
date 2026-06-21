@@ -1,8 +1,8 @@
 <script lang="ts">
 	import { onDestroy, onMount } from 'svelte';
 
-	// Accumulating emissions field, drawn as a grayscale raster and captured by
-	// TouchDesigner. The grid comes from /api/aqi; brightness = normalised value.
+	// Accumulating emissions field, drawn as a grayscale raster.
+	// The grid comes from /api/aqi; brightness = normalised value.
 	// Params (read once on mount):
 	//   ?metric=pm25|co2  ?grid=raw|diff  ?base=0|1
 	//   ?decay=<km>  ?gamma=<n>  ?invert=0|1  ?smooth=0|1  ?bg=<css>  ?poll=<ms>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { COPY } from './questions';
 	import type { RouteCandidate } from './routeCandidates';
 	import RouteOptionCard from './RouteOptionCard.svelte';
 
@@ -17,13 +18,13 @@
 
 <aside class="panel">
 	<header class="head">
-		<span class="title">CHOOSE A ROUTE</span>
+		<span class="title">{COPY.routeTitle}</span>
 	</header>
 
 	{#if locked}
-		<div class="placeholder">DROP TWO PINS</div>
+		<div class="placeholder">{COPY.routeDropPins}</div>
 	{:else if candidates.length === 0}
-		<div class="placeholder">NO USABLE OPTIONS FOR THIS ROUTE</div>
+		<div class="placeholder">{COPY.routeNoOptions}</div>
 	{:else}
 		<div class="list">
 			{#each candidates as c (c.id)}

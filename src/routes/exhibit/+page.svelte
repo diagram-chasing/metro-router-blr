@@ -6,10 +6,12 @@
 	import QuestionFrame from '$lib/exhibit/QuestionFrame.svelte';
 	import TactileButton from '$lib/exhibit/TactileButton.svelte';
 	import {
+		COPY,
 		DECIDER_OPTIONS,
 		FREQUENCY_OPTIONS,
 		LIFESTYLE_OPTIONS,
 		MODE_OPTIONS,
+		PROMPTS,
 		pickRandomFunQuestion
 	} from '$lib/exhibit/questions';
 	import { answers, resetAnswers, setAnswer } from '$lib/exhibit/store.svelte';
@@ -82,16 +84,16 @@
 <Panel>
 	{#if step === -1}
 		<div class="welcome">
-			<h1>How heavy is your everyday travel?</h1>
+			<h1>{COPY.welcomeTitle}</h1>
 
 			<div class="cta">
-				<TactileButton label="LET'S GO" size="xl" glow="green" selected onclick={start} />
+				<TactileButton label={COPY.start} size="xl" glow="green" selected onclick={start} />
 			</div>
 		</div>
 	{:else if step === 1}
 		<QuestionFrame
 			step={1}
-			prompt="When you make your most regular trip across the city, how do you usually get there?"
+			prompt={PROMPTS[1]}
 			{canAdvance}
 			onBack={back}
 			onNext={next}
@@ -110,7 +112,7 @@
 	{:else if step === 2}
 		<QuestionFrame
 			step={2}
-			prompt="How often is that trip?"
+			prompt={PROMPTS[2]}
 			{canAdvance}
 			onBack={back}
 			onNext={next}
@@ -130,7 +132,7 @@
 	{:else if step === 3}
 		<QuestionFrame
 			step={3}
-			prompt="Drop two pins. Then pick how you'd make this trip."
+			prompt={PROMPTS[3]}
 			{canAdvance}
 			onBack={back}
 			onNext={next}
@@ -142,7 +144,7 @@
 	{:else if step === 4}
 		<QuestionFrame
 			step={4}
-			prompt="Apart from that trip, how much are you out in a normal week?"
+			prompt={PROMPTS[4]}
 			{canAdvance}
 			onBack={back}
 			onNext={next}
@@ -162,7 +164,7 @@
 	{:else if step === 5}
 		<QuestionFrame
 			step={5}
-			prompt="What mostly decides how you travel?"
+			prompt={PROMPTS[5]}
 			{canAdvance}
 			onBack={back}
 			onNext={next}
@@ -183,7 +185,7 @@
 			step={6}
 			prompt={funQuestion.prompt}
 			{canAdvance}
-			nextLabel={submitting ? 'PRINTING…' : 'PRINT RECEIPT'}
+			nextLabel={submitting ? COPY.printing : COPY.print}
 			nextDisabled={submitting}
 			onBack={back}
 			onNext={submit}
@@ -200,7 +202,7 @@
 				{/each}
 			</div>
 			{#if error}
-				<p class="error">SUBMIT FAILED — {error}</p>
+				<p class="error">{COPY.submitFailed} {error}</p>
 			{/if}
 		</QuestionFrame>
 	{/if}

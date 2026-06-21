@@ -11,12 +11,7 @@ export type Mode =
 export type Frequency = 'daily' | 'few_weekly' | 'weekly' | 'occasional';
 export type Lifestyle = 'homebody' | 'moderate' | 'always_out';
 export type Decider = 'speed' | 'cost' | 'comfort' | 'habit' | 'no_option';
-export type FunQuestionId =
-	| 'walking'
-	| 'time_pressure'
-	| 'planning_slack'
-	| 'crowd_tolerance'
-	| 'boredom';
+export type FunQuestionId = 'walking' | 'planning_slack' | 'crowd_tolerance' | 'boredom';
 
 export type FunOption = { label: string; value: string };
 export type FunQuestion = {

@@ -1,22 +1,18 @@
 // Grayscale encoding for the accumulation map.
 //
 // Each accumulated route is drawn in ONE of five greys, chosen by the route's
-// blended CO2 intensity (grams CO2e per passenger-km). TouchDesigner captures the
-// rendered map as a visual input and recolours it by luminance, so the convention
-// here matters:
+// blended CO2 intensity (grams CO2e per passenger-km). The rendered map can be
+// captured and recoloured by luminance downstream, so the convention here matters:
 //
 //   CONVENTION: brighter grey = dirtier route, on a black background.
 //   bucket 0 (cleanest, e.g. walk/metro) -> dim grey
 //   bucket 4 (dirtiest, e.g. solo cab)   -> near-white
-//
-// TD can invert this via its lookup table; the mapping is fixed and documented
-// here so the operator knows which end is which.
 
 import type { Mode } from './types';
 import type { LegKind } from './routeCandidates';
 import { MODE_CO2E_G_PER_PKM } from './emissions';
 
-/** Background the lines are drawn on when the base map is hidden (TD input). */
+/** Background the lines are drawn on when the base map is hidden. */
 export const GREY_BG = '#000000';
 
 /** Five greys, index = bucket. Brightness rises with emissions (see convention). */

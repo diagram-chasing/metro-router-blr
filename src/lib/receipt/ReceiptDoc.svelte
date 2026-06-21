@@ -1,11 +1,9 @@
 <script lang="ts">
-	// Faithful on-screen preview of the PRINTED receipt. It renders the exact same
-	// op-list the printer gets (buildReceiptOps), on the printer's grid: 80mm Font A =
-	// 48 monospace columns, 12x24 cells (double-height/width handled via transforms).
-	// So what you see here is what the thermal head lays down — only the glyph shapes
-	// differ (the printer uses its built-in ROM font, not a web font). The Chladni
-	// stamp / route map / QR render inline and are captured from here at print time.
-	import type { ReceiptView } from './model';
+	// Faithful on-screen preview: the same op-list the printer gets (buildReceiptOps),
+	// on the printer's grid (80mm Font A = 48 monospace columns, 12x24 cells). Only the
+	// glyph shapes differ (printer ROM font vs web font). The Chladni stamp / route map
+	// / QR render inline and are captured from here at print time.
+	import type { ReceiptView } from './receipt';
 	import { buildReceiptOps, qrUrl } from './printReceipt';
 	import RouteMap from './viz/RouteMap.svelte';
 	import Stamp from './viz/Stamp.svelte';

@@ -1,7 +1,7 @@
 // GET /api/aqi?metric=pm25|co2&grid=raw|diff&base=0|1&decay=<km>
 //
 // Returns the accumulating emissions field as a normalised grid the /aqi page
-// draws as a grayscale raster (and TouchDesigner captures). See aqiGrid.ts.
+// draws as a grayscale raster. See aqiGrid.ts.
 
 import type { RequestHandler } from '@sveltejs/kit';
 

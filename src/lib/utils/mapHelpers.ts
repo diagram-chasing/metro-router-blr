@@ -2,14 +2,12 @@ import maplibre from 'maplibre-gl';
 import { stations } from '$lib/config/stations';
 import { JourneyCalculator } from './JourneyCalculator';
 
-// Calculate distance between two points
 export const calculateDistance = (point1: [number, number], point2: [number, number]) => {
 	const dx = point1[0] - point2[0];
 	const dy = point1[1] - point2[1];
 	return Math.sqrt(dx * dx + dy * dy);
 };
 
-// Find the closest point on a line segment to a given point
 export const findClosestPointOnSegment = (
 	p1: [number, number],
 	p2: [number, number],

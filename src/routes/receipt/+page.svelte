@@ -5,7 +5,7 @@
 	import TactileButton from '$lib/exhibit/TactileButton.svelte';
 	import type { StoredReceipt } from '$lib/server/receiptStore';
 	import ReceiptDoc from '$lib/receipt/ReceiptDoc.svelte';
-	import { buildReceiptView, type Distribution, type Histogram } from '$lib/receipt/model';
+	import { buildReceiptView, type Distribution, type Histogram } from '$lib/receipt/receipt';
 	import { downloadReceipt, openReceipt } from '$lib/receipt/rasterize';
 	import { printReceipt } from '$lib/receipt/printReceipt';
 

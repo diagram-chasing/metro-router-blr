@@ -16,7 +16,7 @@ import path from 'node:path';
 import Database from 'better-sqlite3';
 
 import type { Answers } from '$lib/exhibit/types';
-import type { ComputedReceipt } from './computeReceipt';
+import type { ComputedReceipt } from '$lib/receipt/receipt';
 import type { GeoSnapshot } from './receiptStore';
 
 let db: Database.Database | null = null;

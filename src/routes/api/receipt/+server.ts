@@ -9,7 +9,7 @@ import type { RequestHandler } from '@sveltejs/kit';
 
 import type { Answers, Mode } from '$lib/exhibit/types';
 import { blendedCo2PerKm, greyBucket, legKindToMode } from '$lib/exhibit/grey';
-import { computeReceipt, distanceBand } from '$lib/server/computeReceipt';
+import { computeReceipt, distanceBand } from '$lib/receipt/receipt';
 import { allTripStats, insertLine, stats, allPerKmStats } from '$lib/server/db';
 import { reverseGeocodeArea } from '$lib/server/reverseGeocode';
 import { getReceipt, putReceipt, type GeoSnapshot } from '$lib/server/receiptStore';

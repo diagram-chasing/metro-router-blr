@@ -1,16 +1,13 @@
-// Single source of truth for the printed receipt.
-//
-// buildReceiptOps() turns the view-model into an ordered list of print operations on
-// the printer's real grid (80mm Font A = 48 columns, 12x24 cells). That op-list is
-// rendered two ways so the on-screen preview matches the paper exactly:
-//   - opsToEscPos()  → ESC/POS bytes for the thermal printer
-//   - ReceiptDoc.svelte → HTML, same 48-col monospace grid (a faithful preview)
+// The receipt's print op-list, rendered two ways so the on-screen preview matches
+// the paper exactly:
+//   - opsToEscPos()      → ESC/POS bytes for the thermal printer
+//   - ReceiptDoc.svelte  → HTML, same grid (80mm Font A = 48 columns, 12x24 cells)
 //
 // Only the Chladni stamp and route map are real graphics; they ride as `img` ops and
 // are captured from the rendered DOM as small 1-bit rasters at print time.
 
 import { domToCanvas } from 'modern-screenshot';
-import type { ReceiptView } from './model';
+import type { ReceiptView } from './receipt';
 import { EscPos, DOTS_80MM } from './escpos';
 import {
 	PRINT_COLS,
@@ -21,7 +18,6 @@ import {
 	kv,
 	canister,
 	footprintBox,
-	treeList,
 	heroSrc,
 	asciiHistogram,
 	asciiOdometer,
@@ -56,12 +52,6 @@ export function qrUrl(view: ReceiptView): string {
 		: `https://pollution.receipt/${view.finePrint.barcodeSeed}`;
 }
 
-/** Build the ordered print op-list. Pure: no DOM, no side effects.
- *
- * One visual language top-to-bottom: a heavy-ruled masthead, numbered editorial
- * "eyebrow" section headers (the header, the divider and the key stat fused into one
- * line — so sections need no separate rule), instrument-panel rows railed with `│`,
- * and a single magnified, reverse-printed hero (the annual total). */
 export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	const ops: PrintOp[] = [];
 	const T = (s: string, o: Omit<Extract<PrintOp, { t: 'text' }>, 't' | 's'> = {}) =>
@@ -113,8 +103,6 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	deck(view.corridor.copy);
 	gap();
 	T('   '.padEnd(PRINT_COLS - 'g/km'.length) + 'g/km');
-	const cLabelW = Math.max(...view.corridor.rows.map((r) => r.label.length));
-	const noteIndent = ' '.repeat(2 + cLabelW + 1);
 	blockBars(
 		view.corridor.rows.map((r) => ({
 			label: r.label,
@@ -169,16 +157,13 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 		T(panelRow('Today', `${inr(view.swap.nowKg)} kg`));
 		T(panelRow('Better', `${inr(view.swap.swapKg)} kg`));
 		T(panelRule(`saves ${inr(view.swap.savedKg)} kg/yr  ~${view.swap.treesSaved} trees`));
-		// ind(`PM2.5 ${inr(view.swap.nowPm25G)} -> ${inr(view.swap.swapPm25G)} g/yr`);
 	}
 	gap();
 
-	// the profile seal (Chladni resonance), bracketed like a stamp
-	// T(ruleStr('*'));
+	// the profile seal (Chladni resonance)
 	ops.push({ t: 'img', id: 'stamp' });
 	T(view.archetype.name.toUpperCase(), { align: 'center', bold: true });
 	if (view.archetype.subtitle) T(view.archetype.subtitle, { align: 'center' });
-	// T(ruleStr('*'));
 	gap();
 
 	// by the way — parking as real-estate: a footprint diagram + an itemized
