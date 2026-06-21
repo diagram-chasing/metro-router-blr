@@ -53,13 +53,15 @@
 		return a && b ? { a, b } : null;
 	});
 
-	// Print weight for an emission intensity (g CO₂/pkm). Thresholds track the
-	// emissions table: walk 0 · bus 18 · metro 40 · auto 74 · car 120 · cab 172.
+	// Print weight for an emission intensity (g CO2/pkm). Thresholds track the
+	// emissions table: walk 0 / bus 18 / metro 40 / auto 74 / car 120 / cab 172.
+	// Intensity is encoded as dash DENSITY, not ink mass — every leg stays a thin
+	// hairline so even a dirty cross-city haul prints fast (no 6px solid bars).
 	function stroke(gPerKm: number): { width: number; dash: string } {
-		if (gPerKm < 5) return { width: 2, dash: '0.5 5' }; // walk — dotted hairline
-		if (gPerKm < 50) return { width: 2.5, dash: '7 5' }; // metro / bus — dashed
-		if (gPerKm < 100) return { width: 3.5, dash: 'none' }; // auto — solid
-		return { width: 6, dash: 'none' }; // car / cab — heavy solid
+		if (gPerKm < 5) return { width: 1.5, dash: '1 6' }; // walk — sparse dotted
+		if (gPerKm < 50) return { width: 2, dash: '6 5' }; // metro / bus — dashed
+		if (gPerKm < 100) return { width: 2, dash: '8 4' }; // auto — tighter dash
+		return { width: 2.5, dash: '10 3' }; // car / cab — dense dash (still broken)
 	}
 </script>
 
@@ -77,8 +79,8 @@
 				stroke-linejoin="round"
 			/>
 		{/each}
-		<!-- origin (hollow) → destination (filled) -->
-		<circle cx={ends.a[0]} cy={ends.a[1]} r="5" fill="#fff" stroke="#000" stroke-width="2.5" />
-		<circle cx={ends.b[0]} cy={ends.b[1]} r="5" fill="#000" stroke="#000" stroke-width="2.5" />
+		<!-- origin (hollow) -> destination (filled) -->
+		<circle cx={ends.a[0]} cy={ends.a[1]} r="4" fill="#fff" stroke="#000" stroke-width="2" />
+		<circle cx={ends.b[0]} cy={ends.b[1]} r="4" fill="#000" stroke="#000" stroke-width="2" />
 	{/if}
 </svg>

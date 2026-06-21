@@ -4,9 +4,10 @@
 
 	import TactileButton from '$lib/exhibit/TactileButton.svelte';
 	import type { StoredReceipt } from '$lib/server/receiptStore';
-	import Receipt from '$lib/receipt/Receipt.svelte';
+	import ReceiptDoc from '$lib/receipt/ReceiptDoc.svelte';
 	import { buildReceiptView, type Distribution, type Histogram } from '$lib/receipt/model';
 	import { downloadReceipt, openReceipt } from '$lib/receipt/rasterize';
+	import { printReceipt } from '$lib/receipt/printReceipt';
 
 	type ReceiptResponse = StoredReceipt & {
 		distribution?: Distribution;
@@ -19,6 +20,7 @@
 	let receipt = $state<ReceiptResponse | null>(null);
 	let node = $state<HTMLElement | null>(null);
 	let busy = $state(false);
+	let printMsg = $state<string | null>(null);
 
 	const view = $derived(
 		receipt
@@ -79,6 +81,21 @@
 		}
 	}
 
+	// Fast path: encode to native ESC/POS and stream to the thermal printer service.
+	async function printFast() {
+		if (!node || !view || busy) return;
+		busy = true;
+		printMsg = null;
+		try {
+			await printReceipt(view, node);
+			printMsg = 'Sent to printer';
+		} catch (e) {
+			printMsg = e instanceof Error ? e.message : 'print failed';
+		} finally {
+			busy = false;
+		}
+	}
+
 	function startOver() {
 		goto('/exhibit');
 	}
@@ -89,14 +106,18 @@
 		<TactileButton label="NEW VISITOR →" size="md" glow="amber" onclick={startOver} />
 		{#if view}
 			<TactileButton
-				label={busy ? 'RENDERING…' : 'SAVE IMAGE'}
+				label={busy ? 'PRINTING…' : 'PRINT'}
 				size="md"
 				glow="amber"
-				onclick={save}
+				onclick={printFast}
 			/>
+			<TactileButton label="SAVE IMAGE" size="md" glow="amber" onclick={save} />
 			<TactileButton label="PREVIEW" size="md" glow="amber" onclick={preview} />
 		{/if}
 	</div>
+	{#if printMsg}
+		<p class="status" class:err={printMsg !== 'Sent to printer'}>{printMsg}</p>
+	{/if}
 
 	{#if loading}
 		<p class="status">Printing your year…</p>
@@ -104,7 +125,7 @@
 		<p class="status err">Failed to load: {error}</p>
 	{:else if view}
 		<div class="paper-wrap">
-			<Receipt {view} bind:node />
+			<ReceiptDoc {view} bind:node />
 		</div>
 	{/if}
 </main>

@@ -45,7 +45,7 @@
 			<div class="flex gap-[3px]">
 				{#each reels as d, i (i)}
 					<span
-						class="relative grid h-12 w-8 place-items-center border-2 border-ink bg-paper text-r-stat font-bold leading-none tabular-nums"
+						class="relative grid h-12 w-9 place-items-center border border-ink bg-paper font-display text-r-stat leading-none"
 					>
 						<span class="pointer-events-none absolute inset-x-0 top-1/2 border-t border-ink"></span>
 						{d}

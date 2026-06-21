@@ -324,8 +324,13 @@
 	}
 </script>
 
-<div class="relative h-full w-full">
-	<div bind:this={mapContainer} class="absolute inset-0 h-full w-full"></div>
+<!-- Wrapper is `absolute inset-0`, so its height comes from the insets (a definite
+     622px against the positioned `.map-area` parent) rather than percentage resolution
+     against a flex-stretched ancestor — that chain collapses `h-full` to 0. maplibre
+     forces `position: relative` onto its own container, defeating `absolute` there, so
+     the inner container fills the now-definite wrapper with `h-full w-full`. -->
+<div class="absolute inset-0">
+	<div bind:this={mapContainer} class="h-full w-full"></div>
 </div>
 
 <style>

@@ -51,7 +51,7 @@
 		];
 
 		const rand = mulberry32(hash(seed) || 1);
-		const P = 2400; // initial grains
+		const P = 600; // initial grains — kept low so the figure prints as a light sketch
 		const K = 26; // settle iterations
 		const relax = 0.55; // Newton step relaxation
 		const cx = size / 2;
@@ -103,9 +103,8 @@
 	</defs>
 	<g clip-path="url(#{uid})">
 		{#each grains as g, i (i)}
-			<circle cx={g.x} cy={g.y} r="0.95" fill="#000" />
+			<circle cx={g.x} cy={g.y} r="0.7" fill="#000" />
 		{/each}
 	</g>
-	<circle cx={size / 2} cy={size / 2} r={ringR} fill="none" stroke="#000" stroke-width="2.5" />
-	<circle cx={size / 2} cy={size / 2} r={ringR - 4} fill="none" stroke="#000" stroke-width="1" />
+	<circle cx={size / 2} cy={size / 2} r={ringR} fill="none" stroke="#000" stroke-width="1.2" />
 </svg>
