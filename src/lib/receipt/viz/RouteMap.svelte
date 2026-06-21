@@ -1,11 +1,8 @@
 <script lang="ts">
-	// The route as it was actually drawn — a "route signature", not a basemap.
-	//
-	// Geometry is the per-leg [lng,lat] polyline the visitor traced at Q3. We use a
-	// d3 Mercator projection with fitExtent() so any route — a 1 km hop or a 30 km
-	// cross-city haul — lands centered and uniformly scaled inside the same box,
-	// shape preserved. Emission intensity is encoded in PRINT, not colour: a clean
-	// leg prints as a faint dotted hairline, a dirty leg as a heavy solid stroke.
+	// Per-leg [lng,lat] polylines (Q3), projected with a d3 Mercator fitExtent so any
+	// route — short hop or cross-city haul — lands centred at the same scale, shape kept.
+	// Intensity is encoded by line WEIGHT, not colour: every leg is the same dotted
+	// hairline; a dirtier leg gets fatter, bolder dots so it pops without flooding the head.
 	import { geoMercator, geoPath } from 'd3-geo';
 	import type { Feature, LineString } from 'geojson';
 
@@ -53,22 +50,20 @@
 		return a && b ? { a, b } : null;
 	});
 
-	// Intensity is encoded by PRINT STYLE, not colour (thresholds track the emissions
-	// table: walk 0 / bus 18 / metro 40 / auto 74 / car 120 / cab 172). A clean leg is
-	// a faint dotted hairline (....); a dirty leg is a DOUBLE line (====) — two thin
-	// parallel rules with a white gap, so it reads heavy without flooding the head.
-	function legStyle(gPerKm: number): { double: boolean; width: number; dash: string } {
-		if (gPerKm < 50) return { double: false, width: 1.8, dash: '1 5' }; // walk/metro/bus — dotted
-		return { double: true, width: gPerKm < 100 ? 8 : 10, dash: 'none' }; // auto/car/cab — double line
+	// Dotted everywhere; weight ramps gently with g/km so dirtier legs read heavier
+	// without becoming fat circles. Scale tracks the emissions table (walk 0 / bus 18 /
+	// metro 40 / auto 74 / car 120 / cab 172). Keep dots small (max ~3px) and the gap
+	// tight (~1.6x the dot) so every leg reads as a dotted LINE, just bolder when dirty.
+	function legStyle(gPerKm: number): { width: number; dash: string } {
+		const t = Math.min(Math.max(gPerKm, 0) / 170, 1); // 0 clean .. 1 dirtiest
+		const width = 1.4 + t * 1.6; // 1.4 .. 3
+		return { width, dash: `0.1 ${(width * 1.6).toFixed(1)}` };
 	}
-
-	// White carve width for a double leg: leaves ~2px black rails with a clear gap.
-	const carveWidth = (w: number) => w - 4;
 </script>
 
 <svg viewBox="0 0 {width} {height}" {width} class="block w-full" role="img" aria-label="your route">
 	{#if path && ends}
-		<!-- outer black stroke for every leg -->
+		<!-- dotted stroke for every leg; weight ∝ emissions -->
 		{#each legs as leg, i (i)}
 			{@const s = legStyle(leg.gPerKm)}
 			<path
@@ -80,20 +75,6 @@
 				stroke-linecap="round"
 				stroke-linejoin="round"
 			/>
-		{/each}
-		<!-- carve the centre of dirty legs with white, leaving a double line (====) -->
-		{#each legs as leg, i (i)}
-			{@const s = legStyle(leg.gPerKm)}
-			{#if s.double}
-				<path
-					d={path(features[i]) ?? ''}
-					fill="none"
-					stroke="#fff"
-					stroke-width={carveWidth(s.width)}
-					stroke-linecap="round"
-					stroke-linejoin="round"
-				/>
-			{/if}
 		{/each}
 		<!-- origin (hollow) -> destination (filled) -->
 		<circle cx={ends.a[0]} cy={ends.a[1]} r="4" fill="#fff" stroke="#000" stroke-width="2" />

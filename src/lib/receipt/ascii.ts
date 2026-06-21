@@ -2,6 +2,7 @@
 // column grid (80mm Font A = 48 cols). Dependency-free and DOM-free.
 
 export const PRINT_COLS = 48; // 80mm, Font A (12-dot glyphs)
+export const PRINT_COLS_B = 64; // 80mm, Font B (9-dot glyphs) — the "fine print" grid
 
 /** Greedy word-wrap to `cols` columns. */
 export function wrapText(s: string, cols = PRINT_COLS): string[] {
@@ -23,6 +24,29 @@ export function wrapText(s: string, cols = PRINT_COLS): string[] {
 export function ledger(label: string, value: string, cols = PRINT_COLS): string {
 	const l = label.toUpperCase();
 	return l + ' '.repeat(Math.max(1, cols - l.length - value.length)) + value;
+}
+
+/** FROM -> TO place-names as three columns: each name word-wrapped inside its own
+ *  side column, an arrow gutter between them. The arrow sits on the block's middle
+ *  row. Each returned line is at most `cols` wide (trailing space trimmed). */
+export function routeColumns(from: string, to: string, cols = PRINT_COLS): string[] {
+	const arrow = '->';
+	const mid = 6; // arrow gutter between the two name columns
+	const side = Math.floor((cols - mid) / 2);
+	const lhs = wrapText(from.toUpperCase(), side);
+	const rhs = wrapText(to.toUpperCase(), side);
+	const rows = Math.max(lhs.length, rhs.length);
+	const arrowRow = Math.floor((rows - 1) / 2);
+	const pad = Math.floor((mid - arrow.length) / 2);
+	const gutter = ' '.repeat(pad) + arrow + ' '.repeat(mid - pad - arrow.length);
+	const out: string[] = [];
+	for (let i = 0; i < rows; i++) {
+		const l = (lhs[i] ?? '').padEnd(side);
+		const g = i === arrowRow ? gutter : ' '.repeat(mid);
+		const r = rhs[i] ?? '';
+		out.push((l + g + r).replace(/\s+$/, ''));
+	}
+	return out;
 }
 
 /** A full-width ASCII rule, e.g. dashes between sections. */
@@ -54,6 +78,79 @@ export function blockBars(
 			rail + r.label.toUpperCase().padEnd(labelW) + ' ' + bar + '  ' + r.right.padStart(rightW);
 		return { text, mark: !!r.mark };
 	});
+}
+
+// Per-km dirtiness bands (g CO2/km), cleanest -> dirtiest. Boundaries track the
+// grey-bucket thresholds in exhibit/grey.ts; ranges are written non-overlapping so
+// no value reads as belonging to two bands.
+const SPREAD_MAX = [15, 45, 80, 130];
+const SPREAD_LABELS = ['0-14', '15-44', '45-79', '80-129', '130+'];
+const spreadBand = (v: number): number => {
+	for (let i = 0; i < SPREAD_MAX.length; i++) if (v < SPREAD_MAX[i]) return i;
+	return SPREAD_MAX.length;
+};
+
+/** A Marimekko strip of per-km dirtiness: one band per grey-bucket, segment WIDTH = how
+ *  many people sit there (no counts shown — only the proportion reads). Bands are `█`
+ *  runs split by `│`; the visitor's band carries a `▲ YOU` caret. Ranges sit on top. */
+export function asciiSpread(values: number[], mine: number, cols = PRINT_COLS): string[] {
+	const counts = [0, 0, 0, 0, 0];
+	for (const v of values) counts[spreadBand(v)]++;
+	const total = values.length || 1;
+	const youB = spreadBand(mine);
+
+	// Bands with anyone in them (YOU's band always shows), cleanest -> dirtiest.
+	const vis = counts
+		.map((count, band) => ({ band, count }))
+		.filter((b) => b.count > 0 || b.band === youB);
+	const k = vis.length;
+
+	// Widths ∝ share, floored at 2 so a lone commuter stays visible, then the rounding
+	// remainder handed to the largest fractions so the runs + dividers fill `cols` exactly.
+	const fillTotal = cols - (k - 1); // one column per `│` divider
+	const raw = vis.map((b) => (b.count / total) * fillTotal);
+	const w = raw.map((x) => Math.max(2, Math.floor(x)));
+	let leftover = fillTotal - w.reduce((a, b) => a + b, 0);
+	const byFrac = raw.map((x, i) => ({ i, frac: x - Math.floor(x) })).sort((a, b) => b.frac - a.frac);
+	for (let j = 0; leftover > 0 && byFrac.length; j++, leftover--) w[byFrac[j % byFrac.length].i]++;
+	while (leftover < 0) {
+		const mi = w.indexOf(Math.max(...w));
+		if (w[mi] <= 2) break;
+		w[mi]--;
+		leftover++;
+	}
+
+	// YOU's band prints solid; everyone else is a light, perforated fill. Shade means
+	// "is this you", not dirtiness — that's carried by the cleanest -> dirtiest order.
+	const strip = vis.map((b, i) => (b.band === youB ? '█' : '░').repeat(w[i])).join('│');
+
+	// First column of each band's run (account for the `│` between runs).
+	const starts: number[] = [];
+	for (let i = 0, c = 0; i < k; i++) {
+		starts.push(c);
+		c += w[i] + 1;
+	}
+
+	// Ranges on top, each left-aligned over its band; nudge right on a collision.
+	const labelRow = Array(cols).fill(' ');
+	for (let i = 0, cursor = 0; i < k; i++) {
+		const lab = SPREAD_LABELS[vis[i].band];
+		const pos = Math.max(starts[i], cursor);
+		for (let c = 0; c < lab.length && pos + c < cols; c++) labelRow[pos + c] = lab[c];
+		cursor = pos + lab.length + 1;
+	}
+
+	const youI = vis.findIndex((b) => b.band === youB);
+	const caretPos = Math.min(cols - 1, starts[youI] + Math.floor(w[youI] / 2));
+	const ends = 'cleaner'.padEnd(cols - 'dirtier'.length) + 'dirtier';
+
+	return [
+		labelRow.join('').replace(/\s+$/, ''),
+
+		strip,
+		(' '.repeat(caretPos) + '▲ YOU').slice(0, cols),
+		ends
+	];
 }
 
 /** An editorial section header, numbered like a bill line: `NN LABEL ──…── stat`.
@@ -132,28 +229,4 @@ export function asciiOdometer(count: number, digits = 6): string[] {
 	const border = '+' + '---+'.repeat(s.length);
 	const cells = '|' + [...s].map((d) => ` ${d} |`).join('');
 	return [border, cells, border];
-}
-
-/** Distribution as a full-width ASCII column chart with a YOU caret underneath. */
-export function asciiHistogram(values: number[], mine: number, cols = PRINT_COLS): string[] {
-	const N = Math.floor(cols / 2); // one bin per 2 columns → fills the full width
-	const MAXX = 180;
-	const H = 5;
-	const clampI = (i: number) => Math.max(0, Math.min(N - 1, i));
-
-	const counts = Array(N).fill(0);
-	for (const v of values) counts[clampI(Math.floor((v / MAXX) * N))]++;
-	const maxC = Math.max(1, ...counts);
-	const hgt = counts.map((c) => Math.round((c / maxC) * H));
-
-	const out: string[] = [];
-	for (let lvl = H; lvl >= 1; lvl--) {
-		out.push(hgt.map((h) => (h >= lvl ? '[]' : '  ')).join('').replace(/\s+$/, ''));
-	}
-	out.push('+' + '-'.repeat(N * 2 - 2) + '+');
-	const youI = clampI(Math.floor((mine / MAXX) * N));
-	out.push(' '.repeat(youI * 2) + '^');
-	out.push(`YOU = ${mine} g/km`);
-	out.push('cleaner' + ' '.repeat(cols - 14) + 'dirtier');
-	return out;
 }

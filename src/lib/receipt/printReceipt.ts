@@ -11,6 +11,7 @@ import type { ReceiptView } from './receipt';
 import { EscPos, DOTS_80MM } from './escpos';
 import {
 	PRINT_COLS,
+	PRINT_COLS_B,
 	blockBars,
 	eyebrow,
 	panelRow,
@@ -19,10 +20,11 @@ import {
 	canister,
 	footprintBox,
 	heroSrc,
-	asciiHistogram,
+	asciiSpread,
 	asciiOdometer,
 	wrapText,
 	ledger,
+	routeColumns,
 	rule as ruleStr
 } from './ascii';
 
@@ -37,6 +39,7 @@ export type PrintOp =
 		align?: Align;
 		bold?: boolean;
 		rev?: boolean;
+		small?: boolean; // print in Font B (9x17) — the fine-print grid
 		w?: 1 | 2 | 3 | 4;
 		h?: 1 | 2 | 3 | 4;
 	}
@@ -69,17 +72,15 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	T("THAT WASN'T", { align: 'center', bold: true, w: 2, h: 2 });
 	T(ruleStr('═'));
 	T('A commute emissions receipt', { align: 'center' });
-	T(ledger(view.meta.dateLabel, view.meta.timeLabel));
-	T(`Order no. ${view.meta.visitorNo}`);
+	T(ledger(`${view.meta.dateLabel}  ${view.meta.timeLabel}`, `Order no. ${view.meta.visitorNo}`));
 	gap();
 
 	// 01 your route
 	eyebrowOp('Your Route');
-	ind(view.item.origin.toUpperCase());
-	ind('-> ' + view.item.dest.toUpperCase());
+	routeColumns(view.item.origin, view.item.dest, PRINT_COLS - 3).forEach((l) => ind(l));
 	if (view.route.geo.some((g) => g.coords?.length >= 2)) {
 		ops.push({ t: 'img', id: 'map' });
-		ind('.... cleaner leg      ==== dirtier leg');
+		ind('.... cleaner leg     ■ ■ ■ dirtier leg');
 	}
 	gap();
 	ind(kv('Distance', `${view.item.distanceKm.toFixed(1)} km each way`));
@@ -88,12 +89,19 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	gap();
 
 	// 02 your mode
-	eyebrowOp('Compared to people here', view.modeRank.histogram ? '' : '');
+	eyebrowOp(
+		'Compared to people here',
+		view.modeRank.histogram ? `` : ''
+	);
+	gap();
 	deck(view.modeRank.copy);
+
 	if (view.modeRank.histogram) {
-		gap();
-		asciiHistogram(view.modeRank.histogram.values, view.modeRank.histogram.mine).forEach((l) => T(l));
+	gap();
+		T('DIRTINESS PER KM (g C02/km)', { bold: true });
+		asciiSpread(view.modeRank.histogram.values, view.modeRank.histogram.mine).forEach((l) => T(l));
 	}
+	gap();
 	if (view.modeRank.cleanerNote) deck(view.modeRank.cleanerNote);
 	gap();
 
@@ -173,7 +181,7 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 
 	// by the way — parking as real-estate: a footprint diagram + an itemized
 	// "land you use free" panel, then the city's live car-registration odometer.
-	eyebrowOp('By The Way...');
+	eyebrowOp('Not just the air though...');
 	deck(view.parking.copy);
 	gap();
 	footprintBox('one parked car').forEach((l, i) =>
@@ -192,10 +200,11 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	gap();
 
 	// fine print + footer
-	wrapText(view.finePrint.disclaimer).forEach((l) => T(l));
+	wrapText(view.finePrint.disclaimer, PRINT_COLS_B).forEach((l) => T(l, { small: true }));
 	gap();
 	T(ruleStr('*'));
-	T('A project by Diagram Chasing', { align: 'center' });
+	gap();
+	T('An experiment by Diagram Chasing', { align: 'center' });
 	T('https://diagramchasing.fun', { align: 'center' });
 	gap();
 	ops.push({ t: 'cut' });
@@ -252,6 +261,7 @@ export async function opsToEscPos(ops: PrintOp[], node: HTMLElement): Promise<Ui
 			case 'text': {
 				const big = (op.w ?? 1) > 1 || (op.h ?? 1) > 1;
 				p.align(op.align ?? 'left');
+				if (op.small) p.font('B');
 				if (op.rev) p.reverse(true);
 				if (op.bold) p.bold(true);
 				if (big) p.size(op.w ?? 1, op.h ?? 1);
@@ -259,6 +269,7 @@ export async function opsToEscPos(ops: PrintOp[], node: HTMLElement): Promise<Ui
 				if (big) p.size(1, 1);
 				if (op.bold) p.bold(false);
 				if (op.rev) p.reverse(false);
+				if (op.small) p.font('A');
 				break;
 			}
 			case 'rule':

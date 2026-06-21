@@ -18,10 +18,14 @@
 <div class="paper" bind:this={node}>
 	{#each ops as op, i (i)}
 		{#if op.t === 'text'}
-			<div class="ln" style="text-align:{op.align ?? 'left'}; height:{24 * (op.h ?? 1)}px;">
+			<div
+				class="ln"
+				style="text-align:{op.align ?? 'left'}; height:{(op.small ? 17 : 24) * (op.h ?? 1)}px;"
+			>
 				<span
 					class:bold={op.bold}
 					class:rev={op.rev}
+					class:small={op.small}
 					style="display:inline-block; transform:scale({op.w ?? 1},{op.h ?? 1}); transform-origin:{originX(op.align)} top;"
 					>{op.s || ' '}</span
 				>
@@ -71,6 +75,12 @@
 	}
 	.bold {
 		font-weight: 700;
+	}
+	/* fine print: the printer's Font B (9x17). 15px = 20px x 48/64, so 64 small
+	   columns span the same 48ch paper width; 17px line matches the shorter glyph. */
+	.small {
+		font-size: 15px;
+		line-height: 17px;
 	}
 	/* reverse (white-on-black) — the inverted annual-total hero. */
 	.rev {

@@ -7,6 +7,7 @@ import {
 import { legKindToMode } from '$lib/exhibit/grey';
 import type { Answers, Decider, Frequency, FunQuestionId, Lifestyle, Mode } from '$lib/exhibit/types';
 import type { GeoSnapshot } from '$lib/server/receiptStore';
+import { assignArchetype, archetypeBasis } from './archetype';
 
 export type ComputedReceipt = {
 	// Inputs echoed back in readable form
@@ -105,7 +106,6 @@ export type Distribution = { percentile: number; n: number; values: number[] };
 export type Histogram = { values: number[]; mine: number; n: number };
 
 export type RouteSeg = { mode: Mode; lengthM: number };
-// A drawn leg + its CO₂ intensity, for the route-signature minimap.
 export type RouteGeoLeg = { coords: [number, number][]; gPerKm: number };
 
 export type ReceiptView = {
@@ -269,24 +269,133 @@ const SEAL = {
 
 // ── Copy ──
 
-// Headline pitch by decider (recommendation strategy).
-const DECIDER_HEADLINE: Record<Decider, string> = {
-	speed: 'The metro version is only a few minutes more — and you skip the traffic.',
-	cost: 'Switching this trip would save real money every month.',
-	comfort: 'AC the whole way, about the same time.',
-	habit: 'Change one thing: just the longest leg.',
-	no_option: "No good option today. When a line reaches you, here's what changes."
+// {token} → value. Pools stay pure data, bound late, so editing them stays safe.
+export function interp(s: string, vars: Record<string, string>): string {
+	return s.replace(/\{(\w+)\}/g, (_, k) => vars[k] ?? `{${k}}`);
+}
+
+// A line is opener (frames the beat, names the mode) + verdict (the numbers) +
+// tail (a universal deflation). Every tail reads after any verdict, so the pools
+// multiply freely and every combination stays grammatical and in-tone.
+const OPENERS = [
+	'{lc}, then.',
+	'{lc}, i see.',
+	'you travel by {lc}.',
+	'you, the {lc}, the whole way.',
+	'let the record show: {lc}.',
+	'so. {lc}.'
+];
+
+const TAILS = [
+	'but anyway.',
+	// 'noted, reluctantly.',
+	"i wouldn't dwell on it.",
+	'do with that what you will.',
+	'i checked twice.',
+	"i'd hoped to be wrong.",
+	"that's where we are.",
+	'but moving on.',
+	'it is what it is, i guess.',
+	// "i just work here,",
+	'make of it what you like.',
+	// "there. now we both know.",
+	// 'that is all i have.',
+	'',
+	'',
+	''
+];
+
+const tail = (id: string, salt: string) => pick(id, salt, TAILS);
+
+// ── Recommendation · decider headline ──
+const DECIDER_POOLS: Record<Decider, string[]> = {
+	speed: [
+		'the metro version is a few minutes longer and skips the part where you sit still behind a bus, reconsidering things.',
+		'metro is barely slower here, and nothing on it idles in traffic. you keep those minutes, though.'
+	],
+	cost: [
+		"switching this trip saves big money every month. i won't itemise it; you'd be shocked.",
+		"the cheaper version exists and you're not taking it.",
+		'this swap pays you back every month. just so you know.'
+	],
+	comfort: [
+		'ac the whole way, about the same time. i do not know what else you want from me.',
+		'the comfortable option is also the clean one here. rare. take it.',
+		'same time, air-conditioned, fewer decisions. that is the pitch. that is all i have.'
+	],
+	habit: [
+		'change one thing. the longest leg. that is the whole ask.',
+		'you do not have to overhaul anything — swap the heaviest leg and stop there.',
+		'one leg. the big one. leave the rest of your routine alone.'
+	],
+	no_option: [
+		'no good option today, honestly. when a line reaches you, this is what changes.',
+		"there isn't a clean version of this yet. when the network catches up, here is the difference.",
+		'fair enough — nothing better exists for you right now. file this for when it does.'
+	]
 };
 
-// Friction overlays per Q6 friction (the "personal nudge").
-const FRICTION_OVERLAY: Record<FunQuestionId, string> = {
-	walking: 'A short auto stand-in for the walking legs keeps this realistic.',
-	planning_slack: 'Keep it to one transfer max. The simpler the swap, the more likely it sticks.',
-	crowd_tolerance:
-		"Crowds don't faze you, so the only thing left is comfort — and the metro has AC.",
-	boredom: 'Add up the dead time and you get hours back per week to read, podcast, or doze.'
+function deciderHeadline(decider: Decider, id: string): string {
+	return pick(id, 'decider', DECIDER_POOLS[decider]);
+}
+
+// ── Personal nudge · friction overlay ──
+const FRICTION_POOLS: Record<FunQuestionId, string[]> = {
+	walking: [
+		'a short auto covers the walking legs, so the swap is realistic. you keep your feet dry.',
+		'the walking bits become a quick auto. nobody is asking you to hike.'
+	],
+	planning_slack: [
+		"keep it to one transfer. the simpler the swap, the more it sticks. i've seen the alternative.",
+		'one transfer, maximum. complexity is where these plans go to die.'
+	],
+	crowd_tolerance: [
+		'crowds do not bother you, you said, so the only thing left to want is comfort. the metro has ac.',
+		'you can handle a crowd, so this comes down to comfort, and the ac side wins.'
+	],
+	boredom: [
+		'add up the dead time and it is hours a week. on the metro that idle time becomes yours again.',
+		'that idle time becomes yours again. hours of it. do nothing with them, ideally.'
+	]
 };
-const PERSONAL_NUDGE_FALLBACK = 'One easy switch on the heaviest leg is the easiest place to start.';
+
+const NUDGE_FALLBACK = [
+	'one switch on the heaviest leg is the easiest place to start. start there.',
+	'swap the worst leg first. the rest can wait, or not happen.'
+];
+
+function frictionNudge(funId: FunQuestionId | undefined, id: string): string {
+	return funId ? pick(id, 'friction', FRICTION_POOLS[funId]) : pick(id, 'friction', NUDGE_FALLBACK);
+}
+
+// ── "Cleaner than you" note ──
+const CLEANER_NOTE = [
+	'about {x} in 10 commuters so far come in cleaner than you.',
+	'roughly {x} of every 10 logged here travel cleaner. you are not among them.',
+	'{x} in 10 so far beat you on this.'
+];
+
+function cleanerNoteCopy(tenths: number, id: string): string {
+	return interp(pick(id, 'cleaner', CLEANER_NOTE), { x: String(tenths) });
+}
+
+// ── Clean-branch year / units (nothing to show) ──
+const YEAR_CLEAN = [
+	'barely a mark. this grid stays empty.',
+	'hardly a smudge. this grid does not notice you.',
+	"a rounding error, in the city's favour.",
+	'the tally cannot be drawn. let\'s keep it that way.',
+	'negligible. i left this grid blank on purpose.'
+];
+
+const UNITS_CLEAN = [
+	"not enough to need a unit. i usually keep one ready; you didn't fill it.",
+	'too little to convert into anything. shrugs. that\'s good though.',
+	'no cylinders, no trees. nothing to translate.',
+	'below the threshold for a single unit. pleasantly anticlimactic.',
+	'the equivalents all come out zero. nothing to make tangible.',
+	"doesn't add up to one of anything. a most excellent achievement."
+];
 
 const FREQUENCY_LABEL: Record<Frequency, string> = {
 	daily: 'most days',
@@ -326,33 +435,6 @@ function multiplierPhrase(m: number): string {
 	return `about ${rounded}×`;
 }
 
-function archetypeFor(mode: Mode, decider: Decider): { name: string; subtitle: string } {
-	const subtitleBase = '';
-	if (mode === 'two_wheeler') {
-		return { name: 'The Lane-Splitter', subtitle: subtitleBase };
-	}
-	if (mode === 'bus' || mode === 'metro' || mode === 'active') {
-		return { name: 'The Quiet Optimizer', subtitle: subtitleBase };
-	}
-	if (mode === 'auto') {
-		if (decider === 'habit') return { name: 'The Auto-Pilot', subtitle: subtitleBase };
-		return { name: 'The Meter Runner', subtitle: subtitleBase };
-	}
-	// cab / car
-	switch (decider) {
-		case 'comfort':
-			return { name: 'The Comfort Cruiser', subtitle: subtitleBase };
-		case 'speed':
-			return { name: 'The Cab-and-Pray Commuter', subtitle: subtitleBase };
-		case 'cost':
-			return { name: 'The Door-to-Door Spender', subtitle: subtitleBase };
-		case 'no_option':
-			return { name: 'The Reluctant Rider', subtitle: subtitleBase };
-		default:
-			return { name: 'The Comfort Cruiser', subtitle: subtitleBase };
-	}
-}
-
 function subtitleFor(funId: FunQuestionId | undefined, funAnswer: string | undefined): string {
 	if (!funId) return '';
 	if (funId === 'crowd_tolerance' && funAnswer === 'front') return '…who can handle a crowd anyway';
@@ -362,78 +444,171 @@ function subtitleFor(funId: FunQuestionId | undefined, funAnswer: string | undef
 	return '';
 }
 
+const VERDICTS_DIRTY = [
+	'{ord} dirtiest of the {tot} ways to cross town.',
+	'{ord} from the bottom — the bottom being clean.',
+	'{cleaner} of the {tot} options were cleaner. you passed on them.',
+	'dirtier per km than all but {dirtier} of the {tot}.',
+	'{ord} place out of {tot}. we count from the worst.',
+	'the {ord} heaviest per km on offer here.',
+	'of {tot} ways to do this, you found the {ord} worst.',
+	"{ord} of {tot}. i'd give partial credit but there isn't a column."
+];
+
+const VERDICTS_DIRTIEST = [
+	'the single dirtiest of the {tot}. the actual worst sorry.',
+	'dead last of {tot}, and last means dirtiest.',
+	'no mode here is worse per km. you found the floor.'
+];
+
+const VERDICTS_CLEAN = [
+	'nothing to tally. i had a speech ready and everything dammit.',
+	"there's no number here worth printing.",
+	"cleanest tenth in the city. i don't even get to be disappointed.",
+	'barely a smudge on the ledger.',
+	'i ran the maths and it came back boring. good for you.',
+	'nothing to roast. this is awkward for me, professionally.',
+	'the dirty column stayed empty. unlike most people here hmmph.',
+	'you have left me machine with nothing to do.',
+	"clean enough that the verdict won't load."
+];
+
+const VERDICTS_2W = [
+	'clean for the sky, rough on your own lungs.',
+	'near-innocent on carbon, less so on what you breathe.',
+	'light on the air, heavy on the air you personally inhale.',
+	'two scores, and they refuse to agree.',
+	'the atmosphere is fine. you, slowly, less so.',
+	'kind to the planet, unkind to the bit of it in your chest.',
+	'low carbon, high particulate. a riddle no one requested.',
+	'the sky forgives you. your lungs are still reviewing.'
+];
+
 function modeRankCopy(c: ComputedReceipt, id: string): string {
-	const { modeLabel } = c.trip;
-	const lc = modeLabel.toLowerCase();
-	if (c.modeRank.isClean) {
-		return pick(id, 'mode-clean', [
-			`You travel by ${lc}. You're in the cleanest tenth. We had a roast written. You've spoiled it.`,
-			`You travel by ${lc}. Cleanest tenth in the city — we sharpened a verdict for nothing.`,
-			`${modeLabel}, most days. Top tenth for clean. The receipt was meant to sting; it doesn't.`,
-			`You travel by ${lc}. We had a whole paragraph of judgement queued. Deleted — you're in the cleanest tenth.`,
-			`${modeLabel}. The cleanest tenth of the city moves like you. Annoyingly virtuous.`,
-			`You travel by ${lc}. The machine was hoping for worse. Cleanest tenth, instead.`,
-			`You travel by ${lc}. We print these to make a point. Yours quietly undercuts it.`
-		]);
-	}
-	if (c.modeRank.isTwoWheeler) {
-		return pick(id, 'mode-2w', [
-			`You travel by two-wheeler, which is a trick question. Near the cleanest on carbon, near the dirtiest on the particulate you breathe. Two ranks. Pick one.`,
-			`Two-wheeler. Clean on carbon, filthy on the PM2.5 in your lungs. The plot twist rides with you.`,
-			`You're on a two-wheeler. The atmosphere thanks you; your lungs file a complaint.`,
-			`Two-wheeler: a clean-carbon, dirty-air compromise in a helmet. Two scores, no winner.`,
-			`You travel by two-wheeler. Light on CO₂, heavy on what you inhale. Same vehicle, opposite verdicts.`,
-			`Two-wheeler. You spared the sky and taxed your own breathing. Bold trade.`,
-			`You ride a two-wheeler — the asterisk of clean travel. Good for carbon, rough on the particulate.`
-		]);
-	}
-	const ord = ordinal(c.modeRank.carbonRankFromDirtiest);
+	const lc = c.trip.modeLabel.toLowerCase();
 	const tot = c.modeRank.totalModes;
-	return pick(id, 'mode-dirty', [
-		`You travel by ${lc}. Per kilometre that's the ${ord} dirtiest of the ${tot} ways to move in this city.`,
-		`${modeLabel}. Per km, the ${ord} dirtiest of ${tot} ways this city gets around. Congratulations are not in order :/`,
-		`You move by ${lc}, which is ${ord} dirtiest per km of ${tot} options.`,
-		`${modeLabel}, per kilometre, ranks ${ord} dirtiest of ${tot}. Yer a cigarrete salesman, Harry.`,
-		`Of the ${tot} ways to cross this city, ${lc} is the ${ord} dirtiest per km. Come on man.`,
-		`Per km, ${lc} is the ${ord} dirtiest of ${tot} here. We're not judging but...eh.`,
-		`You travel by ${lc}: ${ord} dirtiest per km among ${tot} modes. Many cleaner options declined.`
-	]);
+	const rank = c.modeRank.carbonRankFromDirtiest;
+	const cleaner = tot - rank;
+	const dirtier = rank - 1;
+
+	const opener = interp(pick(id, 'mr-open', OPENERS), { lc });
+
+	let verdict: string;
+	if (c.modeRank.isClean) {
+		verdict = pick(id, 'mr-verdict', VERDICTS_CLEAN);
+	} else if (c.modeRank.isTwoWheeler) {
+		verdict = pick(id, 'mr-verdict', VERDICTS_2W);
+	} else if (rank === 1) {
+		verdict = interp(pick(id, 'mr-verdict', VERDICTS_DIRTIEST), { tot: String(tot) });
+	} else {
+		// Drop lines whose counts would read wrong (e.g. "0 were cleaner").
+		const pool = VERDICTS_DIRTY.filter(
+			(v) => (!v.includes('{dirtier}') || dirtier > 0) && (!v.includes('{cleaner}') || cleaner > 0)
+		);
+		verdict = interp(pick(id, 'mr-verdict', pool), {
+			ord: ordinal(rank),
+			tot: String(tot),
+			cleaner: String(cleaner),
+			dirtier: String(dirtier)
+		});
+	}
+
+	return `${opener} ${verdict} ${tail(id, 'mr-tail')}`.trim();
 }
 
-// A tight 2-line factual deck. The daily total is shown in the section eyebrow, so
-// the deck never repeats it — it carries the same-road comparison instead.
-function corridorCopy(c: ComputedReceipt): string {
+// Same road, compared. The daily total lives in the section eyebrow, so the deck
+// carries the comparison instead. The empty/clean/dirty branches each get a pool.
+const CORRIDOR_NOYOU = [
+	'you skipped the road entirely. the cabs still pay {cabG} g/km to use it.',
+	"you're not on this road. the cabs on it manage {cabG} g/km regardless.",
+	'no corridor row for you. the cabs idling on it: {cabG} g/km.',
+	'you left the traffic to everyone else. they run {cabG} g/km all the same.'
+];
+
+const CORRIDOR_CLEAN = [
+	'{youG} g/km, your {youLabel}. the cab beside you spends {cabG}.',
+	'the {youLabel} does it on {youG} g/km. the cabs manage {cabG}.',
+	'your {youLabel}: {youG} g/km. the cab next to it: {cabG}.'
+];
+
+const CORRIDOR_DIRTY = [
+	'the bus does this road at {busG} g/km. you did {youG}.',
+	'{busG} g/km gets a busload down this road. you spent {youG}.',
+	'same road, same distance. the bus: {busG} g/km. you: {youG}.',
+	'a bus manages {busG} g/km here. you came in at {youG}, for one person.'
+];
+
+function corridorCopy(c: ComputedReceipt, id: string): string {
 	const rows = c.corridor.rows;
-	const bus = rows.find((r) => r.key === 'bus');
+	const cabG = String(rows.find((r) => r.key === 'cab')?.gPerKm ?? 0);
+	const busG = String(rows.find((r) => r.key === 'bus')?.gPerKm ?? 18);
 	const you = rows.find((r) => r.isYou);
-	const cabG = rows.find((r) => r.key === 'cab')?.gPerKm ?? 0;
+
+	let line: string;
 	if (!you) {
-		return `You skip the road entirely. The cabs on it still pay ${cabG} g/km.`;
+		line = interp(pick(id, 'cor-verdict', CORRIDOR_NOYOU), { cabG });
+	} else if (c.modeRank.isClean) {
+		line = interp(pick(id, 'cor-verdict', CORRIDOR_CLEAN), {
+			youLabel: you.label,
+			youG: String(you.gPerKm),
+			cabG
+		});
+	} else {
+		line = interp(pick(id, 'cor-verdict', CORRIDOR_DIRTY), { busG, youG: String(you.gPerKm) });
 	}
-	if (c.modeRank.isClean) {
-		return `You ride the ${you.label} at ${you.gPerKm} g/km — the cheap seats, environmentally. Cabs pay ${cabG}.`;
-	}
-	return `The bus does it at ${bus?.gPerKm ?? 18} g/km. You did ${you.gPerKm}  g/km.`;
+	return `${line} ${tail(id, 'cor-tail')}`.trim();
 }
+
+const SWAP_NONE = [
+	"nothing to swap. you're the cleaner option other receipts get told to switch to.",
+	"no downgrade available. you're already where i'd send everyone else.",
+	"skip this part. you're the version of this trip i wish more people picked.",
+	"there's nothing greener to suggest. you're it. enjoy that.",
+	'the advice section has nothing for you. it is a little annoyed about that, frankly.',
+	"no swap. you're the benchmark."
+];
+
+// Optional nod to the friction premise. '' lets some receipts skip the lead.
+const SWAP_LEAD = [
+	"you told me {premise}, so a short walk won't hurt you.",
+	'given {premise}, this next bit is well within your tolerance.',
+	'',
+	''
+];
+
+const SWAP_MATH = [
+	'move half your trips to metro-plus-a-short-auto and the year drops to about {swapKg} kg.',
+	'put half these trips on the metro with an auto at each end: the year falls to ~{swapKg} kg.',
+	"swap half of them onto metro and short autos and you're down to about {swapKg} kg a year."
+];
+
+const SWAP_SAVING_TREES = [
+	"that's {savedKg} kg kept out of the air. about {treesSaved} trees' worth.",
+	'you would save {savedKg} kg a year, roughly what {treesSaved} trees do.',
+	'{savedKg} kg you do not emit. call it {treesSaved} trees working on your behalf.'
+];
+
+const SWAP_SAVING_NOTREES = [
+	"that's {savedKg} kg you keep out of the air. small but it helps.",
+	'{savedKg} kg saved a year. not nothing.'
+];
 
 function swapCopy(c: ComputedReceipt, a: Answers, id: string): string {
 	if (c.halfSwap.savedKg <= 0) {
-		return pick(id, 'swap-none', [
-			`Nothing to swap. You're already the cleaner option someone else should be switching to.`,
-			`No swap to suggest. You're the benchmark other receipts get measured against.`,
-			`Nothing to trade down to. You're already where we'd send everyone else.`,
-			`We'd suggest a greener option, but you're it.`,
-			`No downgrade available — you're the clean default the rest should copy.`,
-			`Skip the swap. You're the version of this commute we wish more people chose.`,
-			`Nothing to swap. The advice section is quietly jealous of you.`
-		]);
+		return pick(id, 'swap-none', SWAP_NONE);
 	}
+
 	const premise = a.funQuestionId ? PREMISE[a.funQuestionId] : 'comfort is what you optimise for';
-	return `You told us ${premise}, so a short walk isn't the imposition you're treating it as. Move half your trips onto the metro with a short auto at each end and the year drops to about ${comma(
-		c.halfSwap.annualKg
-	)} kg. You keep ${comma(c.halfSwap.savedKg)} kg out of the air — roughly ${comma(
-		c.halfSwap.treesSaved
-	)} trees' worth.`;
+	const lead = interp(pick(id, 'swap-lead', SWAP_LEAD), { premise });
+	const math = interp(pick(id, 'swap-math', SWAP_MATH), { swapKg: comma(c.halfSwap.annualKg) });
+
+	const savingPool = c.halfSwap.treesSaved >= 1 ? SWAP_SAVING_TREES : SWAP_SAVING_NOTREES;
+	const saving = interp(pick(id, 'swap-save', savingPool), {
+		savedKg: comma(c.halfSwap.savedKg),
+		treesSaved: comma(c.halfSwap.treesSaved)
+	});
+
+	return `${lead} ${math} ${saving} ${tail(id, 'swap-tail')}`.replace(/\s+/g, ' ').trim();
 }
 
 // Compact lines describing the single best cleaner alternative for this trip,
@@ -457,28 +632,50 @@ function swapIdeas(geo: GeoSnapshot | undefined): string[] {
 	];
 }
 
-function psCopy(c: ComputedReceipt, areaLabel: string): string {
+const PS_OWN = [
+	'PS: it is not only the air. your vehicle parks on about {areaM2} m2 of the city. at {areaLabel} rates, ~{rupees} of land, sitting there for free. funded by everyone who is not parked on it.',
+	'PS: the air is one thing. your parked vehicle also holds {areaM2} m2 which is roughly {rupees} of {areaLabel} at no charge. someone pays for that. not you though.'
+];
+const PS_CAB = [
+	'PS: it is not only the air. the cab parks somewhere about {areaM2} m2, ~{rupees} of {areaLabel}, sitting idle between fares.'
+];
+const PS_NONE = [
+	'PS: it is not only the air. while you parked nothing, the car beside you takes {areaM2} m2 — ~{rupees} of {areaLabel} used for free.'
+];
+
+function psCopy(c: ComputedReceipt, areaLabel: string, id: string): string {
 	const mode = c.trip.mode;
-	const rupees = rupeesLakh(c.parking.rupees);
-	const where = `${c.parking.areaM2} m² of the city`;
-	if (mode === 'car' || mode === 'two_wheeler') {
-		return `PS: It isn't only the air. Your parked vehicle sits on about ${where}. At ${areaLabel} rates that's roughly ${rupees} of real estate. Prime real-estate for free! Paid for by everyone who isn't parked on it.`;
-	}
-	if (mode === 'cab_solo' || mode === 'cab_shared') {
-		return `PS: it isn't only the air. The cab you took still parks somewhere — about ${where}, roughly ${rupees} of ${areaLabel} sitting idle between fares.`;
-	}
-	return `PS: It isn't only the air. You parked nothing today. The car beside you sits on about ${where} — roughly ${rupees} of ${areaLabel}, used for free.`;
+	const vars = { areaM2: String(c.parking.areaM2), rupees: rupeesLakh(c.parking.rupees), areaLabel };
+	let pool: string[];
+	if (mode === 'car' || mode === 'two_wheeler') pool = PS_OWN;
+	else if (mode === 'cab_solo' || mode === 'cab_shared') pool = PS_CAB;
+	else pool = PS_NONE;
+	return interp(pick(id, 'ps', pool), vars);
 }
 
 // A short, branch-aware deck for the parking real-estate graphic (numbers live in
 // the footprint box + panel, so the prose stays out of their way).
-function parkingCopy(c: ComputedReceipt): string {
+const PARK_OWN = [
+	'your parked vehicle squats on public street it never pays rent for.',
+	'that vehicle sits on the kerb all day, paying nothing for the privilege.',
+	'your car holds down public ground rent-free.'
+];
+const PARK_CAB = [
+	'the cab you rode parks somewhere too, idle, rent-free, between fares.',
+	'your cab is idle somewhere now, holding a kerb it pays nothing for.'
+];
+const PARK_NONE = [
+	'you parked nothing today. the car beside you sits free, on land you help fund.',
+	'nothing of yours is parked. the car next to it pays nothing for the spot. you do.'
+];
+
+function parkingCopy(c: ComputedReceipt, id: string): string {
 	const mode = c.trip.mode;
-	if (mode === 'car' || mode === 'two_wheeler')
-		return 'Your parked car squats on public street it never pays rent for.';
-	if (mode === 'cab_solo' || mode === 'cab_shared')
-		return 'The cab you rode still parks somewhere — idle, rent-free, between fares.';
-	return 'You parked nothing today. The car beside you sits free — on land you help pay for.';
+	let line: string;
+	if (mode === 'car' || mode === 'two_wheeler') line = pick(id, 'park-verdict', PARK_OWN);
+	else if (mode === 'cab_solo' || mode === 'cab_shared') line = pick(id, 'park-verdict', PARK_CAB);
+	else line = pick(id, 'park-verdict', PARK_NONE);
+	return `${line} ${tail(id, 'park-tail')}`.trim();
 }
 
 // ── Helpers ──
@@ -528,14 +725,14 @@ function ordinal(n: number): string {
 	return n + (s[(v - 20) % 10] ?? s[v] ?? s[0]);
 }
 
-function comma(n: number): string {
+export function comma(n: number): string {
 	return Math.round(n).toLocaleString('en-IN');
 }
 
 // Deterministic editorial variation: pick one line from a pool using the receipt
 // id + a per-beat salt. Every visitor — even one with identical answers — gets a
 // different turn of phrase, and it stays stable across re-renders of the same id.
-function pick(id: string, salt: string, pool: string[]): string {
+export function pick(id: string, salt: string, pool: string[]): string {
 	let h = 2166136261 >>> 0;
 	const s = `${id}::${salt}`;
 	for (let i = 0; i < s.length; i++) {
@@ -597,10 +794,12 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 	const annualSwitchedPm25G = (combo.pm25Mg * tripsPerYear) / 1000;
 	const annualSavingPm25G = Math.max(0, annualCommutePm25G - annualSwitchedPm25G);
 
-	const arch = archetypeFor(mode, decider);
+	const arch = assignArchetype(mode, decider);
 	const subtitle = subtitleFor(a.funQuestionId, a.funAnswer);
 
-	const personalNudge = a.funQuestionId ? FRICTION_OVERLAY[a.funQuestionId] : PERSONAL_NUDGE_FALLBACK;
+	// No receipt id at compute time; key the pick on the answer so it stays
+	// deterministic per friction (these two fields aren't surfaced in ReceiptView).
+	const personalNudge = frictionNudge(a.funQuestionId, a.funQuestionId ?? 'nudge');
 
 	// Beat 3 — mode ranking among all 8 ways to move
 	const carbonValues = ALL_MODES.map((m) => MODE_CO2E_G_PER_PKM[m]);
@@ -671,12 +870,12 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 		annualSwitchedPm25G: round(annualSwitchedPm25G, 1),
 		annualSavingPm25G: round(annualSavingPm25G, 1),
 		recommendation: {
-			deciderHeadline: DECIDER_HEADLINE[decider],
+			deciderHeadline: deciderHeadline(decider, decider),
 			recommendedCombo: combo.comboLabel
 		},
 		archetype: {
 			name: arch.name,
-			subtitle: subtitle || arch.subtitle
+			subtitle
 		},
 		modeRank: {
 			totalModes: ALL_MODES.length,
@@ -748,7 +947,7 @@ export function buildReceiptView(
 	}
 	const cleanerNote =
 		cleanerPct != null && !c.modeRank.isClean
-			? `About ${Math.round(cleanerPct / 10)} in 10 commuters so far travel cleaner than you.`
+			? cleanerNoteCopy(Math.round(cleanerPct / 10), id)
 			: null;
 
 	const areaLabel = geo?.destinationLabel ?? geo?.originLabel ?? c.parking.areaLabel;
@@ -798,7 +997,7 @@ export function buildReceiptView(
 		corridor: {
 			totalPerDay: c.corridor.totalPerDay,
 			rows: c.corridor.rows,
-			copy: corridorCopy(c)
+			copy: corridorCopy(c, id)
 		},
 		oneTrip: { co2G: Math.round(c.perTripKg * 1000), pm25Mg: Math.round(c.perTripPm25Mg) },
 		year: {
@@ -806,33 +1005,13 @@ export function buildReceiptView(
 			pm25G: c.annualCommutePm25G,
 			kgPerBlock: KG_PER_BLOCK,
 			isClean: yearClean,
-			copy: yearClean
-				? pick(id, 'year-clean', [
-					'Barely a mark. The grid stays empty.',
-					'Hardly a smudge. The grid barely notices you.',
-					'Almost nothing to plot — the blocks stay hollow.',
-					"A rounding error, in the city's favour.",
-					'Too little to fill a single block. Good.',
-					"The tally can't find enough to draw. Keep it that way.",
-					'Negligible. We left the grid blank on purpose.'
-				])
-				: ''
+			copy: yearClean ? pick(id, 'year-clean', YEAR_CLEAN) : ''
 		},
 		units: {
 			cylinders: c.cylindersYear,
 			trees: c.treesYear,
 			isClean: yearClean,
-			copy: yearClean
-				? pick(id, 'units-clean', [
-					"Not enough to need one. We keep a unit ready; you didn't fill it.",
-					'Too little to convert into anything. The conversion table shrugs.',
-					"No cylinders, no trees — there's nothing to translate.",
-					'Below the threshold for a single unit. Pleasantly anticlimactic.',
-					"The equivalents all come out zero. Nothing to make tangible.",
-					"Not enough to picture. We tried; the icons came up empty.",
-					"Doesn't add up to one of anything. That's the point."
-				])
-				: ''
+			copy: yearClean ? pick(id, 'units-clean', UNITS_CLEAN) : ''
 		},
 		swap: {
 			show: c.halfSwap.savedKg > 0,
@@ -851,17 +1030,17 @@ export function buildReceiptView(
 			subtitle: c.archetype.subtitle,
 			stampSeed: `${a.mode}|${a.frequency}|${a.lifestyle}|${a.decider}|${a.funAnswer ?? ''}`,
 			copy: 'Generated from your four answers. No two are alike.',
-			basis: `Assigned from your mode (${c.trip.modeLabel.toLowerCase()}) and why you ride it — ${c.trip.deciderLabel}.`,
+			basis: archetypeBasis(c, id),
 			figure: { n: figN, m: figM, darkness: dirtiness }
 		},
 		counter: { cityCount },
 		parking: {
 			areaM2: c.parking.areaM2,
 			valueLabel: rupeesLakh(c.parking.rupees),
-			copy: parkingCopy(c)
+			copy: parkingCopy(c, id)
 		},
 		finePrint: {
-			psCopy: psCopy(c, areaLabel),
+			psCopy: psCopy(c, areaLabel, id),
 			disclaimer: c.disclaimer,
 			barcodeSeed: id
 		}
