@@ -10,8 +10,7 @@
 //          so transit/walk legs go dark and only the dirty legs glow.
 //   cf   — counterfactual "more public transport" (see GridType below).
 
-import { MODE_CO2E_G_PER_PKM } from '$lib/exhibit/emissions';
-import { legKindToMode } from '$lib/exhibit/grey';
+import { MODE_CO2E_G_PER_PKM, legKindToMode, haversineKm } from '$lib/emissions';
 import { listLines, type LineRow } from './db';
 
 // ── Grid: cell centres on a 0.01° lattice over Bengaluru ──
@@ -72,17 +71,6 @@ function cfFactor(kind: LineRow['segments'][number]['legKind'], shift: number): 
 	if (mode === 'active' || mode === 'bus' || mode === 'metro') return own; // already clean/transit
 	// Private leg: a fraction `shift` of trips move to public transport.
 	return (1 - shift) * own + shift * publicTransitFactor();
-}
-
-function haversineKm(lng1: number, lat1: number, lng2: number, lat2: number): number {
-	const R = 6371;
-	const d2r = Math.PI / 180;
-	const dLat = (lat2 - lat1) * d2r;
-	const dLng = (lng2 - lng1) * d2r;
-	const a =
-		Math.sin(dLat / 2) ** 2 +
-		Math.cos(lat1 * d2r) * Math.cos(lat2 * d2r) * Math.sin(dLng / 2) ** 2;
-	return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
 }
 
 // Stamp one line-source sample (weight already in emissions units) into the grid,

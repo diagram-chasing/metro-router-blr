@@ -1,5 +1,9 @@
 node_modules
 
+# Claude Code / agent tooling (worktrees, skills) — not app code
+.claude/
+.agents/
+
 # Output
 .output
 .vercel

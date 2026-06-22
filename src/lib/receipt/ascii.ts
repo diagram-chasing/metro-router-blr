@@ -1,5 +1,8 @@
 // Monospace builders for the printed receipt's ASCII charts, on the printer's fixed
-// column grid (80mm Font A = 48 cols). Dependency-free and DOM-free.
+// column grid (80mm Font A = 48 cols). DOM-free; dirtiness bands come from the
+// carbon model so they can't drift from the wall-map grey buckets.
+
+import { bucket, BUCKET_MAX } from '$lib/emissions';
 
 export const PRINT_COLS = 48; // 80mm, Font A (12-dot glyphs)
 export const PRINT_COLS_B = 64; // 80mm, Font B (9-dot glyphs) — the "fine print" grid
@@ -80,24 +83,23 @@ export function blockBars(
 	});
 }
 
-// Per-km dirtiness bands (g CO2/km), cleanest -> dirtiest. Boundaries track the
-// grey-bucket thresholds in exhibit/grey.ts; ranges are written non-overlapping so
-// no value reads as belonging to two bands.
-const SPREAD_MAX = [15, 45, 80, 130];
-const SPREAD_LABELS = ['0-14', '15-44', '45-79', '80-129', '130+'];
-const spreadBand = (v: number): number => {
-	for (let i = 0; i < SPREAD_MAX.length; i++) if (v < SPREAD_MAX[i]) return i;
-	return SPREAD_MAX.length;
-};
+// Per-km dirtiness band labels (g CO2/km), cleanest -> dirtiest. Derived from the
+// carbon model's BUCKET_MAX so the printed ranges always match the grey buckets:
+//   [0-(b0-1)] [b0-(b1-1)] ... [b3+]
+const SPREAD_LABELS = [
+	`0-${BUCKET_MAX[0] - 1}`,
+	...BUCKET_MAX.slice(1).map((hi, i) => `${BUCKET_MAX[i]}-${hi - 1}`),
+	`${BUCKET_MAX[BUCKET_MAX.length - 1]}+`
+];
 
 /** A Marimekko strip of per-km dirtiness: one band per grey-bucket, segment WIDTH = how
  *  many people sit there (no counts shown — only the proportion reads). Bands are `█`
  *  runs split by `│`; the visitor's band carries a `▲ YOU` caret. Ranges sit on top. */
 export function asciiSpread(values: number[], mine: number, cols = PRINT_COLS): string[] {
 	const counts = [0, 0, 0, 0, 0];
-	for (const v of values) counts[spreadBand(v)]++;
+	for (const v of values) counts[bucket(v)]++;
 	const total = values.length || 1;
-	const youB = spreadBand(mine);
+	const youB = bucket(mine);
 
 	// Bands with anyone in them (YOU's band always shows), cleanest -> dirtiest.
 	const vis = counts

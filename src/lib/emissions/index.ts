@@ -1,3 +1,8 @@
+// The carbon model: the single authority that turns a journey into carbon.
+// Canonical rule — blend over the actual legs (a walk-access leg counts as 0).
+// Everything downstream (receipt headline, wall-map grey bucket, emissions field)
+// reads kilometres, intensity, and per-trip kg from here, so they cannot diverge.
+
 // [1] Aryan, Shinde & Dikshit (2025), "Evaluating the emission reduction
 //     potential of first underground metro rail in Mumbai", Discover
 //     Sustainability, doi:10.1007/s43621-025-01994-0. Tables 2 & 3 — India
@@ -7,7 +12,10 @@
 // [3] TERI (2017), "Estimating vehicular emissions" (Bengaluru) — LPG auto.
 // [4] CPCB (2015) / ARAI (2011) road-transport six-cities study — bus factors.
 
-import type { Mode } from './types';
+import type { Mode } from '$lib/exhibit/types';
+import type { LegKind } from '$lib/exhibit/routeCandidates';
+
+// ── Per-mode factor model ──
 
 // road tailpipe CO2 (g per VEHICLE-km), India fleet-weighted
 // Source [1] Table 2, except auto (LPG, Bengaluru) from [3] and bus from [4].
@@ -104,4 +112,106 @@ export function firstLastMileKm(distanceKm: number): {
 	const lastMile = Math.min(1.6, distanceKm * 0.2);
 	const main = Math.max(0, distanceKm - firstMile - lastMile);
 	return { firstMile, main, lastMile };
+}
+
+// ── Leg → mode ──
+
+/** Map a route-candidate leg kind to the emissions Mode it should be costed as.
+ *  CandidateKind shares its members with LegKind, so this also maps a route's
+ *  primary mode (chosenKind) to its representative Mode. */
+export function legKindToMode(kind: LegKind): Mode {
+	switch (kind) {
+		case 'walk':
+			return 'active';
+		case 'bus':
+			return 'bus';
+		case 'metro':
+			return 'metro';
+		case 'auto':
+			return 'auto';
+		case 'cab':
+		default:
+			return 'cab_solo';
+	}
+}
+
+// ── Geometry: the one haversine ──
+
+const R_KM = 6371;
+const D2R = Math.PI / 180;
+
+/** Great-circle distance between two [lng,lat] points, in km. */
+export function haversineKm(lng1: number, lat1: number, lng2: number, lat2: number): number {
+	const dLat = (lat2 - lat1) * D2R;
+	const dLng = (lng2 - lng1) * D2R;
+	const a =
+		Math.sin(dLat / 2) ** 2 +
+		Math.cos(lat1 * D2R) * Math.cos(lat2 * D2R) * Math.sin(dLng / 2) ** 2;
+	return 2 * R_KM * Math.asin(Math.min(1, Math.sqrt(a)));
+}
+
+/** Great-circle length of a [lng,lat] polyline, in km. */
+export function lengthKm(coords: [number, number][]): number {
+	if (coords.length < 2) return 0;
+	let km = 0;
+	for (let i = 1; i < coords.length; i++) {
+		const [lng1, lat1] = coords[i - 1];
+		const [lng2, lat2] = coords[i];
+		km += haversineKm(lng1, lat1, lng2, lat2);
+	}
+	return km;
+}
+
+// ── Grey bucket ──
+
+// Thresholds anchored to the per-passenger-km values above:
+//   walk 0 · bus 18 · metro 40 · two_wheeler 40 · cab_shared 69 · auto 74 ·
+//   car 120 · cab_solo 172.
+// bucket i is gPerKm < BUCKET_MAX[i]; values at/above the last threshold are the top bucket.
+export const BUCKET_MAX = [15, 45, 80, 130] as const;
+
+/** Bucket a blended CO2/pkm value into 0..4 (brighter grey = dirtier). */
+export function bucket(gPerKm: number): number {
+	for (let i = 0; i < BUCKET_MAX.length; i++) {
+		if (gPerKm < BUCKET_MAX[i]) return i;
+	}
+	return BUCKET_MAX.length; // 4
+}
+
+// ── Journey emissions ──
+
+export type Leg = { coords: [number, number][]; legKind: LegKind };
+
+export type Emissions = {
+	km: number; // summed great-circle length over all legs
+	gPerKm: number; // length-weighted blended intensity (g CO2e per passenger-km)
+	kgPerTrip: number; // total CO2e for one trip, kg
+	bucket: number; // 0..4 grey bucket
+};
+
+/**
+ * Canonical journey emissions: blend each leg's per-pkm factor by its length.
+ * A walk-access leg contributes distance but 0 emissions, diluting intensity —
+ * the honest figure for a multimodal trip. Returns zeros for an empty route.
+ */
+export function routeEmissions(legs: Leg[]): Emissions {
+	let weighted = 0;
+	let totalKm = 0;
+	for (const leg of legs) {
+		const km = lengthKm(leg.coords);
+		if (km <= 0) continue;
+		weighted += km * MODE_CO2E_G_PER_PKM[legKindToMode(leg.legKind)];
+		totalKm += km;
+	}
+	const gPerKm = totalKm > 0 ? weighted / totalKm : 0;
+	return { km: totalKm, gPerKm, kgPerTrip: weighted / 1000, bucket: bucket(gPerKm) };
+}
+
+/**
+ * Single-mode fallback for a journey with no leg geometry: one mode over the
+ * whole distance. Equivalent to a one-leg route of that mode.
+ */
+export function tripEmissions(mode: Mode, km: number): Emissions {
+	const gPerKm = MODE_CO2E_G_PER_PKM[mode];
+	return { km, gPerKm, kgPerTrip: (km * gPerKm) / 1000, bucket: bucket(gPerKm) };
 }

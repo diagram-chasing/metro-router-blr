@@ -8,7 +8,7 @@
 import type { RequestHandler } from '@sveltejs/kit';
 
 import type { Answers, Mode } from '$lib/exhibit/types';
-import { blendedCo2PerKm, greyBucket, legKindToMode } from '$lib/exhibit/grey';
+import { routeEmissions, legKindToMode, lengthKm } from '$lib/emissions';
 import { computeReceipt, distanceBand } from '$lib/receipt/receipt';
 import { allTripStats, insertLine, stats, allPerKmStats } from '$lib/server/db';
 import { reverseGeocodeArea } from '$lib/server/reverseGeocode';
@@ -67,16 +67,18 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
 	putReceipt({ id, createdAt, answers: a, computed, geo });
 
 	// Add the visitor's chosen route to the accumulation map, in its grey bucket.
+	// One carbon-model call drives distance, intensity, bucket and per-trip kg — the
+	// same figures the receipt headline shows, so paper and wall map cannot diverge.
 	if (a.route?.segments?.length) {
-		const co2PerKmG = blendedCo2PerKm(a.route.segments);
+		const e = routeEmissions(a.route.segments);
 		insertLine({
 			submissionId: id,
 			createdAt,
 			chosenMode: a.route.chosenKind,
-			distanceKm: a.distanceKm,
-			co2PerTripKg: computed.perTripKg,
-			co2PerKmG,
-			greyBucket: greyBucket(co2PerKmG),
+			distanceKm: e.km,
+			co2PerTripKg: e.kgPerTrip,
+			co2PerKmG: e.gPerKm,
+			greyBucket: e.bucket,
 			tripsPerYear: computed.tripsPerYear,
 			segments: a.route.segments
 		});
@@ -106,7 +108,7 @@ function pickSegments(a: Answers): GeoSnapshot['segments'] {
 		const collapsed: { mode: Mode; lengthM: number }[] = [];
 		for (const leg of legs) {
 			const mode = legKindToMode(leg.legKind);
-			const lengthM = Math.max(1, Math.round(polylineM(leg.coords)));
+			const lengthM = Math.max(1, Math.round(lengthKm(leg.coords) * 1000));
 			const last = collapsed[collapsed.length - 1];
 			if (last && last.mode === mode) last.lengthM += lengthM;
 			else collapsed.push({ mode, lengthM });
@@ -118,24 +120,6 @@ function pickSegments(a: Answers): GeoSnapshot['segments'] {
 		return [{ mode: a.mode, lengthM: Math.round(a.distanceKm * 1000) }];
 	}
 	return undefined;
-}
-
-function polylineM(coords: [number, number][]): number {
-	if (coords.length < 2) return 0;
-	const R = 6371000;
-	const d2r = Math.PI / 180;
-	let m = 0;
-	for (let i = 1; i < coords.length; i++) {
-		const [lng1, lat1] = coords[i - 1];
-		const [lng2, lat2] = coords[i];
-		const dLat = (lat2 - lat1) * d2r;
-		const dLng = (lng2 - lng1) * d2r;
-		const h =
-			Math.sin(dLat / 2) ** 2 +
-			Math.cos(lat1 * d2r) * Math.cos(lat2 * d2r) * Math.sin(dLng / 2) ** 2;
-		m += 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
-	}
-	return m;
 }
 
 async function resolveLabel(

@@ -1,5 +1,11 @@
-import { MODE_CO2E_G_PER_PKM, MODE_LABEL, firstLastMileKm } from '$lib/exhibit/emissions';
-import { legKindToMode } from '$lib/exhibit/grey';
+import {
+	MODE_CO2E_G_PER_PKM,
+	MODE_LABEL,
+	firstLastMileKm,
+	legKindToMode,
+	routeEmissions,
+	tripEmissions
+} from '$lib/emissions';
 import type { Answers, Decider, Frequency, FunQuestionId, Lifestyle, Mode } from '$lib/exhibit/types';
 import type { GeoSnapshot } from '$lib/server/receiptStore';
 import { assignArchetype, archetypeBasis } from './archetype';
@@ -731,16 +737,22 @@ function bestCombo(distanceKm: number): { co2Kg: number; comboLabel: string } {
 }
 
 export function computeReceipt(a: Answers): ComputedReceipt {
-	const mode: Mode = a.mode ?? 'cab_solo';
+	// The receipt follows the route the visitor planned (Q3): its primary mode
+	// characterises the trip, its actual legs are blended for the footprint. With
+	// no route geometry, fall back to the stated mode (Q1) over the distance.
+	const legs = a.route?.segments;
+	const tripMode: Mode = a.route ? legKindToMode(a.route.chosenKind) : (a.mode ?? 'cab_solo');
 	const frequency: Frequency = a.frequency ?? 'few_weekly';
 	const lifestyle: Lifestyle = a.lifestyle ?? 'moderate';
 	const decider: Decider = a.decider ?? 'habit';
-	const distanceKm = a.distanceKm ?? 0;
+	const emissions =
+		legs && legs.length ? routeEmissions(legs) : tripEmissions(tripMode, a.distanceKm ?? 0);
+	const distanceKm = emissions.km;
 	const tripsPerYear = TRIPS_PER_YEAR[frequency];
 	const lifestyleMul = LIFESTYLE_MULTIPLIER[lifestyle];
 
 	// Per-trip
-	const perTripKg = (distanceKm * MODE_CO2E_G_PER_PKM[mode]) / 1000;
+	const perTripKg = emissions.kgPerTrip;
 	const combo = bestCombo(distanceKm);
 	const multiplier = combo.co2Kg > 0 ? perTripKg / combo.co2Kg : 0;
 
@@ -752,7 +764,7 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 	const twoYearSavingKg = annualSavingKg * 2;
 	const treeYearsEquivalent = annualSavingKg / KG_CO2_PER_TREE_YEAR;
 
-	const arch = assignArchetype(mode, decider);
+	const arch = assignArchetype(tripMode, decider);
 	const subtitle = subtitleFor(a.funQuestionId, a.funAnswer);
 
 	// No receipt id at compute time; key the pick on the answer so it stays
@@ -761,12 +773,12 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 
 	// Beat 3 — mode ranking among all 8 ways to move
 	const carbonValues = ALL_MODES.map((m) => MODE_CO2E_G_PER_PKM[m]);
-	const carbonRankFromDirtiest = rankFromDirtiest(MODE_CO2E_G_PER_PKM[mode], carbonValues);
+	const carbonRankFromDirtiest = rankFromDirtiest(MODE_CO2E_G_PER_PKM[tripMode], carbonValues);
 
 	// Beat 4 — modeled corridor traffic
 	const seed = hashSeed(`${a.originStation ?? a.origin ?? ''}|${a.destinationStation ?? a.destination ?? ''}|${round(distanceKm, 1)}`);
 	const totalPerDay = CORRIDOR_TOTAL_MIN + (seed % CORRIDOR_TOTAL_SPAN);
-	const youKey = corridorKeyFor(mode);
+	const youKey = corridorKeyFor(tripMode);
 	const corridorRows = Object.keys(CORRIDOR_SHARE)
 		.map((key) => ({
 			key,
@@ -789,12 +801,12 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 	const parkingRupees = PARKING_AREA_M2 * PARKING_RATE_PER_M2;
 	const parkingAreaLabel = a.destinationStation ?? a.originStation ?? 'this part of the city';
 
-	const isClean = mode === 'bus' || mode === 'metro' || mode === 'active';
+	const isClean = tripMode === 'bus' || tripMode === 'metro' || tripMode === 'active';
 
 	return {
 		trip: {
-			mode,
-			modeLabel: MODE_LABEL[mode],
+			mode: tripMode,
+			modeLabel: MODE_LABEL[tripMode],
 			frequency,
 			frequencyLabel: FREQUENCY_LABEL[frequency],
 			distanceKm: round(distanceKm, 2),
