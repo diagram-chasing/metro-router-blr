@@ -39,9 +39,15 @@
 		"vite": "^6.0.0"
 	},
 	"dependencies": {
+		"@deck.gl/core": "^9.1",
+		"@deck.gl/geo-layers": "^9.1",
+		"@deck.gl/layers": "^9.1",
+		"@deck.gl/mapbox": "^9.1",
+		"@luma.gl/core": "^9.1",
 		"@mapbox/polyline": "^1.2.1",
 		"better-sqlite3": "^12.10.0",
 		"d3-geo": "^3.1.1",
+		"deck.gl": "^9.1",
 		"maplibre-gl": "^5.1.0",
 		"modern-screenshot": "^4.7.0",
 		"qrcode-generator": "^2.0.4"
