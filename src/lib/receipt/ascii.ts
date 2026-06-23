@@ -160,9 +160,9 @@ export function asciiSpread(values: number[], mine: number, cols = PRINT_COLS): 
  *  fused — so sections no longer need a separate full-width rule. */
 export function eyebrow(no: string, label: string, stat = '', cols = PRINT_COLS): string {
 	const left = `${no} ${label.toUpperCase()} `;
-	if (!stat) return (left + '─'.repeat(Math.max(0, cols - left.length))).slice(0, cols);
+	if (!stat) return (left);
 	const fill = Math.max(1, cols - left.length - 1 - stat.length);
-	return (left + '─'.repeat(fill) + ' ' + stat).slice(0, cols);
+	return (left + ' '.repeat(fill) + ' ' + stat).slice(0, cols);
 }
 
 /** An instrument-panel row, both sides railed: `│ label … value │`, exactly `cols`. */
@@ -204,6 +204,18 @@ export function footprintBox(title: string, fillRows = 3, cols = 34): string[] {
 	const fill = '│ ' + '█'.repeat(Math.max(0, cols - 4)) + ' │';
 	const bottom = '└' + '─'.repeat(inner) + '┘';
 	return [top, ...Array.from({ length: fillRows }, () => fill), bottom];
+}
+
+// Top-down car icon, 12 cols wide. Plain-ASCII glyphs only (print-safe on thermal).
+export function carFootprint(): string[] {
+	return [
+		'  00000000',
+		' 0        0',
+		'000000000000',
+		'00 000000 00',
+		'000000000000',
+		' 0        0'
+	];
 }
 
 /** A grouping rail (dispatch-form style): `┌ item / ├ item / └ item`. */

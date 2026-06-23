@@ -1,8 +1,8 @@
 <script lang="ts">
-	// The wall-projection variant of the FlowMap (tuned framing, no chrome).
-	import FlowMap from '$lib/components/FlowMap.svelte';
+	// The wall projection: a generative flow field of the city's commute emissions.
+	import FlowField from '$lib/components/FlowField.svelte';
 </script>
 
 <main class="absolute inset-0">
-	<FlowMap variant="wall" />
+	<FlowField />
 </main>

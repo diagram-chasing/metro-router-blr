@@ -227,7 +227,7 @@ const CORRIDOR_SHARE: Record<string, number> = {
 const CORRIDOR_KEY_LABEL: Record<string, string> = {
 	bus: 'bus',
 	two_wheeler: '2wh',
-	car: 'car/cab',
+	car: 'car',
 	auto: 'auto',
 	metro: 'metro'
 };
@@ -718,9 +718,9 @@ function psCopy(c: ComputedReceipt, areaLabel: string, id: string): string {
 // A short, branch-aware deck for the parking real-estate graphic (numbers live in
 // the footprint box + panel, so the prose stays out of their way).
 const PARK_OWN = [
-	'your parked vehicle squats on public street it never pays rent for.',
-	'that vehicle sits on the kerb all day, paying nothing for the privilege.',
-	'your car holds down public ground rent-free.'
+	'Everything above was emissions, but a car also takes something else! A parked vehicle squats on public street it never pays rent for.',
+	'Everything above was emissions, but a car also takes something else! That vehicle sits on the kerb all day, paying nothing for the privilege.',
+	'Everything above was emissions, but a car also takes something else! A parked car holds down public ground rent-free.'
 ];
 const PARK_NONE = [
 	'you parked nothing today. the car beside you sits free, on land you help fund.',

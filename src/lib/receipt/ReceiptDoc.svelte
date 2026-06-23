@@ -8,6 +8,7 @@
 	import RouteMap from './viz/RouteMap.svelte';
 	import Stamp from './viz/Stamp.svelte';
 	import QR from './viz/QR.svelte';
+	import carPng from '$lib/assets/car.png';
 
 	let { view, node = $bindable(null) }: { view: ReceiptView; node?: HTMLElement | null } = $props();
 
@@ -44,6 +45,8 @@
 						width={576}
 						height={220}
 					/>
+				{:else if op.id === 'car'}
+					<img class="car" src={carPng} alt="" width="120" />
 				{:else}
 					<Stamp
 						n={view.archetype.figure.n}
@@ -100,6 +103,10 @@
 	}
 	.img :global(svg) {
 		max-width: 100%;
+		height: auto;
+	}
+	.car {
+		width: 120px;
 		height: auto;
 	}
 </style>
