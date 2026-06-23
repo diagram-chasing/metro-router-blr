@@ -1,8 +1,6 @@
 export type Mode =
 	| 'auto'
-	| 'cab_solo'
-	| 'cab_shared'
-	| 'car'
+	| 'car' // private four-wheeler, owned or hailed ("car / cab")
 	| 'two_wheeler'
 	| 'bus'
 	| 'metro'

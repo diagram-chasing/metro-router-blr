@@ -164,6 +164,8 @@ export const GET: RequestHandler = async ({ url }) => {
 
 	// Histogram (beat 2): per-km dirtiness of everyone who has submitted so far, and
 	// where this visitor lands on it. Per-km so distance doesn't confound the spread.
+	// The marker is the visitor's HABIT (computed.perTripKg, Q1) — matching the beat's
+	// verdict copy — measured against the population of drawn routes on the wall map.
 	const allPerKm = allPerKmStats();
 	const minePerKm =
 		rec.computed.trip.distanceKm > 0

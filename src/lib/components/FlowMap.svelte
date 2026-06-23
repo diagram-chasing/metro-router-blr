@@ -9,7 +9,7 @@
 	import { EmissionsField, type Field } from '$lib/viz/emissionsField';
 	import {
 		buildArrivalLayer,
-		buildEmissionsLayer,
+		buildEmissionsColumns,
 		buildTripsLayer,
 		PULSE_LIFE,
 		type Pulse
@@ -39,6 +39,13 @@
 	const num = (p: URLSearchParams, k: string, d: number) => {
 		const v = Number(p.get(k));
 		return isFinite(v) && v > 0 ? v : d;
+	};
+
+	// Allows 0 / negative (pitch off, southward bearing) where `num` would reject.
+	const numAny = (p: URLSearchParams, k: string, d: number) => {
+		const raw = p.get(k);
+		const v = Number(raw);
+		return raw !== null && isFinite(v) ? v : d;
 	};
 
 	onMount(() => {
@@ -86,6 +93,11 @@
 			shift = Math.max(0, Math.min(1, num(p, 'shift', 0.5)));
 			shiftPct = Math.round(shift * 100);
 
+			// Tilt the camera so the emissions towers read as 3D; tunable per URL.
+			const pitch = Math.max(0, Math.min(60, numAny(p, 'pitch', variant === 'wall' ? 52 : 46)));
+			const bearing = numAny(p, 'bearing', 0);
+			field.elevMeters = num(p, 'elev', variant === 'wall' ? 7500 : 6000);
+
 			const deck = await loadDeck();
 			if (disposed) return;
 
@@ -94,6 +106,8 @@
 				style: darkStyle(bg),
 				center: [BENGALURU.lng, BENGALURU.lat],
 				zoom,
+				pitch,
+				bearing,
 				pixelRatio: dpr,
 				interactive: false,
 				attributionControl: false
@@ -133,9 +147,10 @@
 				}
 			};
 
-			// The emissions cloud polls on its own (slower) cadence — both the actual
-			// (raw) and counterfactual (cf) grids. cf is rescaled to raw's peak so the
-			// toggle reads as a genuine reduction, not a re-normalised look-alike.
+			// The emissions field polls on its own (slower) cadence — both the actual
+			// (raw) and counterfactual (cf) grids. The field keeps both as absolute
+			// deposits and scales against a shared peak, so the toggle reads as a
+			// genuine reduction (towers sink), not a re-normalised look-alike.
 			const sum = (a: number[]) => a.reduce((s, v) => s + v, 0);
 
 			const pollField = async () => {
@@ -147,9 +162,7 @@
 					]);
 					const raw = (await rawRes.json()) as Field;
 					const cf = (await cfRes.json()) as Field;
-					const scale = raw.rawMax > 0 ? cf.rawMax / raw.rawMax : 1;
-					const cfScaled: Field = { ...cf, values: cf.values.map((v) => v * scale) };
-					field.setSnapshot(raw, cfScaled, now);
+					field.setSnapshot(raw, cf, now);
 
 					// Total deposit (normalised value × peak) is a proxy for the whole-
 					// city burden; the raw→cf drop is the headline saving.
@@ -180,8 +193,11 @@
 				if (Math.abs(transition - target) < 0.004) transition = target;
 				if (Math.abs(cfStrength - transition) > 0.01) cfStrength = transition;
 
-				const img = field.ready ? field.image(t, transition) : null;
-				const cloud = img ? [buildEmissionsLayer(deck, img, field.bounds)] : [];
+				field.setFrame(t, transition);
+				const cloud =
+					field.ready && field.cols.length
+						? [buildEmissionsColumns(deck, field, Math.round(t * 30))]
+						: [];
 				overlay?.setProps({
 					layers: [
 						...cloud,

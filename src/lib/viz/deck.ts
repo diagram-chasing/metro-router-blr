@@ -11,7 +11,7 @@ export async function loadDeck() {
 	]);
 	return {
 		MapboxOverlay: mapbox.MapboxOverlay,
-		BitmapLayer: layers.BitmapLayer,
+		GridCellLayer: layers.GridCellLayer,
 		PathLayer: layers.PathLayer,
 		ScatterplotLayer: layers.ScatterplotLayer,
 		TripsLayer: geo.TripsLayer

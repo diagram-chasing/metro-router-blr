@@ -42,8 +42,6 @@ const SCORING = {
 	modeMatch: 30, // Q1: option matches the visitor's usual mode
 	modeMap: {
 		auto: 'auto',
-		cab_solo: 'cab',
-		cab_shared: 'cab',
 		car: 'cab',
 		two_wheeler: 'auto',
 		bus: 'bus',
@@ -235,7 +233,7 @@ export function buildOtpCandidates(answers: Answers, bundle: PlanBundle): RouteC
 			makeCandidate(carIt, {
 				id: 'cab',
 				kind: 'cab',
-				label: 'CAB',
+				label: 'CAR / CAB',
 				etaMin: carMin,
 				costINR: cabFare(dist, carMin),
 				glow: 'amber'

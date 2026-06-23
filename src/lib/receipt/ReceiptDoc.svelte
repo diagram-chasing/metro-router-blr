@@ -4,7 +4,7 @@
 	// glyph shapes differ (printer ROM font vs web font). The Chladni stamp / route map
 	// / QR render inline and are captured from here at print time.
 	import type { ReceiptView } from './receipt';
-	import { buildReceiptOps, qrUrl } from './printReceipt';
+	import { buildReceiptOps, qrUrl } from './receiptOps';
 	import RouteMap from './viz/RouteMap.svelte';
 	import Stamp from './viz/Stamp.svelte';
 	import QR from './viz/QR.svelte';
@@ -37,7 +37,13 @@
 		{:else if op.t === 'img'}
 			<div class="img" data-print={op.id}>
 				{#if op.id === 'map'}
-					<RouteMap segments={view.route.geo} width={520} height={210} />
+					<RouteMap
+						segments={view.route.geo}
+						origin={view.item.origin}
+						dest={view.item.dest}
+						width={576}
+						height={220}
+					/>
 				{:else}
 					<Stamp
 						n={view.archetype.figure.n}

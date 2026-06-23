@@ -3,6 +3,7 @@
 // regenerate when their `data` reference changes (i.e. on a new arrival).
 
 import type { Deck } from './deck';
+import type { EmissionsField } from './emissionsField';
 import { easeOutCubic } from './palette';
 import { LOOP_PERIOD, TRAIL_LENGTH, type LegPath } from './tripsData';
 
@@ -11,29 +12,24 @@ export const PULSE_LIFE = 3; // s — arrival ring lifetime
 
 const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
 
-// The emissions cloud: a small grid canvas, GPU-upscaled and additively blended
-// into a soft glow. Rendered beneath the trails.
-export function buildEmissionsLayer(
-	deck: Deck,
-	image: HTMLCanvasElement,
-	bounds: [number, number, number, number]
-) {
-	return new deck.BitmapLayer({
+// The emissions field: a grid of extruded cells, one tower per lit cell, height
+// and colour both keyed to CO₂. `data` (field.cols) is a stable reference between
+// snapshots, so deck keeps its buffers and only re-runs the elevation/colour
+// accessors when `tick` advances. material:false → flat emissive on the dark map.
+export function buildEmissionsColumns(deck: Deck, field: EmissionsField, tick: number) {
+	return new deck.GridCellLayer({
 		id: 'emissions',
-		image,
-		// BitmapLayer wants [west, south, east, north]; the field bbox already is.
-		bounds,
-		opacity: 1,
-		textureParameters: { minFilter: 'linear', magFilter: 'linear' },
-		parameters: {
-			blend: true,
-			blendColorOperation: 'add',
-			blendColorSrcFactor: 'src-alpha',
-			blendColorDstFactor: 'one',
-			blendAlphaOperation: 'add',
-			blendAlphaSrcFactor: 'one',
-			blendAlphaDstFactor: 'one'
-		}
+		data: field.cols,
+		cellSize: field.cellMeters,
+		coverage: 0.82, // shrink within the footprint so the grid lattice reads
+		extruded: true,
+		elevationScale: 1,
+		material: false,
+		pickable: false,
+		getPosition: (d: { position: [number, number] }) => d.position,
+		getElevation: (d: { idx: number }) => field.elevationOf(d.idx),
+		getFillColor: (d: { idx: number }) => field.colorOf(d.idx),
+		updateTriggers: { getElevation: tick, getFillColor: tick }
 	});
 }
 

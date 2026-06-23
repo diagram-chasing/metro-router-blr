@@ -20,9 +20,7 @@ import type { LegKind } from '$lib/exhibit/routeCandidates';
 // road tailpipe CO2 (g per VEHICLE-km), India fleet-weighted
 // Source [1] Table 2, except auto (LPG, Bengaluru) from [3] and bus from [4].
 const TAILPIPE_CO2_G_PER_VKM: Record<Mode, number> = {
-	car: 130, // private petrol car, BS-IV/VI weighted [1]
-	cab_solo: 143, // app cab (CNG/petrol mix) [1]
-	cab_shared: 143, // same vehicle as cab_solo; difference is occupancy below
+	car: 130, // own-car tailpipe; the selectable "car / cab" mode is a blend — see CAR_CAB below
 	auto: 92, // LPG three-wheeler, Bengaluru [3]
 	two_wheeler: 40, // real-world petrol 2W (between [1] 24.8 and ICCT new-fleet 38.2)
 	bus: 602, // BMTC diesel, BS-III/IV [4]
@@ -34,8 +32,6 @@ const TAILPIPE_CO2_G_PER_VKM: Record<Mode, number> = {
 // Source [1] Table 3 and Indian urban conventions. Bus is an average city load.
 const OCCUPANCY: Record<Mode, number> = {
 	car: 1.3,
-	cab_solo: 1.0,
-	cab_shared: 2.5,
 	auto: 1.5,
 	two_wheeler: 1.2,
 	bus: 40,
@@ -78,22 +74,26 @@ function derive<T extends Record<Mode, number>>(
 	return out;
 }
 
+// Merged "car / cab": one private four-wheeler mode, owned or hailed. Set to the mean
+// of the former own-car (120) and solo-cab (172) per-pkm figures — the two single-
+// occupant 4-wheeler values this option now spans. (Cab-pool, 69, folds in here too;
+// pooling was never separately selectable.) Special-cased like metro/active because it
+// represents a behaviour blend, not one vehicle-occupancy pair.
+const CAR_CAB_CO2E_G_PER_PKM = 145;
+
 /** Grams CO2e per passenger-km, well-to-wheel. */
 export const MODE_CO2E_G_PER_PKM: Record<Mode, number> = derive(
-	{ metro: METRO_CO2E_G_PER_PKM, active: 0 },
+	{ metro: METRO_CO2E_G_PER_PKM, active: 0, car: CAR_CAB_CO2E_G_PER_PKM },
 	TAILPIPE_CO2_G_PER_VKM,
 	WTW_UPLIFT
 );
 
 // Resulting central values (for reference):
-//   CO2e g/pkm : cab_solo 172 · car 120 · auto 74 · cab_shared 69 · metro 40 ·
-//                two_wheeler 40 · bus 18 · active 0
+//   CO2e g/pkm : car/cab 145 · auto 74 · metro 40 · two_wheeler 40 · bus 18 · active 0
 
 export const MODE_LABEL: Record<Mode, string> = {
 	auto: 'Auto',
-	cab_solo: 'Cab',
-	cab_shared: 'Cab (pool)',
-	car: 'Own car',
+	car: 'Car / cab',
 	two_wheeler: 'Two-wheeler',
 	bus: 'Bus',
 	metro: 'Metro',
@@ -131,7 +131,7 @@ export function legKindToMode(kind: LegKind): Mode {
 			return 'auto';
 		case 'cab':
 		default:
-			return 'cab_solo';
+			return 'car'; // the road / taxi leg is costed as the merged car/cab mode
 	}
 }
 
@@ -165,8 +165,7 @@ export function lengthKm(coords: [number, number][]): number {
 // ── Grey bucket ──
 
 // Thresholds anchored to the per-passenger-km values above:
-//   walk 0 · bus 18 · metro 40 · two_wheeler 40 · cab_shared 69 · auto 74 ·
-//   car 120 · cab_solo 172.
+//   walk 0 · bus 18 · metro 40 · two_wheeler 40 · auto 74 · car/cab 145.
 // bucket i is gPerKm < BUCKET_MAX[i]; values at/above the last threshold are the top bucket.
 export const BUCKET_MAX = [15, 45, 80, 130] as const;
 
