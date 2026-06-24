@@ -63,12 +63,6 @@
 		Line map: <a href="/">/</a> · layer toggles via params, e.g. <code>/?basemap=0</code>,
 		<code>/?recent=1</code>, <code>/?stations=1&hud=1</code>.
 	</p>
-	<p class="hint">
-		Emissions raster: <a href="/emissions">/emissions</a> ·
-		<a href="/emissions?grid=raw">raw</a> ·
-		<a href="/emissions?grid=diff">diff</a> ·
-		<a href="/emissions?grid=cf">cf</a>
-	</p>
 </main>
 
 <style>

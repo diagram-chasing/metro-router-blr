@@ -1,7 +1,7 @@
 // GET /api/emissions?grid=raw|diff|cf&decay=<km>&shift=<0..1>
 //
-// Returns the accumulating CO₂e emissions field as a normalised grid the /emissions
-// page draws as a grayscale raster. See emissionsGrid.ts.
+// Returns the accumulating CO₂e emissions field as a normalised grid the homepage
+// choropleth (CollectiveMap) draws. See emissionsGrid.ts.
 
 import type { RequestHandler } from '@sveltejs/kit';
 

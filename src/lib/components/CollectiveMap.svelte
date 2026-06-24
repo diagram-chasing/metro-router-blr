@@ -2,8 +2,8 @@
 	// The collective health wall: a 500 m choropleth of "months of life lost" over the
 	// dark city basemap, per-neighbourhood ±months numbers on top, and a submit
 	// animation where the latest route's grid squares light up in sequence before the
-	// field recalculates. Skeleton mirrors FlowMap (deck.gl over maplibre), but the
-	// scene is a flat choropleth + labels rather than 3D towers.
+	// field recalculates. deck.gl over maplibre; the scene is a flat choropleth +
+	// labels rather than 3D towers.
 	import { onMount } from 'svelte';
 
 	import maplibre from 'maplibre-gl';
