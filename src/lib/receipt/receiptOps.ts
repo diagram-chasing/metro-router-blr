@@ -101,7 +101,9 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	T(ruleStr('-'));
 	gap();
 
-	// 03 your corridor
+	// 03 your corridor — the headcount, the public-transport split and the emissions
+	// line come from nearby junction counts (traffic.json); the g/km bars below stay
+	// an illustrative mode model.
 	eyebrowOp('But more people also use this route...');
 	gap();
 	deck(view.corridor.copy);
@@ -117,6 +119,14 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	).forEach((l) => {
 		T(l.text, { bold: l.mark });
 	});
+	gap();
+	const cw = 20; // key column width — sized to the longest label below
+	const peopleApprox = Math.round(view.corridor.peoplePerDay / 1000) * 1000;
+	const peopleVal = `${inr(peopleApprox)}/day${view.corridor.isFallback ? ' (est)' : ''}`;
+	T(kv('Also on this route', peopleVal, cw));
+	T(kv('Their daily CO2', view.corridor.co2Label, cw));
+	T(' '.repeat(cw + 3) + `(${view.corridor.co2Equiv})`); // continuation, value column
+	T(kv('Using public transit', `${Math.round(view.corridor.ptShare * 100)}%`, cw));
 	gap();
 	T(ruleStr('-'));
 	gap();

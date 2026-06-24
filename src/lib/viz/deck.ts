@@ -14,6 +14,7 @@ export async function loadDeck() {
 		GridCellLayer: layers.GridCellLayer,
 		PathLayer: layers.PathLayer,
 		ScatterplotLayer: layers.ScatterplotLayer,
+		TextLayer: layers.TextLayer,
 		TripsLayer: geo.TripsLayer
 	};
 }

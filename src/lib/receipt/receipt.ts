@@ -9,6 +9,7 @@ import {
 import type { Answers, Decider, Frequency, FunQuestionId, Lifestyle, Mode } from '$lib/exhibit/types';
 import type { GeoSnapshot } from '$lib/server/receiptStore';
 import { assignArchetype, archetypeBasis } from './archetype';
+import { estimateCorridorTraffic } from './corridorTraffic';
 
 export type ComputedReceipt = {
 	// Inputs echoed back in readable form
@@ -61,9 +62,14 @@ export type ComputedReceipt = {
 		isClean: boolean; // bus / metro / walk-cycle — the "roast spoiled" branch
 	};
 
-	// Beat 4 — modeled corridor traffic (illustrative mode-share, not measured)
+	// Beat 4 — corridor traffic. The headcount/PT split/emissions are grounded in
+	// nearby junction counts (traffic.json); the per-mode rows stay illustrative.
 	corridor: {
-		totalPerDay: number;
+		totalPerDay: number; // = peoplePerDay (people/day ≈ bottleneck junction volume)
+		peoplePerDay: number;
+		ptShare: number; // assumed public-transport modal split
+		dailyCo2eKg: number; // estimated daily CO2e of corridor traffic over the route
+		isFallback: boolean; // route touched no junction → city-wide percentile used
 		rows: { key: string; label: string; countPerDay: number; gPerKm: number; isYou: boolean }[];
 	};
 
@@ -145,6 +151,11 @@ export type ReceiptView = {
 	};
 	corridor: {
 		totalPerDay: number;
+		peoplePerDay: number;
+		ptShare: number; // 0..1, assumed public-transport modal split
+		co2Label: string; // estimated daily CO2e of corridor traffic, pre-formatted
+		co2Equiv: string; // same figure as a count of heavy things ("~28 elephants")
+		isFallback: boolean;
 		rows: ComputedReceipt['corridor']['rows'];
 		copy: string;
 	};
@@ -240,11 +251,6 @@ const CORRIDOR_KEY_MODE: Record<string, Mode> = {
 	auto: 'auto',
 	metro: 'metro'
 };
-// Daily vehicle count for the modeled corridor: stable per route (seeded), in a
-// ~1,150–1,500 band.
-const CORRIDOR_TOTAL_MIN = 1150;
-const CORRIDOR_TOTAL_SPAN = 351;
-
 // Real-estate beat (10): a parked car occupies ~13 m² of street. ratePerM2 is an
 // illustrative Bengaluru land value (~₹20k/sqft → ~₹2.15 lakh/m²), flagged in the
 // fine print as a convention, not an appraisal.
@@ -765,21 +771,36 @@ function corridorKeyFor(mode: Mode): string | null {
 	return mode; // 'car' | 'auto' | 'bus' | 'metro' | 'two_wheeler'
 }
 
-// Small deterministic hash (FNV-1a) so the modeled corridor total is stable per
-// receipt but varies between routes.
-function hashSeed(seed: string): number {
-	let h = 2166136261 >>> 0;
-	for (let i = 0; i < seed.length; i++) {
-		h ^= seed.charCodeAt(i);
-		h = Math.imul(h, 16777619) >>> 0;
-	}
-	return h >>> 0;
-}
-
 function ordinal(n: number): string {
 	const s = ['th', 'st', 'nd', 'rd'];
 	const v = n % 100;
 	return n + (s[(v - 20) % 10] ?? s[v] ?? s[0]);
+}
+
+// Daily corridor emissions, spelled out: tonnes once it clears ~1 t, else kg.
+function co2DailyLabel(kg: number): string {
+	if (kg >= 1000) {
+		const t = Math.round(kg / 1000);
+		return `${t.toLocaleString('en-IN')} tonne${t === 1 ? '' : 's'}`;
+	}
+	return `${Math.round(kg).toLocaleString('en-IN')} kg`;
+}
+
+// CO2 has mass too — so render the daily corridor figure as a playful count of heavy
+// things (rough live weights, kg). The pick is deterministic per receipt so it holds
+// still between renders.
+const CO2_CRITTERS: { mass: number; noun: string }[] = [
+	{ mass: 5000, noun: 'elephants' },
+	{ mass: 2300, noun: 'rhinos' },
+	{ mass: 1500, noun: 'hippos' },
+	{ mass: 1200, noun: 'hatchbacks' },
+	{ mass: 680, noun: 'cows' }
+];
+function co2EquivLabel(kg: number, id: string): string {
+	const idx = Number(pick(id, 'co2-critter', CO2_CRITTERS.map((_, i) => String(i))));
+	const c = CO2_CRITTERS[idx];
+	const n = Math.max(2, Math.round(kg / c.mass));
+	return `${n.toLocaleString('en-IN')} ${c.noun}`;
 }
 
 export function comma(n: number): string {
@@ -890,9 +911,11 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 	const carbonValues = ALL_MODES.map((m) => MODE_CO2E_G_PER_PKM[m]);
 	const carbonRankFromDirtiest = rankFromDirtiest(MODE_CO2E_G_PER_PKM[tripMode], carbonValues);
 
-	// Beat 4 — modeled corridor traffic
-	const seed = hashSeed(`${a.originStation ?? a.origin ?? ''}|${a.destinationStation ?? a.destination ?? ''}|${round(distanceKm, 1)}`);
-	const totalPerDay = CORRIDOR_TOTAL_MIN + (seed % CORRIDOR_TOTAL_SPAN);
+	// Beat 4 — corridor traffic, grounded in nearby junction counts (traffic.json).
+	// The per-mode g/km bars stay modeled (CORRIDOR_SHARE); only the headcount, the
+	// public-transport split and the emissions line come from the real data.
+	const corridorTraffic = estimateCorridorTraffic(a.route?.segments, distanceKm);
+	const totalPerDay = corridorTraffic.peoplePerDay;
 	const youKey = corridorKeyFor(tripMode);
 	const corridorRows = Object.keys(CORRIDOR_SHARE)
 		.map((key) => ({
@@ -959,6 +982,10 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 		},
 		corridor: {
 			totalPerDay,
+			peoplePerDay: corridorTraffic.peoplePerDay,
+			ptShare: corridorTraffic.ptShare,
+			dailyCo2eKg: corridorTraffic.dailyCo2eKg,
+			isFallback: corridorTraffic.isFallback,
 			rows: corridorRows
 		},
 		cylindersYear: round(cylindersYear, 0),
@@ -1097,6 +1124,11 @@ export function buildReceiptView(
 		},
 		corridor: {
 			totalPerDay: c.corridor.totalPerDay,
+			peoplePerDay: c.corridor.peoplePerDay,
+			ptShare: c.corridor.ptShare,
+			co2Label: co2DailyLabel(c.corridor.dailyCo2eKg),
+			co2Equiv: co2EquivLabel(c.corridor.dailyCo2eKg, id),
+			isFallback: c.corridor.isFallback,
 			rows: c.corridor.rows,
 			copy: corridorCopy(c, id)
 		},

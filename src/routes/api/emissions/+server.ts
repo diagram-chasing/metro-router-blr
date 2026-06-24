@@ -17,8 +17,10 @@ export const GET: RequestHandler = async ({ url }) => {
 	const shiftRaw = url.searchParams.get('shift');
 	const shiftParam = shiftRaw === null ? NaN : Number(shiftRaw);
 	const shift = isFinite(shiftParam) && shiftParam >= 0 && shiftParam <= 1 ? shiftParam : undefined;
+	const cellParam = Number(url.searchParams.get('cell'));
+	const cell = isFinite(cellParam) && cellParam >= 0.0025 && cellParam <= 0.02 ? cellParam : undefined;
 
-	const field = buildField({ type, decayKm, shift });
+	const field = buildField({ type, decayKm, shift, cell });
 
 	return new Response(JSON.stringify({ grid: type, ...field }), {
 		headers: {

@@ -13,14 +13,37 @@
 import { MODE_CO2E_G_PER_PKM, legKindToMode, haversineKm } from '$lib/emissions';
 import { listLines, type LineRow } from './db';
 
-// ── Grid: cell centres on a 0.01° lattice over Bengaluru ──
+// ── Grid: cell centres on a uniform lattice over Bengaluru ──
+// The bbox corners are fixed; cell size is a per-build knob so the same kernel can
+// be sampled at 0.01° (the 3D wall, ~1.1 km) or 0.005° (the choropleth, ~500 m,
+// matching the CHETNA-Road grid). Default reproduces the original 34×35 grid.
 const CELL = 0.01;
 const LAT_MIN = 12.8235;
 const LON_MIN = 77.4499;
-const N_LAT = 34;
-const N_LON = 35;
 const LAT_MAX = 13.1535;
 const LON_MAX = 77.7899;
+
+type Grid = {
+	cell: number;
+	latMin: number;
+	lonMin: number;
+	lonMax: number;
+	latMax: number;
+	nLat: number;
+	nLon: number;
+};
+
+function makeGrid(cell: number): Grid {
+	return {
+		cell,
+		latMin: LAT_MIN,
+		lonMin: LON_MIN,
+		lonMax: LON_MAX,
+		latMax: LAT_MAX,
+		nLat: Math.round((LAT_MAX - LAT_MIN) / cell) + 1, // 0.01 → 34, 0.005 → 67
+		nLon: Math.round((LON_MAX - LON_MIN) / cell) + 1 // 0.01 → 35, 0.005 → 67
+	};
+}
 
 // Resampling + kernel.
 const STEP_KM = 0.25; // polyline sample spacing
@@ -77,26 +100,27 @@ function cfFactor(kind: LineRow['segments'][number]['legKind'], shift: number): 
 // touching only cells within ~3 decay lengths.
 function stamp(
 	grid: Float64Array,
+	g: Grid,
 	lng: number,
 	lat: number,
 	weight: number,
 	decayKm: number
 ): void {
 	if (weight <= 0) return;
-	const ci = Math.round((lat - LAT_MIN) / CELL);
-	const cj = Math.round((lng - LON_MIN) / CELL);
-	const cellKm = KM_PER_DEG_LAT * CELL;
+	const ci = Math.round((lat - g.latMin) / g.cell);
+	const cj = Math.round((lng - g.lonMin) / g.cell);
+	const cellKm = KM_PER_DEG_LAT * g.cell;
 	const radius = Math.max(1, Math.ceil((3 * decayKm) / cellKm));
 	for (let di = -radius; di <= radius; di++) {
 		const i = ci + di;
-		if (i < 0 || i >= N_LAT) continue;
-		const cellLat = LAT_MIN + i * CELL;
+		if (i < 0 || i >= g.nLat) continue;
+		const cellLat = g.latMin + i * g.cell;
 		for (let dj = -radius; dj <= radius; dj++) {
 			const j = cj + dj;
-			if (j < 0 || j >= N_LON) continue;
-			const cellLon = LON_MIN + j * CELL;
+			if (j < 0 || j >= g.nLon) continue;
+			const cellLon = g.lonMin + j * g.cell;
 			const d = haversineKm(lng, lat, cellLon, cellLat);
-			grid[i * N_LON + j] += weight * Math.exp(-d / decayKm);
+			grid[i * g.nLon + j] += weight * Math.exp(-d / decayKm);
 		}
 	}
 }
@@ -105,6 +129,7 @@ function stamp(
 // (factor or excess) × tripsPerYear × stepKm of that mode's emissions.
 function depositLine(
 	grid: Float64Array,
+	g: Grid,
 	line: LineRow,
 	type: GridType,
 	decayKm: number,
@@ -132,7 +157,7 @@ function depositLine(
 			const weight = perKm * trips * stepKm;
 			for (let s = 0; s < nSub; s++) {
 				const t = (s + 0.5) / nSub;
-				stamp(grid, lng1 + (lng2 - lng1) * t, lat1 + (lat2 - lat1) * t, weight, decayKm);
+				stamp(grid, g, lng1 + (lng2 - lng1) * t, lat1 + (lat2 - lat1) * t, weight, decayKm);
 			}
 		}
 	}
@@ -142,13 +167,15 @@ export type FieldOpts = {
 	type: GridType;
 	decayKm?: number;
 	shift?: number; // cf only: share of private-leg trips moved to transit
+	cell?: number; // grid cell size in degrees (default 0.01 ≈ 1.1 km; 0.005 ≈ 500 m)
 };
 
 export function buildField(opts: FieldOpts): Field {
-	const { type, decayKm = DEFAULT_DECAY_KM, shift = DEFAULT_CF_SHIFT } = opts;
+	const { type, decayKm = DEFAULT_DECAY_KM, shift = DEFAULT_CF_SHIFT, cell = CELL } = opts;
+	const g = makeGrid(cell);
 
-	const grid = new Float64Array(N_LAT * N_LON);
-	for (const line of listLines({})) depositLine(grid, line, type, decayKm, shift);
+	const grid = new Float64Array(g.nLat * g.nLon);
+	for (const line of listLines({})) depositLine(grid, g, line, type, decayKm, shift);
 
 	let depMax = 0;
 	for (const v of grid) if (v > depMax) depMax = v;
@@ -157,9 +184,9 @@ export function buildField(opts: FieldOpts): Field {
 	for (let i = 0; i < grid.length; i++) values[i] = depMax > 0 ? grid[i] / depMax : 0;
 
 	return {
-		nLat: N_LAT,
-		nLon: N_LON,
-		bbox: [LON_MIN, LAT_MIN, LON_MAX, LAT_MAX],
+		nLat: g.nLat,
+		nLon: g.nLon,
+		bbox: [g.lonMin, g.latMin, g.lonMax, g.latMax],
 		values,
 		rawMax: depMax
 	};
