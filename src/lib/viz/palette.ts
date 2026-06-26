@@ -63,7 +63,7 @@ export function co2Ramp(t: number): RGB {
 // sits close to the dark basemap at the midpoint, warm amber→red = months lost
 // (above average). Used by the choropleth wall; semantically the opposite of the
 // sequential co2Ramp, so it gets its own stops.
-const DIVERGING: { t: number; rgb: RGB }[] = [
+export const DIVERGING: { t: number; rgb: RGB }[] = [
 	{ t: 0.0, rgb: [54, 150, 236] }, // strong blue — most given back
 	{ t: 0.3, rgb: [96, 172, 224] }, // soft blue
 	{ t: 0.5, rgb: [32, 40, 56] }, // neutral, near the basemap
@@ -98,6 +98,23 @@ export function divergingRamp(months: number, ceil = 12): RGB {
 	return divergingAt((months + ceil) / (2 * ceil));
 }
 
+// Emit `divergingAt` as a GLSL function so the field shader and the CPU agree on one
+// ramp. A chain of `mix(c, stop, linearstep(a,b,t))` reproduces piecewise-linear
+// interpolation exactly: each fully-open gate replaces the colour with the next stop,
+// the active segment's gate is the fraction. Pass any stop list to bake other ramps.
+export function glslColorRamp(fnName: string, stops = DIVERGING): string {
+	const v3 = (rgb: RGB) =>
+		`vec3(${(rgb[0] / 255).toFixed(5)}, ${(rgb[1] / 255).toFixed(5)}, ${(rgb[2] / 255).toFixed(5)})`;
+	let body = `	vec3 c = ${v3(stops[0].rgb)};\n`;
+	for (let i = 1; i < stops.length; i++) {
+		const a = stops[i - 1].t;
+		const b = stops[i].t;
+		const span = (b - a || 1).toFixed(5);
+		body += `	c = mix(c, ${v3(stops[i].rgb)}, clamp((t - ${a.toFixed(5)}) / ${span}, 0.0, 1.0));\n`;
+	}
+	return `vec3 ${fnName}(float t) {\n	t = clamp(t, 0.0, 1.0);\n${body}	return c;\n}`;
+}
+
 // ── Easing ──
 export const easeInOutCubic = (t: number): number =>
 	t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
@@ -108,6 +125,9 @@ export const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3);
 // Same OpenFreeMap vector source as the exhibit/accumulation maps, restyled to a
 // near-black canvas with faint cool water and road context the glow sits over.
 export function darkStyle(bg: string = WALL_BG): maplibre.StyleSpecification {
+	// "mapscii" roads: round-capped lines with a zero-length dash → a dotted track,
+	// echoing the receipt's 1-bit dot map (see receipt/viz/braille.ts). Dash gap is in
+	// line-widths, so dot spacing scales with the road width across zoom.
 	const road = (
 		id: string,
 		classes: string[],
@@ -119,15 +139,17 @@ export function darkStyle(bg: string = WALL_BG): maplibre.StyleSpecification {
 		source: 'openmaptiles',
 		'source-layer': 'transportation',
 		filter: ['in', 'class', ...classes],
+		layout: { 'line-cap': 'round', 'line-join': 'round' },
 		paint: {
-			'line-color': '#3a4a66',
+			'line-color': '#5a7798',
 			'line-width': ['interpolate', ['linear'], ['zoom'], ...w.flat()],
+			'line-dasharray': [0, 2.2],
 			'line-opacity': opacity
 		}
 	});
 
-	// OSM place labels (neighbourhood / suburb / town names) straight from the vector
-	// tiles. The wall's own numbers sit on top of these via a deck TextLayer.
+	// OSM place labels (neighbourhood / suburb / town / city names) from the vector
+	// tiles, for geographic context. The wall's own numbers sit on top via a deck TextLayer.
 	const place = (
 		id: string,
 		classes: string[],
@@ -158,6 +180,8 @@ export function darkStyle(bg: string = WALL_BG): maplibre.StyleSpecification {
 		}
 	});
 
+	// Roads + place labels only — no water or greenery. The dotted street network as
+	// context under the field, with names for orientation.
 	return {
 		version: 8,
 		name: 'Wall',
@@ -167,21 +191,14 @@ export function darkStyle(bg: string = WALL_BG): maplibre.StyleSpecification {
 		},
 		layers: [
 			{ id: 'background', type: 'background', paint: { 'background-color': bg } },
-			{
-				id: 'water',
-				type: 'fill',
-				source: 'openmaptiles',
-				'source-layer': 'water',
-				paint: { 'fill-color': '#0a1426', 'fill-opacity': 0.55 }
-			},
 			road('road-secondary', ['secondary', 'tertiary'], [
-				[9, 0.3],
-				[16, 1.2]
-			], 0.05),
-			road('road-primary', ['primary', 'trunk', 'motorway'], [
-				[6, 0.4],
+				[9, 0.9],
 				[16, 2.2]
-			], 0.08),
+			], 0.22),
+			road('road-primary', ['primary', 'trunk', 'motorway'], [
+				[6, 0.9],
+				[16, 3.0]
+			], 0.94),
 			place(
 				'place-minor',
 				['suburb', 'neighbourhood', 'quarter', 'village'],

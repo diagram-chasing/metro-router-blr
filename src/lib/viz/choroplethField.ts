@@ -13,7 +13,7 @@
 //   • State B — a transient per-cell ignite glow (the submitted route's squares
 //               lighting up in sequence) and a recalculating sweep, layered on top.
 
-import { divergingAt, easeInOutCubic } from './palette';
+import { easeInOutCubic } from './palette';
 import { monthsFromConcentration, Params } from './health';
 import { NEIGHBOURHOODS } from '$lib/config/neighbourhoods';
 import { haversineKm } from '$lib/emissions';
@@ -26,13 +26,10 @@ export type Field = {
 	rawMax: number;
 };
 
-export type Cell = { position: [number, number]; idx: number };
-
 export type HoodReading = { name: string; c: [number, number]; months: number };
 
 const GROW_S = 1.6; // snapshot cross-fade
 const EPS_MONTHS = 1e-3; // below this a cell carries no exposure (transparent base fill)
-const BASE_FILL: [number, number, number] = [40, 48, 64]; // faint grid over the bbox
 
 // Ignite (State B): each route cell rises bright then HOLDS at full capacity until
 // the route is cleared (folded into the field on settle).
@@ -45,7 +42,15 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 export class ChoroplethField {
 	bounds: [number, number, number, number] = [0, 0, 0, 0];
 	cellMeters = 0;
-	cols: Cell[] = []; // every cell (full coverage); transparent where empty
+
+	// Field texture (rgba8, north row first) the FieldLayer shades on the GPU.
+	// `texVersion` bumps only when the bytes change, so deck re-uploads on real data
+	// changes — not every frame. Channels: R=hue t, G=intensity, B=ignite, A=mask.
+	private texBytes: Uint8Array = new Uint8Array(0);
+	private texImage: { width: number; height: number; data: Uint8Array } | null = null;
+	private texVersion = 0;
+	private texForce = false; // an external change (snapshot/baseline/route) needs a rebuild
+	private wasAnimating = false;
 
 	private nLat = 0;
 	private nLon = 0;
@@ -57,8 +62,16 @@ export class ChoroplethField {
 	private ourUnit = 0; // µg/m³ per unit of absolute deposit (frozen on first snapshot)
 	private ourUnitFrozen = false;
 
-	// Resting baseline concentration (µg/m³) per cell, from the ACAG annual-mean PM2.5 grid.
+	// Resting baseline concentration (µg/m³): `base` is resampled onto the CURRENT field
+	// grid, `baseRaw` keeps the baked source (with its own header) so the field can run at
+	// any cell size without re-baking baseline-grid.json.
 	private base: number[] = [];
+	private baseRaw: {
+		nLat: number;
+		nLon: number;
+		bbox: [number, number, number, number];
+		values: number[];
+	} | null = null;
 	// Our accumulating commute layer — ABSOLUTE deposit (normalised × peak), lerped
 	// between snapshots so the field grows smoothly as commutes compound.
 	private ourPrev: number[] = [];
@@ -75,7 +88,7 @@ export class ChoroplethField {
 	private recDur = 0;
 	private recOi = 0;
 	private recOj = 0;
-	private recMaxDist = 1;
+	private recPath: number[] = []; // recalc route resampled to uv points (flattened u,v…)
 
 	// Per-frame caches (one O(n) pass in setFrame).
 	private monthsNow: Float64Array = new Float64Array(0);
@@ -114,8 +127,47 @@ export class ChoroplethField {
 
 	// The resting baseline concentration (µg/m³ per cell), from the ACAG annual-mean PM2.5
 	// grid baked to this grid. Set once; aligns to the same row-major lat(asc) order.
-	setBaseline(baseUg: number[]): void {
-		this.base = baseUg;
+	setBaseline(b: {
+		nLat: number;
+		nLon: number;
+		bbox: [number, number, number, number];
+		values: number[];
+	}): void {
+		this.baseRaw = b;
+		this.resampleBaseline();
+		this.texForce = true;
+	}
+
+	// Bilinearly resample the baked baseline onto the field's current grid, so it lines up
+	// at any cell size. No-op until both the baseline and a field snapshot are known.
+	private resampleBaseline(): void {
+		const b = this.baseRaw;
+		if (!b || !this.has || this.nLat === 0 || this.nLon === 0) return;
+		const { nLat, nLon, bounds, cellDeg } = this;
+		const [blonMin, blatMin, blonMax, blatMax] = b.bbox;
+		const bw = b.nLon;
+		const bh = b.nLat;
+		const out = new Array<number>(nLat * nLon);
+		for (let i = 0; i < nLat; i++) {
+			const lat = bounds[1] + i * cellDeg;
+			const fy = bh > 1 ? ((lat - blatMin) / (blatMax - blatMin || 1)) * (bh - 1) : 0;
+			const y0 = Math.max(0, Math.min(bh - 1, Math.floor(fy)));
+			const y1 = Math.min(bh - 1, y0 + 1);
+			const ty = Math.max(0, Math.min(1, fy - y0));
+			for (let j = 0; j < nLon; j++) {
+				const lon = bounds[0] + j * cellDeg;
+				const fx = bw > 1 ? ((lon - blonMin) / (blonMax - blonMin || 1)) * (bw - 1) : 0;
+				const x0 = Math.max(0, Math.min(bw - 1, Math.floor(fx)));
+				const x1 = Math.min(bw - 1, x0 + 1);
+				const tx = Math.max(0, Math.min(1, fx - x0));
+				const v00 = b.values[y0 * bw + x0] ?? 0;
+				const v10 = b.values[y0 * bw + x1] ?? 0;
+				const v01 = b.values[y1 * bw + x0] ?? 0;
+				const v11 = b.values[y1 * bw + x1] ?? 0;
+				out[i * nLon + j] = (v00 * (1 - tx) + v10 * tx) * (1 - ty) + (v01 * (1 - tx) + v11 * tx) * ty;
+			}
+		}
+		this.base = out;
 		this.recomputeAnchors();
 	}
 
@@ -163,27 +215,12 @@ export class ChoroplethField {
 		const key = `${raw.nLat}x${raw.nLon}@${raw.bbox.join(',')}`;
 		if (key !== this.headerKey) {
 			this.headerKey = key;
-			this.rebuildCols();
 			this.rebuildHoods();
+			this.resampleBaseline(); // re-fit the baked baseline to the new grid
 		}
 		if (this.monthsNow.length !== raw.values.length)
 			this.monthsNow = new Float64Array(raw.values.length);
-	}
-
-	// Bottom-left corner per GridCellLayer; the cell extends +cellSize east/north.
-	private rebuildCols(): void {
-		const { nLat, nLon, cellDeg, bounds } = this;
-		const half = cellDeg / 2;
-		const cols: Cell[] = [];
-		for (let i = 0; i < nLat; i++) {
-			for (let j = 0; j < nLon; j++) {
-				cols.push({
-					position: [bounds[0] + j * cellDeg - half, bounds[1] + i * cellDeg - half],
-					idx: i * nLon + j
-				});
-			}
-		}
-		this.cols = cols;
+		this.texForce = true; // new snapshot → field bytes need a rebuild
 	}
 
 	private rebuildHoods(): void {
@@ -239,59 +276,113 @@ export class ChoroplethField {
 		return IGNITE_PLATEAU;
 	}
 
-	// The expanding recalculation ring: 1 at the wavefront, fading ahead/behind it.
-	private recalcWave(idx: number): number {
-		if (this.nowS < this.recStart || this.nowS > this.recStart + this.recDur) return 0;
-		const p = (this.nowS - this.recStart) / this.recDur;
-		const ci = Math.floor(idx / this.nLon);
-		const cj = idx % this.nLon;
-		const dist = Math.hypot(ci - this.recOi, cj - this.recOj);
-		const front = p * this.recMaxDist;
-		const env = Math.sin(Math.PI * clamp01(p)); // rise then fall over the sweep
-		return env * Math.exp(-Math.pow((dist - front) / 2.4, 2));
-	}
+	// ── Field texture ──
+	// Bake the per-cell DATA the shader needs (hue / intensity / ignite / mask) into
+	// an rgba8 texture. Colour, opacity curve, the recalc pulse and dim all happen in
+	// the shader from uniforms — none of that is here. Cheap (one O(cells) pass), and
+	// only rebuilds when the field is actually moving, so a resting wall uploads nothing.
+	// Texture row 0 is NORTH (the FieldLayer's uv.y=0 is the top edge), while the field
+	// is row-major lat-ascending, so rows are flipped on the way in.
+	fillTexture(): void {
+		if (!this.has) return;
+		const animating = this.nowS - this.growthStart < GROW_S || this.revealAt.size > 0;
+		// Rebuild while moving, one frame after it settles, and on any external change.
+		const need = this.texForce || animating || this.wasAnimating || !this.texImage;
+		this.wasAnimating = animating;
+		if (!need) return;
 
-	colorOf(idx: number): [number, number, number, number] {
-		const m = this.monthsNow[idx] ?? 0;
-		const glow = this.igniteGlow(idx);
-		const wave = this.recalcWave(idx);
-
-		// Empty cell: a faint neutral fill so the whole grid reads across the bbox
-		// (the lattice "fits" the box) instead of a ragged blob of lit corridors.
-		if (m <= EPS_MONTHS && glow <= 0.001 && wave <= 0.001) {
-			return [BASE_FILL[0], BASE_FILL[1], BASE_FILL[2], Math.round(16 * this.dimK)];
-		}
-
-		// Absolute WHO-anchored hue: neutral sits at the city's cleanest ambient cell, the
-		// cool extreme is the WHO line (0 months). Everything the city actually breathes is at
-		// or above neutral, so no cell ever reads "clean" — the dirtier the cell, the warmer.
+		const { nLat, nLon } = this;
+		const n = nLat * nLon;
+		if (this.texBytes.length !== n * 4) this.texBytes = new Uint8Array(n * 4);
+		const out = this.texBytes;
+		const m = this.monthsNow;
 		const lo = this.anchorLo || 1e-9;
 		const span = Math.max(this.anchorHi - lo, 1e-9);
-		const t = m >= lo ? 0.5 + 0.5 * clamp01((m - lo) / span) : 0.5 * clamp01(m / lo);
-		let [r, g, b] = divergingAt(t);
-		// Opacity follows how busy the cell is relative to the peak.
-		let a = 54 + 192 * Math.pow(clamp01(this.baseMax > 0 ? m / this.baseMax : 0), 0.6);
+		const peak = this.baseMax > 0 ? this.baseMax : 1;
 
-		// Recalculation sweep: a cool-white wavefront brightening cells as it passes.
-		if (wave > 0) {
-			const W: [number, number, number] = [196, 226, 255];
-			const k = 0.7 * wave;
-			r = Math.round(r + (W[0] - r) * k);
-			g = Math.round(g + (W[1] - g) * k);
-			b = Math.round(b + (W[2] - b) * k);
-			a = a + (255 - a) * (0.6 * wave);
+		for (let tr = 0; tr < nLat; tr++) {
+			const fr = nLat - 1 - tr; // texture top row ← field's northernmost row
+			for (let c = 0; c < nLon; c++) {
+				const fi = fr * nLon + c;
+				const mo = m[fi] ?? 0;
+				// WHO-anchored hue: neutral at the cleanest ambient cell, cool extreme = WHO line.
+				const t = mo >= lo ? 0.5 + 0.5 * clamp01((mo - lo) / span) : 0.5 * clamp01(mo / lo);
+				const ti = (tr * nLon + c) * 4;
+				out[ti] = Math.round(t * 255);
+				out[ti + 1] = Math.round(clamp01(mo / peak) * 255); // intensity (rel. to peak)
+				out[ti + 2] = Math.round(clamp01(this.igniteGlow(fi)) * 255); // ignite bloom
+				out[ti + 3] = mo > EPS_MONTHS ? 255 : 0; // mask (0 = empty → basemap)
+			}
 		}
+		this.texImage = { width: nLon, height: nLat, data: out.slice() };
+		this.texVersion++;
+		this.texForce = false;
+	}
 
-		// Route ignite: a hot, near-white bloom — brighter and fuller than the field.
-		if (glow > 0) {
-			const IGN: [number, number, number] = [255, 246, 224];
-			r = Math.round(r + (IGN[0] - r) * glow);
-			g = Math.round(g + (IGN[1] - g) * glow);
-			b = Math.round(b + (IGN[2] - b) * glow);
-			a = Math.max(a, 235) + (255 - Math.max(a, 235)) * glow;
+	// The current texture; identity is stable until the bytes change (gate deck uploads on it).
+	textureImage(): { width: number; height: number; data: Uint8Array } | null {
+		return this.texImage;
+	}
+	get textureVersion(): number {
+		return this.texVersion;
+	}
+
+	// bbox width/height on screen (cos-lat corrected), so the shader can keep the pulse
+	// ring circular instead of stretched to the lattice's aspect.
+	get aspect(): number {
+		const [lonMin, latMin, lonMax, latMax] = this.bounds;
+		const dLat = latMax - latMin || 1;
+		const latMid = ((latMin + latMax) / 2) * (Math.PI / 180);
+		return ((lonMax - lonMin) * Math.cos(latMid)) / dLat;
+	}
+
+	get dim(): number {
+		return this.dimK;
+	}
+
+	// (cols, rows) — drives the shader's grid lines and per-cell recalc flicker.
+	get gridSize(): [number, number] {
+		return [this.nLon, this.nLat];
+	}
+
+	// The recalc route, resampled to `n` evenly-spaced points and projected to uv
+	// (north-flipped to match the texture), so the shader can radiate the pulse along the
+	// path's shape. Even spacing is measured in cos-lat-corrected degrees.
+	setRecalcPath(route: [number, number][], n = 8): void {
+		if (route.length < 2) {
+			this.recPath = [];
+			return;
 		}
+		const [lonMin, latMin, lonMax, latMax] = this.bounds;
+		const dLon = lonMax - lonMin || 1;
+		const dLat = latMax - latMin || 1;
+		const kx = Math.cos((((latMin + latMax) / 2) * Math.PI) / 180) || 1;
+		const cum = [0];
+		for (let i = 1; i < route.length; i++) {
+			const dx = (route[i][0] - route[i - 1][0]) * kx;
+			const dy = route[i][1] - route[i - 1][1];
+			cum.push(cum[i - 1] + Math.hypot(dx, dy));
+		}
+		const total = cum[cum.length - 1] || 1;
+		const out: number[] = [];
+		let seg = 1;
+		for (let k = 0; k < n; k++) {
+			const target = (total * k) / (n - 1);
+			while (seg < route.length - 1 && cum[seg] < target) seg++;
+			const t = (target - cum[seg - 1]) / (cum[seg] - cum[seg - 1] || 1);
+			const lng = route[seg - 1][0] + (route[seg][0] - route[seg - 1][0]) * t;
+			const lat = route[seg - 1][1] + (route[seg][1] - route[seg - 1][1]) * t;
+			out.push((lng - lonMin) / dLon, (latMax - lat) / dLat);
+		}
+		this.recPath = out;
+	}
 
-		return [r, g, b, Math.round(clamp01(a / 255) * 255 * this.dimK)];
+	// Recalc as shader uniforms: origin in uv (fallback), the route as flattened uv points
+	// (the pulse radiates along it), times in the same clock as setFrame. dur=0 disables it.
+	recalcUniforms(): { origin: [number, number]; start: number; dur: number; path: number[] } {
+		const u = this.nLon > 1 ? this.recOj / (this.nLon - 1) : 0.5;
+		const v = this.nLat > 1 ? (this.nLat - 1 - this.recOi) / (this.nLat - 1) : 0.5;
+		return { origin: [u, v], start: this.recStart, dur: this.recDur, path: this.recPath };
 	}
 
 	// Nearest cell index to a lng/lat (clamped to the grid).
@@ -312,6 +403,7 @@ export class ChoroplethField {
 		for (const i of cellIdxs) if (i >= 0 && i < this.extra.length) this.extra[i] += amt;
 		this.ourTarget = this.serverAbs.map((v, i) => v + this.extra[i]);
 		this.growthStart = now;
+		this.texForce = true;
 	}
 
 	// Kick a recalculation sweep from a grid cell (route centroid), lasting `dur`.
@@ -320,7 +412,6 @@ export class ChoroplethField {
 		this.recOj = originIdx % this.nLon;
 		this.recStart = start;
 		this.recDur = dur;
-		this.recMaxDist = Math.hypot(this.nLat, this.nLon);
 	}
 
 	// Per-neighbourhood number: the mean estimated months of life lost for a resident
@@ -358,6 +449,29 @@ export class ChoroplethField {
 		return this.marginal;
 	}
 
+	// The months this one route adds across its cells — the figure the recalc
+	// notification surfaces ("+N mo"). Synchronous and deterministic (doesn't wait on
+	// the server poll): the months gained if the route deposits its standard bump on top
+	// of the current field. Matches addRouteDeposit's `strength`, so demo and live agree.
+	estimateRouteMonths(cellIdxs: number[], strength = 0.9): number {
+		if (!this.has || cellIdxs.length === 0) return 0;
+		const amt = strength * this.peakAbs;
+		const baseScale = Params.base_scale;
+		const useBase = this.base.length === this.monthsNow.length;
+		const seen = new Set<number>();
+		let sum = 0;
+		for (const i of cellIdxs) {
+			if (i < 0 || i >= this.monthsNow.length || seen.has(i)) continue;
+			seen.add(i);
+			const baseUg = useBase ? baseScale * this.base[i] : 0;
+			const cur = this.ourTarget[i] ?? 0;
+			const before = monthsFromConcentration(baseUg + this.ourUnit * cur);
+			const after = monthsFromConcentration(baseUg + this.ourUnit * (cur + amt));
+			sum += after - before;
+		}
+		return sum;
+	}
+
 	// ── State B: the submitted route's squares ──
 	// Rasterise a polyline onto the grid → ordered, de-duplicated cell indices.
 	rasterizeRoute(coords: [number, number][]): number[] {
@@ -391,6 +505,7 @@ export class ChoroplethField {
 	// Light the route's cells in sequence across `duration`, starting at `start`.
 	igniteRoute(cellIdxs: number[], start: number, duration: number): void {
 		this.revealAt.clear();
+		this.texForce = true;
 		if (cellIdxs.length === 0) return;
 		const span = cellIdxs.length > 1 ? duration / (cellIdxs.length - 1) : 0;
 		cellIdxs.forEach((idx, k) => this.revealAt.set(idx, start + k * span));
@@ -398,5 +513,6 @@ export class ChoroplethField {
 
 	clearRoute(): void {
 		this.revealAt.clear();
+		this.texForce = true;
 	}
 }

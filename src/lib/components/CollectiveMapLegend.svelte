@@ -6,7 +6,7 @@
 
 	import { loadDeck, type Deck } from '$lib/viz/deck';
 	import { ChoroplethField, type Field } from '$lib/viz/choroplethField';
-	import { buildChoroplethLayer, buildHoodLabels } from '$lib/viz/layers';
+	import { buildFieldLayer, buildHoodLabels } from '$lib/viz/layers';
 	import { darkStyle, WALL_BG } from '$lib/viz/palette';
 	import { Params } from '$lib/viz/health';
 	import type { HoodReading } from '$lib/viz/choroplethField';
@@ -111,7 +111,7 @@
 			const p = new URLSearchParams(window.location.search);
 			const bg = p.get('bg') ?? WALL_BG;
 			const dpr = num(p, 'dpr', Math.min(2, window.devicePixelRatio || 1));
-			cellDeg = Math.min(0.02, Math.max(0.0025, num(p, 'cell', 0.005)));
+			cellDeg = Math.min(0.02, Math.max(0.0015, num(p, 'cell', 0.003)));
 			const years = num(p, 'years', Params.years);
 			const gain = num(p, 'gain', Params.our_gain_per_year);
 			field.setGain(gain, years);
@@ -160,8 +160,13 @@
 			const loadBaseline = async () => {
 				try {
 					const res = await fetch('/baseline-grid.json');
-					const b = (await res.json()) as { values: number[] };
-					field.setBaseline(b.values);
+					const b = (await res.json()) as {
+						nLat: number;
+						nLon: number;
+						bbox: [number, number, number, number];
+						values: number[];
+					};
+					field.setBaseline(b);
 				} catch (err) {
 					console.warn('legend baseline load failed:', err);
 				}
@@ -225,11 +230,13 @@
 				const cells = field.rasterizeRoute(route);
 				field.igniteRoute(cells, 0, 0);
 			}
+			field.fillTexture(); // bake the settled state (growth + ignite) into the texture
 
 			const hoods = labelCount > 0 ? scatter(field.hoodMonths(), labelCount) : [];
+			const fieldLayer = buildFieldLayer(deck, field, { time: SETTLED });
 			overlay.setProps({
 				layers: [
-					buildChoroplethLayer(deck, field, SETTLED),
+					...(fieldLayer ? [fieldLayer] : []),
 					...buildHoodLabels(deck, hoods, SETTLED, scaleW)
 				]
 			});

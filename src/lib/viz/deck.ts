@@ -3,6 +3,8 @@
 // is only ever called inside onMount (browser-only) — keeping the heavy bundle
 // out of the server shell and code-split from initial load.
 
+import { makeFieldLayer } from './fieldLayer';
+
 export async function loadDeck() {
 	const [mapbox, layers, geo] = await Promise.all([
 		import('@deck.gl/mapbox'),
@@ -15,7 +17,9 @@ export async function loadDeck() {
 		PathLayer: layers.PathLayer,
 		ScatterplotLayer: layers.ScatterplotLayer,
 		TextLayer: layers.TextLayer,
-		TripsLayer: geo.TripsLayer
+		TripsLayer: geo.TripsLayer,
+		// Field choropleth: shaded as a single texture, no per-cell seams (see fieldLayer.ts).
+		FieldLayer: makeFieldLayer(layers.BitmapLayer)
 	};
 }
 

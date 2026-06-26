@@ -7,7 +7,7 @@
 	import { createClock, type Clock } from '$lib/viz/clock';
 	import { loadDeck, type Deck } from '$lib/viz/deck';
 	import { ChoroplethField, type Field, type HoodReading } from '$lib/viz/choroplethField';
-	import { buildChoroplethLayer, buildHoodLabels } from '$lib/viz/layers';
+	import { buildFieldLayer, buildHoodLabels, buildRecalcNotif, type RecalcNotif } from '$lib/viz/layers';
 	import { darkStyle, WALL_BG, easeInOutCubic } from '$lib/viz/palette';
 	import { Params } from '$lib/viz/health';
 	import EmptyState from '$lib/components/wall/EmptyState.svelte';
@@ -69,6 +69,7 @@
 		let activeRoute: [number, number][] = [];
 		let activeIsDemo = false;
 		let routeCells: number[] = [];
+		let notif: RecalcNotif | null = null; // transient "+N mo" beat at the recalc area
 		// FIFO of routes awaiting their spotlight — every submission gets its moment; under
 		// backlog we compress the long phases (below) rather than dropping anyone.
 		type Pending = { route: [number, number][]; isDemo: boolean; label?: string };
@@ -95,7 +96,7 @@
 			const zoom = num(p, 'zoom', REST.zoom);
 			const pollMs = Math.max(1500, num(p, 'poll', 4000));
 			const dpr = num(p, 'dpr', Math.min(2, window.devicePixelRatio || 1));
-			cellDeg = Math.min(0.02, Math.max(0.0025, num(p, 'cell', 0.005)));
+			cellDeg = Math.min(0.02, Math.max(0.0015, num(p, 'cell', 0.003)));
 			const years = num(p, 'years', Params.years);
 			// µg/m³ per year the commute layer ADDS at the peak corridor, on top of the real
 			// ACAG ambient baseline. Defaults to the calibrated Params value; ?gain= overrides.
@@ -132,8 +133,13 @@
 			const loadBaseline = async () => {
 				try {
 					const res = await fetch('/baseline-grid.json');
-					const b = (await res.json()) as { values: number[] };
-					field.setBaseline(b.values);
+					const b = (await res.json()) as {
+						nLat: number;
+						nLon: number;
+						bbox: [number, number, number, number];
+						values: number[];
+					};
+					field.setBaseline(b);
 				} catch (err) {
 					console.warn('CollectiveMap baseline load failed:', err);
 				}
@@ -196,7 +202,7 @@
 					field.igniteRoute(routeCells, t + DUR.dim, DUR.reveal);
 					const b = new maplibre.LngLatBounds();
 					for (const c of activeRoute) b.extend(c);
-					const cam = map!.cameraForBounds(b, { padding: 140, maxZoom: 13.5 });
+					const cam = map!.cameraForBounds(b, { padding: 140, maxZoom: 12 });
 					if (cam)
 						map!.easeTo({
 							...cam,
@@ -219,6 +225,9 @@
 					cx /= activeRoute.length || 1;
 					cy /= activeRoute.length || 1;
 					field.setRecalc(field.cellIndexAt(cx, cy), t, DUR.recalc);
+					field.setRecalcPath(activeRoute); // pulse radiates along the route shape
+					// Surface the months this route adds as a notification rising from the grid.
+					notif = { months: field.estimateRouteMonths(routeCells), c: [cx, cy], start: t };
 				} else if (p2 === 'zoomBack') {
 					field.clearRoute(); // ignite folds away, leaving the compounded corridor
 					map!.easeTo({
@@ -274,8 +283,8 @@
 				now = t;
 				step(t);
 				field.setFrame(t);
+				field.fillTexture(); // rebuilds the field texture only when the data moved
 
-				const tick = Math.round(t * 6); // choropleth colour buffer regen cadence
 				const lt = Math.round(t * 8); // label refresh cadence
 				if (lt !== labelTick) {
 					labelTick = lt;
@@ -288,8 +297,20 @@
 					headline = Math.round(field.marginalMonths());
 				}
 
-				const layers = field.ready
-					? [buildChoroplethLayer(deck, field, tick), ...buildHoodLabels(deck, hoods, lt, scaleW)]
+				// Continuous `t` (not quantised) → smooth shader animation; the texture itself
+				// only re-uploads when fillTexture bumped its identity.
+				const fieldLayer = field.ready ? buildFieldLayer(deck, field, { time: t }) : null;
+				let notifLayer = null;
+				if (notif) {
+					notifLayer = buildRecalcNotif(deck, notif, t, scaleW);
+					if (!notifLayer) notif = null; // played out → drop it
+				}
+				const layers = fieldLayer
+					? [
+							fieldLayer,
+							...buildHoodLabels(deck, hoods, lt, scaleW),
+							...(notifLayer ? [notifLayer] : [])
+						]
 					: [];
 				overlay?.setProps({ layers });
 			}, watchdog);
@@ -315,17 +336,22 @@
 			}
 			await pollLines();
 
-			// Frame the grid bbox so the choropleth fits the view, and remember it as the
-			// resting camera the submit animation returns to.
+			// Frame the grid bbox to COVER the viewport (fill edge-to-edge, overflowing the
+			// looser axis) so no basemap shows around the grid. fitBounds is "contain", so we
+			// then zoom in by the cover ratio. Remembered as the resting camera.
 			if (field.ready) {
 				const [lonMin, latMin, lonMax, latMax] = field.bounds;
-				map.fitBounds(
-					[
-						[lonMin, latMin],
-						[lonMax, latMax]
-					],
-					{ padding: 64, duration: 0 }
-				);
+				const sw: [number, number] = [lonMin, latMin];
+				const ne: [number, number] = [lonMax, latMax];
+				map.fitBounds([sw, ne], { padding: 0, duration: 0 });
+				const pa = map.project(sw);
+				const pb = map.project(ne);
+				const pw = Math.abs(pb.x - pa.x);
+				const ph = Math.abs(pb.y - pa.y);
+				const cover = Math.max(mapContainer.clientWidth / pw, mapContainer.clientHeight / ph);
+				if (isFinite(cover) && cover > 0) {
+					map.setZoom(map.getZoom() + Math.log2(cover));
+				}
 				restView.center = map.getCenter().toArray() as [number, number];
 				restView.zoom = map.getZoom();
 			}
