@@ -41,7 +41,6 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 
 export class ChoroplethField {
 	bounds: [number, number, number, number] = [0, 0, 0, 0];
-	cellMeters = 0;
 
 	// Field texture (rgba8, north row first) the FieldLayer shades on the GPU.
 	// `texVersion` bumps only when the bytes change, so deck re-uploads on real data
@@ -208,7 +207,6 @@ export class ChoroplethField {
 		this.nLon = raw.nLon;
 		this.bounds = raw.bbox;
 		this.cellDeg = this.nLon > 1 ? (raw.bbox[2] - raw.bbox[0]) / (this.nLon - 1) : 0.01;
-		this.cellMeters = this.cellDeg * 111320;
 		this.growthStart = now;
 		this.has = true;
 
@@ -472,16 +470,26 @@ export class ChoroplethField {
 		return sum;
 	}
 
+	// The µg/m³ this one route adds along its corridor — the figure the recalc card surfaces.
+	// The deposit bump (`strength × peakAbs`) is uniform across the route's cells, so this is a
+	// single representative concentration. Decade-compounded (gain already folds in `years`),
+	// matching how the wall frames everything; the card copy says "over 10 years".
+	estimateRouteUg(strength = 0.9): number {
+		if (!this.has) return 0;
+		return this.ourUnit * strength * this.peakAbs;
+	}
+
 	// ── State B: the submitted route's squares ──
-	// Rasterise a polyline onto the grid → ordered, de-duplicated cell indices.
+	// Rasterise a polyline onto the grid → ordered, de-duplicated cell indices. Bresenham per
+	// segment: one cell per step (8-connected), so the lit route is exactly ONE grid cell wide
+	// and snaps to the lattice — not the 2-cell-wide band that half-cell sampling + independent
+	// row/column rounding used to produce (which read fatter than the grid).
 	rasterizeRoute(coords: [number, number][]): number[] {
 		if (!this.has || coords.length < 2) return [];
 		const { nLat, nLon, cellDeg, bounds } = this;
 		const out: number[] = [];
 		let last = -1;
-		const push = (lng: number, lat: number) => {
-			const j = Math.round((lng - bounds[0]) / cellDeg);
-			const i = Math.round((lat - bounds[1]) / cellDeg);
+		const emit = (i: number, j: number) => {
 			if (i < 0 || i >= nLat || j < 0 || j >= nLon) return;
 			const idx = i * nLon + j;
 			if (idx !== last) {
@@ -489,14 +497,30 @@ export class ChoroplethField {
 				last = idx;
 			}
 		};
+		const cellJ = (lng: number) => Math.round((lng - bounds[0]) / cellDeg);
+		const cellI = (lat: number) => Math.round((lat - bounds[1]) / cellDeg);
 		for (let k = 1; k < coords.length; k++) {
-			const [lng1, lat1] = coords[k - 1];
-			const [lng2, lat2] = coords[k];
-			const km = haversineKm(lng1, lat1, lng2, lat2);
-			const steps = Math.max(1, Math.ceil(km / (this.cellMeters / 1000 / 2)));
-			for (let s = 0; s <= steps; s++) {
-				const t = s / steps;
-				push(lng1 + (lng2 - lng1) * t, lat1 + (lat2 - lat1) * t);
+			let j = cellJ(coords[k - 1][0]);
+			let i = cellI(coords[k - 1][1]);
+			const j1 = cellJ(coords[k][0]);
+			const i1 = cellI(coords[k][1]);
+			const dx = Math.abs(j1 - j);
+			const dy = Math.abs(i1 - i);
+			const sx = j < j1 ? 1 : -1;
+			const sy = i < i1 ? 1 : -1;
+			let err = dx - dy;
+			for (;;) {
+				emit(i, j);
+				if (i === i1 && j === j1) break;
+				const e2 = 2 * err;
+				if (e2 > -dy) {
+					err -= dy;
+					j += sx;
+				}
+				if (e2 < dx) {
+					err += dx;
+					i += sy;
+				}
 			}
 		}
 		return out;

@@ -36,6 +36,7 @@ layout(std140) uniform fieldFxUniforms {
   float scale;         // reserved: zoom for procedural effects (default 1)
   vec2  gridSize;      // (cols, rows) — for grid lines and per-cell flicker
   float noise;         // reserved: grain amount 0..1 (default 0)
+  float idle;          // master idle-motion amount 0..1 (0 disables); from ?idle=
   // The recalc route, resampled to 8 points (uv), packed 2/vec4 — the ring radiates
   // as an offset curve of THIS path, not a circle from a centroid.
   vec4  pathA;
@@ -60,6 +61,7 @@ export const fieldFxUniforms = {
 		scale: 'f32',
 		gridSize: 'vec2<f32>',
 		noise: 'f32',
+		idle: 'f32',
 		pathA: 'vec4<f32>',
 		pathB: 'vec4<f32>',
 		pathC: 'vec4<f32>',
@@ -80,6 +82,7 @@ export type FieldFxProps = {
 	scale: number;
 	gridSize: [number, number];
 	noise: number;
+	idle: number;
 	pathA: V4;
 	pathB: V4;
 	pathC: V4;
@@ -97,6 +100,7 @@ const FIELDFX_DEFAULTS: FieldFxProps = {
 	scale: 1,
 	gridSize: [1, 1],
 	noise: 0,
+	idle: 1,
 	pathA: [0, 0, 0, 0],
 	pathB: [0, 0, 0, 0],
 	pathC: [0, 0, 0, 0],
@@ -205,6 +209,92 @@ vec2 fieldRecalc(vec2 uv) {
   float region = exp(-pow(d / (R * 0.5 + 0.01), 2.0)) * env;
   return vec2(ring, region);
 }
+
+// ── Idle ambience (Paper-shaders ports): luminance/alpha-only motion at rest ──
+// One block of knobs for the whole resting animation — keep every effect faint; this is
+// ambience UNDER the data, never a screensaver. All of it is gated by idle*dim at the call
+// site, so it's strongest at rest and recedes during a submit. Nothing here moves a texel.
+const float IDLE_CAUSTIC_SCALE  = 0.6;  // spatial freq of the "living air" veins
+const float IDLE_CAUSTIC_AMP    = 0.12; // max added alpha for the veins in empty cells
+const float IDLE_HAZE_SPEED     = 0.06; // corridor heat-haze travel speed
+const float IDLE_HAZE_AMP       = 0.10; // max warm glow added over hot corridors (kept low so
+                                        // the grid still reads through the brightest highlight)
+const float IDLE_GRAIN_AMP      = 0.06; // drifting simplex grain shimmer amplitude
+const float IDLE_BREATH_AMP     = 0.06; // global brightness swell (±)
+const float IDLE_BREATH_PERIOD  = 10.0; // seconds per inhale/exhale
+
+vec2 fieldRot(vec2 uv, float th) {
+  return mat2(cos(th), sin(th), -sin(th), cos(th)) * uv;
+}
+
+// Neuro-noise (zozuar / Paper shaders), trimmed 15→10 iterations for the wall: iterative
+// rotated sine-folding → fluid, vein-like caustics. Time advances the domain, so the veins
+// drift while the grid stays put.
+float fieldNeuro(vec2 uv, float t) {
+  vec2 sineAcc = vec2(0.0);
+  vec2 res = vec2(0.0);
+  float scale = 8.0;
+  for (int j = 0; j < 10; j++) {
+    uv = fieldRot(uv, 1.0);
+    sineAcc = fieldRot(sineAcc, 1.0);
+    vec2 layer = uv * scale + float(j) + sineAcc - t;
+    sineAcc += sin(layer);
+    res += (0.5 + 0.5 * cos(layer)) / scale;
+    scale *= 1.2;
+  }
+  return res.x + res.y;
+}
+
+// Simplex noise (Ashima / Paper shaders) — for the drifting grain shimmer.
+vec3 fieldPermute(vec3 x) { return mod(((x * 34.0) + 1.0) * x, 289.0); }
+float fieldSnoise(vec2 v) {
+  const vec4 C = vec4(0.211324865405187, 0.366025403784439, -0.577350269189626, 0.024390243902439);
+  vec2 i = floor(v + dot(v, C.yy));
+  vec2 x0 = v - i + dot(i, C.xx);
+  vec2 i1 = (x0.x > x0.y) ? vec2(1.0, 0.0) : vec2(0.0, 1.0);
+  vec4 x12 = x0.xyxy + C.xxzz;
+  x12.xy -= i1;
+  i = mod(i, 289.0);
+  vec3 p = fieldPermute(fieldPermute(i.y + vec3(0.0, i1.y, 1.0)) + i.x + vec3(0.0, i1.x, 1.0));
+  vec3 m = max(0.5 - vec3(dot(x0, x0), dot(x12.xy, x12.xy), dot(x12.zw, x12.zw)), 0.0);
+  m = m * m; m = m * m;
+  vec3 x = 2.0 * fract(p * C.www) - 1.0;
+  vec3 h = abs(x) - 0.5;
+  vec3 ox = floor(x + 0.5);
+  vec3 a0 = x - ox;
+  m *= 1.79284291400159 - 0.85373472095314 * (a0 * a0 + h * h);
+  vec3 g;
+  g.x = a0.x * x0.x + h.x * x0.y;
+  g.yz = a0.yz * x12.xz + h.yz * x12.yw;
+  return 130.0 * dot(m, g);
+}
+
+// Cool "living air": a faint, drifting vein structure for the empty/low cells. Returns 0..1
+// (the caller tints it cool and scales the alpha). Aspect-corrected so the veins read round.
+// Threshold sits inside fieldNeuro's actual output range (~0.2..1.2) so the veins read instead
+// of clipping to black; the soft band keeps the filament look without flooding the periphery.
+float fieldCaustic(vec2 uv) {
+  vec2 cuv = uv * vec2(fieldFx.aspect, 1.0) * IDLE_CAUSTIC_SCALE;
+  float n = fieldNeuro(cuv, fieldFx.time * 0.18);
+  return clamp(smoothstep(0.45, 1.05, n), 0.0, 1.0);
+}
+
+// Corridor heat-haze (heatmap-derived): a warm highlight sweeping the hot corridors so they
+// read as radiating. The sweep is NOISE-DRIVEN — its heading slowly turns and its front
+// meanders — so the motion never settles into one repeating direction. Returns ~0.5..1.5; the
+// caller subtracts 0.5 and masks by intensity, so only the data region smolders.
+float fieldHaze(vec2 uv) {
+  vec2 p = uv * vec2(fieldFx.aspect, 1.0);
+  float t = fieldFx.time;
+  // Heading wanders on a slow low-freq noise, so the sweep re-aims over time (no fixed axis).
+  float ang = 2.4 + 1.3 * fieldSnoise(vec2(t * 0.012, 3.1));
+  vec2 dir = vec2(cos(ang), sin(ang));
+  // Phase warp: the front bends and paces unevenly instead of marching like a ruler.
+  float warp = 0.7 * fieldSnoise(p * 0.8 + vec2(t * 0.03, -t * 0.02));
+  float y = fract(dot(p, dir) - t * IDLE_HAZE_SPEED + warp);
+  float wave = smoothstep(0.3, 0.65, y) * (1.0 - smoothstep(0.65, 1.0, y));
+  return 0.5 + wave;
+}
 `;
 
 // ── GLSL composition (injected at fs:DECKGL_FILTER_COLOR) ──
@@ -226,12 +316,33 @@ const FIELD_COMPOSE = /* glsl */ `
     a = 8.0 / 255.0;
   }
 
-  // Neutral luminance dither — a blocky stipple. (Alpha-dither would stipple the
-  // cool/navy underlayer in and out and read as blue speckle.)
-  rgb *= 1.0 + (fieldBayer(gl_FragCoord.xy) - 0.5) * 0.12;
-
   // Dim the background field during a submit — the pulse and route ride over it.
   a *= fieldFx.dim;
+
+  // ── Idle ambience (luminance/alpha only — the grid and texels never move) ──
+  // idleK folds in dim, so all of this is strongest at rest and recedes during a submit.
+  float idleK = fieldFx.idle * fieldFx.dim;
+
+  // Caustic "living air": cool veins drifting through the empty / low-exposure cells.
+  float emptyW = 1.0 - smoothstep(0.0, 0.18, fInt);
+  float caustic = fieldCaustic(geometry.uv) * idleK * emptyW;
+  rgb = mix(rgb, vec3(70.0, 150.0, 236.0) / 255.0, clamp(caustic * 0.6, 0.0, 1.0));
+  a += caustic * IDLE_CAUSTIC_AMP;
+
+  // Corridor heat-haze: a slow warm wave sweeping the hot corridors so they smolder. Gentle
+  // colour push so it warms the corridor without blowing it toward white and hiding the grid.
+  float haze = (fieldHaze(geometry.uv) - 0.5) * pow(clamp(fInt, 0.0, 1.0), 0.8) * idleK;
+  rgb = mix(rgb, fieldRamp(clamp(fHue + 0.06, 0.0, 1.0)), clamp(haze * 0.4, 0.0, 1.0));
+  a += max(haze, 0.0) * IDLE_HAZE_AMP;
+
+  // Global breath: a slow brightness swell so even a still field feels alive.
+  a *= 1.0 + IDLE_BREATH_AMP * idleK * sin(fieldFx.time * 6.2831853 / IDLE_BREATH_PERIOD);
+
+  // Breathing grain: the static Bayer stipple + a slow drifting simplex shimmer on top.
+  // (Alpha-dither would stipple the cool underlayer and read as blue speckle, so it's on rgb.)
+  float grain = (fieldBayer(gl_FragCoord.xy) - 0.5) * 0.12;
+  grain += fieldSnoise(gl_FragCoord.xy * 0.5 + vec2(0.0, fieldFx.time * 0.6)) * IDLE_GRAIN_AMP * idleK;
+  rgb *= 1.0 + grain;
 
   // Recalc moment. The AREA around the route "recalculates": each cell flips through
   // heat VALUES (a value scramble), then settles as the region fades — not a white wash.
@@ -239,16 +350,16 @@ const FIELD_COMPOSE = /* glsl */ `
   vec2 rc = fieldRecalc(geometry.uv);
   if (rc.y > 0.0 && fMask > 0.5) {
     vec2 cell = floor(geometry.uv * fieldFx.gridSize);
-    float step = mod(floor(fieldFx.time * 11.0), 97.0);      // discrete churn steps
-    // Jitter the cell's OWN value, not a random one — warm stays warm, cool stays cool.
-    float jitter = (fieldHash(cell + step) - 0.5) * 0.18;
+    float step = mod(floor(fieldFx.time * 6.0), 97.0);       // slower, calmer churn steps
+    // Jitter the cell's OWN value, not a random one — warm stays warm, cool stays cool. Small.
+    float jitter = (fieldHash(cell + step) - 0.5) * 0.07;
     vec3 scrambled = fieldRamp(clamp(fHue + jitter, 0.0, 1.0));
-    rgb = mix(rgb, scrambled, clamp(rc.y * 0.8, 0.0, 1.0));
-    a = max(a, clamp(rc.y * 0.4, 0.0, 1.0));                  // bring churning cells up to read
+    rgb = mix(rgb, scrambled, clamp(rc.y * 0.3, 0.0, 1.0));
+    a = max(a, clamp(rc.y * 0.18, 0.0, 1.0));                 // bring churning cells up to read
   }
   if (rc.x > 0.0) {
-    rgb = mix(rgb, vec3(244.0, 248.0, 255.0) / 255.0, clamp(0.42 * rc.x, 0.0, 1.0));
-    a = max(a, clamp(0.34 * rc.x, 0.0, 1.0));
+    rgb = mix(rgb, vec3(244.0, 248.0, 255.0) / 255.0, clamp(0.18 * rc.x, 0.0, 1.0));
+    a = max(a, clamp(0.14 * rc.x, 0.0, 1.0));
   }
 
   // Route ignite: a bright, blocky line travelling cell by cell.
@@ -257,8 +368,9 @@ const FIELD_COMPOSE = /* glsl */ `
     a = max(a, clamp(fIgnite * 1.15, 0.0, 1.0));
   }
 
-  // Grid lines LAST, so the dark lattice reads across the field, the pulse and the route.
-  rgb *= 1.0 - 0.30 * fieldGrid(geometry.uv);
+  // Grid lines LAST, so the dark lattice reads across the field, the ambience and the route —
+  // a touch stronger now so it stays legible through the brightest idle highlight.
+  rgb *= 1.0 - 0.38 * fieldGrid(geometry.uv);
 
   color = vec4(rgb, clamp(a, 0.0, 1.0));
 `;
@@ -379,6 +491,7 @@ export function makeFieldLayer(Base: typeof BitmapLayer) {
 					scale: p.scale,
 					gridSize: p.gridSize,
 					noise: p.noise,
+					idle: p.idle,
 					pathA: p.pathA,
 					pathB: p.pathB,
 					pathC: p.pathC,

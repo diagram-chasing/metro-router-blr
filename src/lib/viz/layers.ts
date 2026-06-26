@@ -5,13 +5,8 @@
 
 import type { Deck } from './deck';
 import type { ChoroplethField, HoodReading } from './choroplethField';
-import { easeOutCubic } from './palette';
 
 type FieldLayerInstance = InstanceType<Deck['FieldLayer']>;
-
-const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
-const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
-const easeInCubic = (t: number) => t * t * t;
 
 // The health field as a single shaded texture stretched over the grid bbox. `time`
 // drives the shader animation (recalc pulse / theatre). Default is the blocky grid
@@ -20,7 +15,7 @@ const easeInCubic = (t: number) => t * t * t;
 export function buildFieldLayer(
 	deck: Deck,
 	field: ChoroplethField,
-	opts: { time: number; smooth?: boolean }
+	opts: { time: number; idle?: number; smooth?: boolean }
 ): FieldLayerInstance | null {
 	const fieldData = field.textureImage();
 	if (!fieldData) return null;
@@ -35,6 +30,7 @@ export function buildFieldLayer(
 		pickable: false,
 		// fieldFx uniforms — animation happens here, on the GPU.
 		time: opts.time,
+		idle: opts.idle ?? 1, // master idle-motion amount (?idle=); 0 = the old static look
 		dim: field.dim,
 		recalcOrigin: rec.origin,
 		recalcStart: rec.start,
@@ -115,58 +111,4 @@ export function buildHoodLabels(deck: Deck, hoods: HoodReading[], tick: number, 
 			updateTriggers: { getText: tick, getColor: tick }
 		})
 	];
-}
-
-// A transient recalc notification: the months this route added, rising up out of the
-// grid at the route, holding, then fading away — a notification beat. `start` is the
-// trigger time, `now` the current clock; returns null once it has played out (the
-// caller drops it). Animation is all in props (offset + alpha), so it's cheap.
-export type RecalcNotif = { months: number; c: [number, number]; start: number };
-
-const NOTIF_RISE = 0.55;
-const NOTIF_HOLD = 1.5;
-const NOTIF_FALL = 0.9;
-export const NOTIF_TOTAL = NOTIF_RISE + NOTIF_HOLD + NOTIF_FALL;
-
-export function buildRecalcNotif(deck: Deck, notif: RecalcNotif, now: number, scale = 1) {
-	const e = now - notif.start;
-	if (e < 0 || e > NOTIF_TOTAL) return null;
-
-	// Opacity: ease in, hold, ease out.
-	const op =
-		e < NOTIF_RISE
-			? easeOutCubic(e / NOTIF_RISE)
-			: e < NOTIF_RISE + NOTIF_HOLD
-				? 1
-				: 1 - easeInCubic((e - NOTIF_RISE - NOTIF_HOLD) / NOTIF_FALL);
-	// Rise: starts just below the anchor, drifts up over the whole life (deck y+ is down).
-	const y = lerp(10, -54, easeOutCubic(clamp01(e / NOTIF_TOTAL)));
-
-	const n = Math.round(notif.months);
-	const text = `${n >= 0 ? '+' : '−'}${Math.abs(n)} mo`;
-	const rgb = n >= 0 ? [255, 196, 168] : [150, 200, 255]; // added (warm) vs given back (cool)
-	const alpha = Math.round(clamp01(op) * 255);
-
-	return new deck.TextLayer({
-		id: 'recalc-notif',
-		data: [notif],
-		getPosition: (d: RecalcNotif) => d.c,
-		getText: () => text,
-		getSize: 34 * scale,
-		sizeUnits: 'pixels',
-		getColor: [rgb[0], rgb[1], rgb[2], alpha],
-		getPixelOffset: [0, y],
-		fontFamily: '"IBM Plex Sans", system-ui, sans-serif',
-		fontWeight: 700,
-		background: true,
-		getBackgroundColor: [6, 10, 16, Math.round(clamp01(op) * 205)],
-		backgroundPadding: [11, 7, 11, 7],
-		outlineWidth: 2,
-		outlineColor: [4, 6, 12, alpha],
-		fontSettings: { sdf: true },
-		characterSet: 'auto',
-		getTextAnchor: 'middle',
-		getAlignmentBaseline: 'center',
-		updateTriggers: { getText: text, getColor: [alpha, n], getPixelOffset: [y] }
-	});
 }
