@@ -28,8 +28,10 @@ export function buildChoroplethLayer(deck: Deck, field: ChoroplethField, tick: n
 // NAMES come from the OSM basemap (darkStyle); these are just the values. Drawn last
 // so they composite on top of the choropleth; the dark chip + halo keep them readable
 // over any cell colour.
-export function buildHoodLabels(deck: Deck, hoods: HoodReading[], tick: number) {
-	const fmt = (m: number) => (m < 0 ? '−' : '') + Math.round(Math.abs(m)).toString();
+export function buildHoodLabels(deck: Deck, hoods: HoodReading[], tick: number, scale = 1) {
+	// Months of life lost (always ≥ 0 under the WHO-anchored scale). The "mo" unit cue keeps
+	// the bare number decodable cold, for a viewer who arrives mid-cycle from across the room.
+	const fmt = (m: number) => `${Math.round(m)}mo`;
 	const font = '"IBM Plex Mono", ui-monospace, SFMono-Regular, monospace';
 	return [
 		new deck.TextLayer({
@@ -37,9 +39,9 @@ export function buildHoodLabels(deck: Deck, hoods: HoodReading[], tick: number) 
 			data: hoods,
 			getPosition: (d: HoodReading) => d.c,
 			getText: (d: HoodReading) => fmt(d.months),
-			getSize: 22,
+			getSize: 22 * scale,
 			sizeUnits: 'pixels',
-			getColor: (d: HoodReading) => (d.months < 0 ? [206, 230, 255, 244] : [255, 226, 214, 244]),
+			getColor: () => [255, 226, 214, 244],
 			fontFamily: font,
 			fontWeight: 700,
 			background: true,

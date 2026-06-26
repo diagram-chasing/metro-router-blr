@@ -7,11 +7,26 @@ export type Clock = {
 	stop: () => void;
 };
 
-export function createClock(onFrame: (t: number, dt: number) => void): Clock {
+export type ClockOpts = {
+	// Wall watchdog: if the rAF loop stops advancing for longer than stallMs (GPU
+	// context loss, tab throttle, a thrown frame), onStall fires. A self-referential
+	// rAF can't detect its own stall, so an independent interval polls the last frame
+	// time. Off by default; the unattended wall sets onStall = () => location.reload().
+	onStall?: () => void;
+	stallMs?: number;
+};
+
+export function createClock(onFrame: (t: number, dt: number) => void, opts: ClockOpts = {}): Clock {
 	let raf = 0;
 	let startMs = 0;
 	let lastMs = 0;
 	let running = false;
+
+	// ── Watchdog ──
+	const stallMs = opts.stallMs ?? 5000;
+	let lastFrameWall = 0; // performance.now() of the last delivered frame
+	let watch = 0;
+	let stalled = false;
 
 	const loop = (now: number) => {
 		if (!running) return;
@@ -22,6 +37,7 @@ export function createClock(onFrame: (t: number, dt: number) => void): Clock {
 		const t = (now - startMs) / 1000;
 		const dt = (now - lastMs) / 1000;
 		lastMs = now;
+		lastFrameWall = performance.now();
 		onFrame(t, dt);
 		raf = requestAnimationFrame(loop);
 	};
@@ -30,11 +46,22 @@ export function createClock(onFrame: (t: number, dt: number) => void): Clock {
 		start() {
 			if (running) return;
 			running = true;
+			lastFrameWall = performance.now();
 			raf = requestAnimationFrame(loop);
+			if (opts.onStall) {
+				watch = setInterval(() => {
+					if (!running || stalled) return;
+					if (performance.now() - lastFrameWall > stallMs) {
+						stalled = true; // fire once; onStall typically reloads the page
+						opts.onStall?.();
+					}
+				}, Math.max(1000, stallMs / 2)) as unknown as number;
+			}
 		},
 		stop() {
 			running = false;
 			if (raf) cancelAnimationFrame(raf);
+			if (watch) clearInterval(watch);
 		}
 	};
 }

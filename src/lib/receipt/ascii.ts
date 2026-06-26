@@ -173,6 +173,21 @@ export function panelRow(label: string, value = '', cols = PRINT_COLS): string {
 	return '│ ' + body + ' │';
 }
 
+/** A railed panel line carrying a before→after comparison on one row:
+ *  `│ aLabel aVal -> bLabel bVal  unit │`. ASCII `->` (CP437-safe); reuses panelRow's
+ *  boxing and width clamp, so an over-long pair degrades by truncation, not overflow. */
+export function panelPair(
+	aLabel: string,
+	aVal: string,
+	bLabel: string,
+	bVal: string,
+	unit = '',
+	cols = PRINT_COLS
+): string {
+	const left = `${aLabel} ${aVal} -> ${bLabel} ${bVal}`.trim();
+	return panelRow(left, unit, cols);
+}
+
 /** A double-rule "subtotal" line, optionally with embedded text: `═══ mid ═══`. */
 export function panelRule(mid = '', cols = PRINT_COLS): string {
 	if (!mid) return '═'.repeat(cols);

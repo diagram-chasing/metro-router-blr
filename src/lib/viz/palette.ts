@@ -9,6 +9,7 @@
 import maplibre from 'maplibre-gl';
 
 import type { LegKind } from '$lib/exhibit/routeCandidates';
+import { TILES_URL, GLYPHS_URL } from '$lib/viz/basemapSource';
 
 export type RGB = [number, number, number];
 
@@ -160,9 +161,9 @@ export function darkStyle(bg: string = WALL_BG): maplibre.StyleSpecification {
 	return {
 		version: 8,
 		name: 'Wall',
-		glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
+		glyphs: GLYPHS_URL,
 		sources: {
-			openmaptiles: { type: 'vector', url: 'https://tiles.openfreemap.org/planet' }
+			openmaptiles: { type: 'vector', url: TILES_URL }
 		},
 		layers: [
 			{ id: 'background', type: 'background', paint: { 'background-color': bg } },
@@ -195,7 +196,9 @@ export function darkStyle(bg: string = WALL_BG): maplibre.StyleSpecification {
 			place(
 				'place-major',
 				['city', 'town'],
-				'Noto Sans Medium',
+				// Noto Sans Regular (not Medium) so the same self-hosted glyph stack covers every
+				// label offline — the openfreemap glyph endpoint has no "Noto Sans Medium" stack.
+				'Noto Sans Regular',
 				[
 					[9, 12],
 					[14, 18]

@@ -6,13 +6,14 @@
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",
+		"start": "node build",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"format": "prettier --write .",
 		"lint": "prettier --check . && eslint .",
-		"deploy": "pnpm build && netlify deploy --prod",
+		"serve": "pnpm build && node build",
 		"receipts:matrix": "vite-node scripts/receiptMatrix.ts",
 		"basemap:build": "vite-node scripts/buildBasemap.ts"
 	},
@@ -20,7 +21,7 @@
 		"@eslint/compat": "^1.2.5",
 		"@eslint/js": "^9.18.0",
 		"@mapbox/vector-tile": "^2.0.3",
-		"@sveltejs/adapter-netlify": "^6.0.4",
+		"@sveltejs/adapter-node": "^5.5.6",
 		"@sveltejs/kit": "^2.63.0",
 		"@sveltejs/vite-plugin-svelte": "^5.0.0",
 		"@types/better-sqlite3": "^7.6.13",
@@ -48,6 +49,8 @@
 		"@deck.gl/geo-layers": "^9.1",
 		"@deck.gl/layers": "^9.1",
 		"@deck.gl/mapbox": "^9.1",
+		"@fontsource/ibm-plex-mono": "^5.2.7",
+		"@fontsource/ibm-plex-sans": "^5.2.8",
 		"@luma.gl/core": "^9.1",
 		"@mapbox/polyline": "^1.2.1",
 		"better-sqlite3": "^12.10.0",
@@ -55,6 +58,7 @@
 		"deck.gl": "^9.1",
 		"maplibre-gl": "^5.1.0",
 		"modern-screenshot": "^4.7.0",
+		"pmtiles": "^4.4.1",
 		"qrcode-generator": "^2.0.4"
 	}
 }

@@ -32,7 +32,9 @@ const toWire = (l: LineRow) => ({
 	chosenMode: l.chosenMode,
 	co2PerKmG: l.co2PerKmG,
 	greyBucket: l.greyBucket,
-	segments: l.segments
+	segments: l.segments,
+	originLabel: l.originLabel,
+	destinationLabel: l.destinationLabel
 });
 
 export const GET: RequestHandler = async ({ url }) => {

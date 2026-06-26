@@ -51,6 +51,15 @@ const KM_PER_DEG_LAT = 111.32;
 const DEFAULT_DECAY_KM = 1.2;
 const FALLBACK_TRIPS_PER_YEAR = 288; // legacy rows with NULL trips_per_year
 
+// Slow rolling decay: a route's contribution halves every HALF_LIFE_DAYS, so the field
+// stays "live" and bounded over a long exhibition run instead of accreting to all-red.
+// Operators can still hard-reset via /api/admin purge; this just keeps it legible untouched.
+const DEFAULT_HALF_LIFE_DAYS = 7;
+// Robust normalisation percentile: scale to the 99.5th-percentile deposit, not the raw
+// peak, so a single hot corridor can't crush every other cell's dynamic range (a soft
+// saturation ceiling — cells at/above it clamp to 1).
+const SATURATION_PCTL = 0.995;
+
 // raw — emissions as actually travelled.
 // diff — excess over metro along the same corridor (only dirty legs glow).
 // cf  — counterfactual "more public transport": walk and existing bus/metro legs
@@ -133,7 +142,8 @@ function depositLine(
 	line: LineRow,
 	type: GridType,
 	decayKm: number,
-	shift: number
+	shift: number,
+	timeWeight: number // 0..1 temporal decay for this route's age
 ): void {
 	const trips = line.tripsPerYear ?? FALLBACK_TRIPS_PER_YEAR;
 	const clean = cleanFactor();
@@ -154,7 +164,7 @@ function depositLine(
 			if (legKm <= 0) continue;
 			const nSub = Math.max(1, Math.ceil(legKm / STEP_KM));
 			const stepKm = legKm / nSub;
-			const weight = perKm * trips * stepKm;
+			const weight = perKm * trips * stepKm * timeWeight;
 			for (let s = 0; s < nSub; s++) {
 				const t = (s + 0.5) / nSub;
 				stamp(grid, g, lng1 + (lng2 - lng1) * t, lat1 + (lat2 - lat1) * t, weight, decayKm);
@@ -168,26 +178,47 @@ export type FieldOpts = {
 	decayKm?: number;
 	shift?: number; // cf only: share of private-leg trips moved to transit
 	cell?: number; // grid cell size in degrees (default 0.01 ≈ 1.1 km; 0.005 ≈ 500 m)
+	halfLifeDays?: number; // temporal decay half-life (default 7d); ≤0 disables decay
+	nowMs?: number; // injectable "now" for testing; defaults to Date.now()
 };
+
+// Robust peak = the SATURATION_PCTL-th percentile of non-zero deposits, so one hot
+// corridor doesn't define (and crush) the whole scale. Cells at/above it clamp to 1.
+function robustPeak(grid: Float64Array): number {
+	const nz: number[] = [];
+	for (const v of grid) if (v > 0) nz.push(v);
+	if (nz.length === 0) return 0;
+	nz.sort((a, b) => a - b);
+	return nz[Math.min(nz.length - 1, Math.floor(nz.length * SATURATION_PCTL))];
+}
 
 export function buildField(opts: FieldOpts): Field {
 	const { type, decayKm = DEFAULT_DECAY_KM, shift = DEFAULT_CF_SHIFT, cell = CELL } = opts;
 	const g = makeGrid(cell);
 
 	const grid = new Float64Array(g.nLat * g.nLon);
-	for (const line of listLines({})) depositLine(grid, g, line, type, decayKm, shift);
+	const now = opts.nowMs ?? Date.now();
+	const halfLifeDays = opts.halfLifeDays ?? DEFAULT_HALF_LIFE_DAYS;
+	const lambda = halfLifeDays > 0 ? Math.LN2 / (halfLifeDays * 86_400_000) : 0;
+	for (const line of listLines({})) {
+		const tw = lambda > 0 ? Math.exp(-lambda * Math.max(0, now - line.createdAt)) : 1;
+		if (tw < 1e-3) continue; // faded out — negligible contribution, skip
+		depositLine(grid, g, line, type, decayKm, shift, tw);
+	}
 
-	let depMax = 0;
-	for (const v of grid) if (v > depMax) depMax = v;
-
+	// Soft saturation ceiling: normalise to the robust peak (and report it as rawMax) so the
+	// absolute deposit the wall reconstructs (value × rawMax) is capped there too.
+	const denom = robustPeak(grid);
 	const values = new Array<number>(grid.length);
-	for (let i = 0; i < grid.length; i++) values[i] = depMax > 0 ? grid[i] / depMax : 0;
+	for (let i = 0; i < grid.length; i++) {
+		values[i] = denom > 0 ? Math.min(1, grid[i] / denom) : 0;
+	}
 
 	return {
 		nLat: g.nLat,
 		nLon: g.nLon,
 		bbox: [g.lonMin, g.latMin, g.lonMax, g.latMax],
 		values,
-		rawMax: depMax
+		rawMax: denom
 	};
 }

@@ -1,9 +1,4 @@
 <script lang="ts">
-	// The collective health wall: a 500 m choropleth of "months of life lost" over the
-	// dark city basemap, per-neighbourhood ±months numbers on top, and a submit
-	// animation where the latest route's grid squares light up in sequence before the
-	// field recalculates. deck.gl over maplibre; the scene is a flat choropleth +
-	// labels rather than 3D towers.
 	import { onMount } from 'svelte';
 
 	import maplibre from 'maplibre-gl';
@@ -14,6 +9,7 @@
 	import { ChoroplethField, type Field, type HoodReading } from '$lib/viz/choroplethField';
 	import { buildChoroplethLayer, buildHoodLabels } from '$lib/viz/layers';
 	import { darkStyle, WALL_BG, easeInOutCubic } from '$lib/viz/palette';
+	import { Params } from '$lib/viz/health';
 	import EmptyState from '$lib/components/wall/EmptyState.svelte';
 
 	let { variant = 'wall' }: { variant?: 'home' | 'wall' } = $props();
@@ -21,6 +17,9 @@
 	// Reactive overlay bits (everything else is imperative for perf).
 	let count = $state<number | null>(null);
 	let headline = $state(0);
+	let queued = $state(0); // routes waiting their spotlight — surfaced as "+N others joined"
+	let activeTag = $state<string | undefined>(undefined); // O→D label of the route on screen
+	let scaleW = $state(1); // wall type scale (from ?scale=, derived on-site from viewing distance)
 
 	let mapContainer: HTMLDivElement;
 	let map: maplibre.Map | undefined;
@@ -34,17 +33,19 @@
 		return isFinite(v) && v > 0 ? v : d;
 	};
 
-	// Submit-animation phase durations (s).
+	// Submit-animation phase durations (s). Paced long for a distant reader: the hold lets
+	// the lit corridor be read, and IDLE_REST lets the headline settle between routes.
 	const DUR: Record<string, number> = {
 		dim: 0.6,
 		reveal: 1.8,
-		hold: 3.4,
+		hold: 4.6,
 		recalc: 2.4,
 		zoomBack: 1.4,
-		settle: 0.8
+		settle: 1.1
 	};
 	const PHASES = ['dim', 'reveal', 'hold', 'recalc', 'zoomBack', 'settle'] as const;
 	const DIM_MIN = 0.3;
+	const IDLE_REST = 1.4; // s the resting field + headline hold before the next route fires
 	const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 	const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
 
@@ -56,8 +57,7 @@
 		let demoTimer: ReturnType<typeof setInterval> | undefined;
 
 		const field = new ChoroplethField();
-		const seen = new Set<number>();
-		let lastId = 0;
+		let lastId = 0; // forward-only cursor; dedup is `id > lastId`, so no unbounded Set
 		let now = 0;
 		let cellDeg = 0.005;
 		// Resting camera — set to frame the emissions grid bbox once it's known.
@@ -69,8 +69,19 @@
 		let activeRoute: [number, number][] = [];
 		let activeIsDemo = false;
 		let routeCells: number[] = [];
-		let queuedRoute: [number, number][] | null = null;
-		let queuedIsDemo = false;
+		// FIFO of routes awaiting their spotlight — every submission gets its moment; under
+		// backlog we compress the long phases (below) rather than dropping anyone.
+		type Pending = { route: [number, number][]; isDemo: boolean; label?: string };
+		const queue: Pending[] = [];
+
+		// Compress only the long, non-reveal phases when routes are waiting, so nobody waits
+		// too long for their spotlight; never faster than 0.45× so it stays legible at distance.
+		const phaseDur = (ph: string) => {
+			if (ph === 'hold' || ph === 'recalc') {
+				return DUR[ph] * Math.max(0.45, 1 - 0.12 * queue.length);
+			}
+			return DUR[ph];
+		};
 
 		const routeOfLine = (l: { segments: { coords: [number, number][] }[] }) => {
 			const pts: [number, number][] = [];
@@ -85,9 +96,12 @@
 			const pollMs = Math.max(1500, num(p, 'poll', 4000));
 			const dpr = num(p, 'dpr', Math.min(2, window.devicePixelRatio || 1));
 			cellDeg = Math.min(0.02, Math.max(0.0025, num(p, 'cell', 0.005)));
-			const years = num(p, 'years', 10);
-			const gain = num(p, 'gain', 9); // µg/m³ per year our commute layer adds at the peak
+			const years = num(p, 'years', Params.years);
+			// µg/m³ per year the commute layer ADDS at the peak corridor, on top of the real
+			// ACAG ambient baseline. Defaults to the calibrated Params value; ?gain= overrides.
+			const gain = num(p, 'gain', Params.our_gain_per_year);
 			field.setGain(gain, years);
+			scaleW = num(p, 'scale', 1); // wall type scale; set on-site from the viewing distance
 			const demo = p.get('demo') === '1';
 
 			const deck = await loadDeck();
@@ -113,7 +127,8 @@
 
 			const fieldUrl = `/api/emissions?grid=raw&decay=1.2&cell=${cellDeg}`;
 
-			// Resting baseline: the CHETNA CO₂ grid baked to our lattice (µg/m³ proxy).
+			// Resting baseline: ACAG annual-mean PM2.5 (µg/m³) baked to our lattice — the
+			// air the city already breathes; the commute layer adds onto it.
 			const loadBaseline = async () => {
 				try {
 					const res = await fetch('/baseline-grid.json');
@@ -138,18 +153,25 @@
 				try {
 					const res = await fetch(`/api/lines?sinceId=${lastId}`);
 					const { lines } = (await res.json()) as {
-						lines: { id: number; segments: { coords: [number, number][] }[] }[];
+						lines: {
+							id: number;
+							originLabel?: string;
+							destinationLabel?: string;
+							segments: { coords: [number, number][] }[];
+						}[];
 					};
 					for (const l of lines) {
-						if (seen.has(l.id)) continue;
-						seen.add(l.id);
-						if (l.id > lastId) lastId = l.id;
+						if (l.id <= lastId) continue; // forward-only; server already filters by sinceId
+						lastId = Math.max(lastId, l.id);
 						const r = routeOfLine(l);
-						if (r.length >= 2) {
-							queuedRoute = r; // animate the newest
-							queuedIsDemo = false;
-						}
+						if (r.length < 2) continue;
+						const label =
+							l.originLabel && l.destinationLabel
+								? `${l.originLabel} → ${l.destinationLabel}`
+								: undefined;
+						queue.push({ route: r, isDemo: false, label }); // every route, not just the newest
 					}
+					queued = queue.length;
 				} catch (err) {
 					console.warn('CollectiveMap lines poll failed:', err);
 				}
@@ -175,7 +197,12 @@
 					const b = new maplibre.LngLatBounds();
 					for (const c of activeRoute) b.extend(c);
 					const cam = map!.cameraForBounds(b, { padding: 140, maxZoom: 13.5 });
-					if (cam) map!.easeTo({ ...cam, duration: (DUR.dim + DUR.reveal) * 1000, easing: easeInOutCubic });
+					if (cam)
+						map!.easeTo({
+							...cam,
+							duration: (DUR.dim + DUR.reveal) * 1000,
+							easing: easeInOutCubic
+						});
 				} else if (p2 === 'recalc') {
 					// Re-poll so the just-submitted route is folded into the field, then run a
 					// visible recalculation sweep from the route's centre — the corridors
@@ -208,10 +235,17 @@
 			const step = (t: number) => {
 				if (phase === 'idle') {
 					field.setDim(1);
-					if (queuedRoute) {
-						activeRoute = queuedRoute;
-						activeIsDemo = queuedIsDemo;
-						queuedRoute = null;
+					if (activeTag) activeTag = undefined; // clear the on-screen tag between routes
+					// Let the resting field + headline settle before the next route, unless a
+					// backlog is building — then dequeue promptly so nobody waits too long.
+					const rest = queue.length > 2 ? 0.3 : IDLE_REST;
+					if (t - phaseStart < rest) return;
+					const next = queue.shift();
+					if (next) {
+						queued = queue.length;
+						activeRoute = next.route;
+						activeIsDemo = next.isDemo;
+						activeTag = next.label;
 						enter('dim', t);
 					}
 					return;
@@ -224,7 +258,7 @@
 							? lerp(DIM_MIN, 1, easeInOutCubic(clamp01(el / DUR.settle)))
 							: DIM_MIN;
 				field.setDim(dim);
-				if (el >= DUR[phase]) {
+				if (el >= phaseDur(phase)) {
 					const ni = PHASES.indexOf(phase as (typeof PHASES)[number]) + 1;
 					enter(ni < PHASES.length ? PHASES[ni] : 'idle', t);
 				}
@@ -232,6 +266,10 @@
 
 			let labelTick = -1;
 			let hoods: HoodReading[] = [];
+			// Watchdog only on the unattended wall: if the rAF loop stalls (GPU context loss,
+			// throttle), reload to last-good rather than freezing a dead frame on the wall.
+			const watchdog =
+				variant === 'wall' ? { onStall: () => location.reload(), stallMs: 6000 } : {};
 			clock = createClock((t) => {
 				now = t;
 				step(t);
@@ -242,14 +280,19 @@
 				if (lt !== labelTick) {
 					labelTick = lt;
 					hoods = field.hoodMonths();
-					headline = Math.round(field.totalMonths());
+					// Methods note: the map bed is TOTAL air = real ACAG ambient PM2.5 (the city's
+					// existing burden, traffic included) + the commute increment. The headline,
+					// though, reports only the MARGINAL months the submitted commutes add on top of
+					// that ambient bed — a what-if attributable to these journeys, not the city's
+					// full burden (which is dominated by ambient air the commutes didn't cause).
+					headline = Math.round(field.marginalMonths());
 				}
 
 				const layers = field.ready
-					? [buildChoroplethLayer(deck, field, tick), ...buildHoodLabels(deck, hoods, lt)]
+					? [buildChoroplethLayer(deck, field, tick), ...buildHoodLabels(deck, hoods, lt, scaleW)]
 					: [];
 				overlay?.setProps({ layers });
-			});
+			}, watchdog);
 
 			// Demo: queue a synthetic route periodically so State B can be seen without
 			// live submissions.
@@ -257,11 +300,20 @@
 				const a: [number, number] = [77.55 + Math.random() * 0.16, 12.9 + Math.random() * 0.16];
 				const b: [number, number] = [77.55 + Math.random() * 0.16, 12.9 + Math.random() * 0.16];
 				const mid: [number, number] = [(a[0] + b[0]) / 2 + 0.01, (a[1] + b[1]) / 2 - 0.01];
-				queuedRoute = [a, mid, b];
-				queuedIsDemo = true;
+				queue.push({ route: [a, mid, b], isDemo: true });
+				queued = queue.length;
 			};
 
-			await Promise.all([loadBaseline(), pollField(), pollLines(), pollStats()]);
+			// Boot resilience: a wall powers on before its local server is necessarily ready.
+			// Retry the critical loads with backoff until the field is live, instead of sticking
+			// on EmptyState forever. The basemap is already visible during this, so never blank.
+			for (let i = 0; !field.ready && !disposed; i++) {
+				await Promise.all([loadBaseline(), pollField(), pollStats()]);
+				if (!field.ready && !disposed) {
+					await new Promise((r) => setTimeout(r, Math.min(5000, 500 * (i + 1))));
+				}
+			}
+			await pollLines();
 
 			// Frame the grid bbox so the choropleth fits the view, and remember it as the
 			// resting camera the submit animation returns to.
@@ -302,22 +354,34 @@
 	});
 </script>
 
-<div class="wrap" class:wall={variant === 'wall'}>
+<div class="wrap" class:wall={variant === 'wall'} style="--wall-scale:{scaleW}">
 	<div bind:this={mapContainer} class="map"></div>
 
 	{#if count !== null && count > 0}
-		<div class="header">
-			<div class="kicker">Bengaluru · collective commute health</div>
-			<div class="figure">
-				<span class="n">{headline.toLocaleString()}</span>
-				<span class="u">est. months of life lost</span>
+		<!-- Safe-area inset keeps everything critical off a keystoned/vignetted projector edge -->
+		<div class="safe">
+			<div class="header">
+				<!-- <div class="figure">
+					<span class="n">{headline.toLocaleString()}</span>
+				</div> -->
+				<!-- {#if activeTag}
+					<div class="callout">
+						<span class="lead">your route</span>
+						{activeTag}{#if queued > 0}{/if}
+					</div>
+				{/if} -->
 			</div>
-		</div>
 
-		<div class="legend">
-			<span class="cap">given back</span>
-			<span class="bar"></span>
-			<span class="cap">lost</span>
+			<div class="footer">
+				<div class="legend">
+					<span class="bar"></span>
+					<div class="caps">
+						<span class="cap cool">WHO healthy</span>
+						<span class="cap">city's cleanest air</span>
+						<span class="cap hot">more months lost ▸</span>
+					</div>
+				</div>
+			</div>
 		</div>
 	{:else if count !== null}
 		<EmptyState />
@@ -329,6 +393,11 @@
 		position: absolute;
 		inset: 0;
 		background: #04060c;
+		--wall-scale: 1;
+	}
+	/* Hide the OS cursor on the unattended wall. */
+	.wrap.wall {
+		cursor: none;
 	}
 	.map {
 		position: absolute;
@@ -336,31 +405,38 @@
 		width: 100%;
 		height: 100%;
 	}
-	.header {
+	/* Generous safe inset — critical content stays clear of projector edges. */
+	.safe {
 		position: absolute;
-		top: 22px;
-		left: 24px;
+		inset: 0;
 		z-index: 15;
+		padding: clamp(20px, 4.5%, 84px);
 		display: flex;
 		flex-direction: column;
-		gap: 6px;
+		justify-content: space-between;
 		pointer-events: none;
+	}
+	.header {
+		display: flex;
+		flex-direction: column;
+		gap: calc(var(--wall-scale) * 7px);
 	}
 	.kicker {
 		font-family: 'IBM Plex Mono', ui-monospace, monospace;
-		font-size: 10px;
+		font-size: calc(var(--wall-scale) * 13px);
 		letter-spacing: 0.22em;
 		text-transform: uppercase;
-		color: #7e90a8;
+		color: #8ea0b8;
 	}
 	.figure {
 		display: flex;
 		align-items: baseline;
-		gap: 10px;
+		gap: calc(var(--wall-scale) * 12px);
+		flex-wrap: wrap;
 	}
 	.figure .n {
 		font-family: 'IBM Plex Sans', system-ui, sans-serif;
-		font-size: clamp(30px, 4vw, 56px);
+		font-size: calc(var(--wall-scale) * clamp(44px, 6vw, 92px));
 		font-weight: 700;
 		line-height: 1;
 		color: #ffe2d6;
@@ -369,36 +445,48 @@
 	}
 	.figure .u {
 		font-family: 'IBM Plex Mono', ui-monospace, monospace;
-		font-size: 11px;
-		letter-spacing: 0.12em;
-		color: #9fb1c8;
+		font-size: calc(var(--wall-scale) * 15px);
+		letter-spacing: 0.1em;
+		color: #b3c2d6;
+	}
+	.callout {
+		font-family: 'IBM Plex Mono', ui-monospace, monospace;
+		font-size: calc(var(--wall-scale) * 15px);
+		letter-spacing: 0.06em;
+		color: #dfe9f6;
+		margin-top: calc(var(--wall-scale) * 4px);
+	}
+	.callout .lead {
+		color: #ffd9a8;
+		text-transform: uppercase;
+		letter-spacing: 0.16em;
+		margin-right: 0.6em;
+	}
+	.callout .more {
+		color: #8ea0b8;
+	}
+	.footer {
+		display: flex;
+		align-items: flex-end;
+		justify-content: space-between;
+		gap: calc(var(--wall-scale) * 16px);
+		flex-wrap: wrap;
 	}
 	.legend {
-		position: absolute;
-		bottom: 24px;
-		left: 24px;
-		z-index: 15;
 		display: flex;
-		align-items: center;
-		gap: 10px;
-		padding: 8px 12px;
-		background: rgba(6, 10, 16, 0.6);
-		border: 1px solid rgba(120, 160, 200, 0.14);
+		flex-direction: column;
+		gap: calc(var(--wall-scale) * 6px);
+		padding: calc(var(--wall-scale) * 9px) calc(var(--wall-scale) * 13px);
+		background: rgba(6, 10, 16, 0.62);
+		border: 1px solid rgba(120, 160, 200, 0.16);
 		border-radius: 8px;
 		backdrop-filter: blur(8px);
-		pointer-events: none;
-	}
-	.legend .cap {
-		font-family: 'IBM Plex Mono', ui-monospace, monospace;
-		font-size: 9px;
-		letter-spacing: 0.18em;
-		text-transform: uppercase;
-		color: #8aa0bd;
 	}
 	.legend .bar {
-		width: 150px;
-		height: 9px;
-		border-radius: 5px;
+		width: calc(var(--wall-scale) * 240px);
+		height: calc(var(--wall-scale) * 12px);
+		border-radius: 6px;
+		/* WHO-healthy (cool, left) → city's cleanest air (neutral, mid) → more lost (red). */
 		background: linear-gradient(
 			90deg,
 			rgb(54, 150, 236) 0%,
@@ -409,6 +497,33 @@
 			rgb(240, 64, 72) 92%,
 			rgb(255, 196, 168) 100%
 		);
+	}
+	.legend .caps {
+		display: flex;
+		justify-content: space-between;
+		width: calc(var(--wall-scale) * 240px);
+	}
+	.legend .cap {
+		font-family: 'IBM Plex Mono', ui-monospace, monospace;
+		font-size: calc(var(--wall-scale) * 11px);
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+		color: #93a6c0;
+	}
+	.legend .cap.cool {
+		color: #7fb0e0;
+	}
+	.legend .cap.hot {
+		color: #f3a06a;
+	}
+	.caveat {
+		max-width: calc(var(--wall-scale) * 360px);
+		text-align: right;
+		font-family: 'IBM Plex Mono', ui-monospace, monospace;
+		font-size: calc(var(--wall-scale) * 12px);
+		line-height: 1.5;
+		letter-spacing: 0.04em;
+		color: #76889f;
 	}
 	:global(.maplibregl-ctrl-logo),
 	:global(.maplibregl-ctrl-attrib-button) {

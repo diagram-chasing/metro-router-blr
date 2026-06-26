@@ -57,7 +57,7 @@ export class ChoroplethField {
 	private ourUnit = 0; // µg/m³ per unit of absolute deposit (frozen on first snapshot)
 	private ourUnitFrozen = false;
 
-	// Resting baseline concentration (µg/m³) per cell, from the CHETNA CO₂ grid.
+	// Resting baseline concentration (µg/m³) per cell, from the ACAG annual-mean PM2.5 grid.
 	private base: number[] = [];
 	// Our accumulating commute layer — ABSOLUTE deposit (normalised × peak), lerped
 	// between snapshots so the field grows smoothly as commutes compound.
@@ -79,8 +79,15 @@ export class ChoroplethField {
 
 	// Per-frame caches (one O(n) pass in setFrame).
 	private monthsNow: Float64Array = new Float64Array(0);
-	private baseMean = 0;
-	private baseMax = 0; // busiest active cell this frame — the self-scale reference
+	private baseMax = 0; // busiest active cell this frame — drives per-cell opacity
+	// Months attributable to the commute layer ALONE: Σ months(base+ours) − months(base).
+	// The marginal what-if over the ambient bed, for the headline figure.
+	private marginal = 0;
+	// Absolute WHO-anchored hue scale (months). Neutral (the diverging midpoint) sits at the
+	// city's cleanest ambient cell; the cool extreme is the WHO line (0 months). So no cell the
+	// city actually breathes ever renders cool — honest for a public-health wall. Computed once.
+	private anchorLo = 1; // months at the cleanest ambient cell → diverging neutral (t=0.5)
+	private anchorHi = 60; // months at the hottest expected cell → hottest red (t=1)
 	private nowS = 0;
 	private dimK = 1; // background dim during a submit animation
 
@@ -98,16 +105,35 @@ export class ChoroplethField {
 	// µg/m³ our commute layer adds at the busiest cell (per-year × years).
 	setGain(perYear: number, years: number): void {
 		if (perYear > 0) this.gain = perYear * years;
+		this.recomputeAnchors();
 	}
 
 	setDim(k: number): void {
 		this.dimK = clamp01(k);
 	}
 
-	// The resting baseline concentration (µg/m³ per cell), from the CHETNA CO₂ grid
-	// baked to this grid. Set once; aligns to the same row-major lat(asc) order.
+	// The resting baseline concentration (µg/m³ per cell), from the ACAG annual-mean PM2.5
+	// grid baked to this grid. Set once; aligns to the same row-major lat(asc) order.
 	setBaseline(baseUg: number[]): void {
 		this.base = baseUg;
+		this.recomputeAnchors();
+	}
+
+	// Fix the absolute hue anchors from the baseline + commute gain (months, not µg). The
+	// neutral midpoint is the city's cleanest ambient cell; the hot end is the dirtiest
+	// ambient cell with the full commute peak on top.
+	private recomputeAnchors(): void {
+		if (this.base.length === 0) return;
+		const s = Params.base_scale;
+		let lo = Infinity;
+		let hi = -Infinity;
+		for (const v of this.base) {
+			if (v < lo) lo = v;
+			if (v > hi) hi = v;
+		}
+		this.anchorLo = monthsFromConcentration(s * lo);
+		this.anchorHi = monthsFromConcentration(s * hi + this.gain);
+		if (this.anchorHi <= this.anchorLo) this.anchorHi = this.anchorLo + 1;
 	}
 
 	// The most recent server snapshot of our accumulating commute field. We take the
@@ -176,8 +202,9 @@ export class ChoroplethField {
 	}
 
 	// One pass per frame: combine resting baseline + our decade-compounded commute
-	// increment into a concentration, convert to months, and recompute the diverging
-	// midpoint (mean) and peak used to self-scale the hue.
+	// increment into a concentration, convert to months, track the per-frame peak (for
+	// opacity) and the marginal commute months (for the headline). Hue uses fixed
+	// WHO-anchored anchors, so no live mean/span is needed.
 	setFrame(now: number): void {
 		this.nowS = now;
 		if (!this.has) return;
@@ -185,22 +212,19 @@ export class ChoroplethField {
 		const m = this.monthsNow;
 		const baseScale = Params.base_scale;
 		const useBase = this.base.length === m.length; // ignore baseline if grid size differs
-		let sum = 0;
-		let n = 0;
 		let max = 0;
+		let marginal = 0;
 		for (let i = 0; i < m.length; i++) {
 			const our = lerp(this.ourPrev[i] ?? 0, this.ourTarget[i] ?? 0, g);
-			const ug = (useBase ? baseScale * this.base[i] : 0) + this.ourUnit * our;
+			const baseUg = useBase ? baseScale * this.base[i] : 0;
+			const ug = baseUg + this.ourUnit * our;
 			const mo = monthsFromConcentration(ug);
 			m[i] = mo;
-			if (mo > EPS_MONTHS) {
-				sum += mo;
-				n++;
-				if (mo > max) max = mo;
-			}
+			marginal += mo - monthsFromConcentration(baseUg); // months the commutes add here
+			if (mo > max) max = mo;
 		}
-		this.baseMean = n > 0 ? sum / n : 0;
 		this.baseMax = max;
+		this.marginal = marginal;
 	}
 
 	// Route cells rise to full brightness then HOLD (plateau) so the drawn line reads
@@ -238,12 +262,12 @@ export class ChoroplethField {
 			return [BASE_FILL[0], BASE_FILL[1], BASE_FILL[2], Math.round(16 * this.dimK)];
 		}
 
-		// Hue is self-scaled against the live field: below the travelled-corridor mean
-		// reads cool, above it reads warm, the busiest cell saturates. Robust to the
-		// absolute months scale, so the map always reads even before calibration.
-		const mean = this.baseMean || 1e-9;
-		const span = Math.max(this.baseMax - mean, mean, 1e-9);
-		const t = m >= mean ? 0.5 + 0.5 * clamp01((m - mean) / span) : 0.5 * clamp01(m / mean);
+		// Absolute WHO-anchored hue: neutral sits at the city's cleanest ambient cell, the
+		// cool extreme is the WHO line (0 months). Everything the city actually breathes is at
+		// or above neutral, so no cell ever reads "clean" — the dirtier the cell, the warmer.
+		const lo = this.anchorLo || 1e-9;
+		const span = Math.max(this.anchorHi - lo, 1e-9);
+		const t = m >= lo ? 0.5 + 0.5 * clamp01((m - lo) / span) : 0.5 * clamp01(m / lo);
 		let [r, g, b] = divergingAt(t);
 		// Opacity follows how busy the cell is relative to the peak.
 		let a = 54 + 192 * Math.pow(clamp01(this.baseMax > 0 ? m / this.baseMax : 0), 0.6);
@@ -326,6 +350,12 @@ export class ChoroplethField {
 		let s = 0;
 		for (let i = 0; i < this.monthsNow.length; i++) s += this.monthsNow[i];
 		return s;
+	}
+
+	// Months attributable to the submitted commutes alone (total air − ambient-only air),
+	// summed over the grid. The marginal what-if the wall headlines, not the city's full burden.
+	marginalMonths(): number {
+		return this.marginal;
 	}
 
 	// ── State B: the submitted route's squares ──

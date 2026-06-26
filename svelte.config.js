@@ -1,4 +1,6 @@
-import adapter from '@sveltejs/adapter-netlify';
+// Single offline installation box: a long-running node server owns the SQLite field, so we
+// use adapter-node (NOT serverless). See INSTALL.md.
+import adapter from '@sveltejs/adapter-node';
 import { vitePreprocess } from '@sveltejs/vite-plugin-svelte';
 
 /** @type {import('@sveltejs/kit').Config} */

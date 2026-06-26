@@ -142,6 +142,10 @@ export type LineRow = {
 	greyBucket: number;
 	tripsPerYear: number | null;
 	segments: LineSegment[];
+	// Best-effort O→D station labels (joined from the submission) for the wall's
+	// "your route" callout. Optional — undefined when the route didn't snap to stations.
+	originLabel?: string;
+	destinationLabel?: string;
 };
 
 export function insertLine(line: LineInput): number {
@@ -176,6 +180,8 @@ type RawLine = {
 	grey_bucket: number;
 	trips_per_year: number | null;
 	segments: string;
+	origin_label?: string | null;
+	dest_label?: string | null;
 };
 
 function parseLine(r: RawLine): LineRow {
@@ -188,21 +194,32 @@ function parseLine(r: RawLine): LineRow {
 		co2PerKmG: r.co2_per_km_g,
 		greyBucket: r.grey_bucket,
 		tripsPerYear: r.trips_per_year,
-		segments: JSON.parse(r.segments) as LineSegment[]
+		segments: JSON.parse(r.segments) as LineSegment[],
+		originLabel: r.origin_label ?? undefined,
+		destinationLabel: r.dest_label ?? undefined
 	};
 }
+
+// SELECT that carries best-effort O→D labels, preferring the reverse-geocoded receipt
+// `geo` labels and falling back to the answers' station names. `l.*` keeps every line
+// column under its bare name so parseLine is unchanged.
+const LINE_SELECT = `
+	SELECT l.*,
+		COALESCE(json_extract(s.geo, '$.originLabel'),      json_extract(s.answers, '$.originStation'))      AS origin_label,
+		COALESCE(json_extract(s.geo, '$.destinationLabel'), json_extract(s.answers, '$.destinationStation')) AS dest_label
+	FROM lines l LEFT JOIN submissions s ON s.id = l.submission_id`;
 
 /** Lines in ascending id order, optionally only those after `sinceId`. */
 export function listLines(opts: { sinceId?: number; limit?: number } = {}): LineRow[] {
 	const { sinceId = 0, limit = 5000 } = opts;
 	const rows = getDb()
-		.prepare('SELECT * FROM lines WHERE id > ? ORDER BY id ASC LIMIT ?')
+		.prepare(`${LINE_SELECT} WHERE l.id > ? ORDER BY l.id ASC LIMIT ?`)
 		.all(sinceId, limit) as RawLine[];
 	return rows.map(parseLine);
 }
 
 export function latestLine(): LineRow | undefined {
-	const r = getDb().prepare('SELECT * FROM lines ORDER BY id DESC LIMIT 1').get() as
+	const r = getDb().prepare(`${LINE_SELECT} ORDER BY l.id DESC LIMIT 1`).get() as
 		| RawLine
 		| undefined;
 	return r ? parseLine(r) : undefined;

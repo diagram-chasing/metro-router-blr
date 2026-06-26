@@ -12,8 +12,8 @@ import {
 	blockBars,
 	eyebrow,
 	panelRow,
+	panelPair,
 	panelRule,
-	kv,
 	canister,
 	heroSrc,
 	asciiSpread,
@@ -95,8 +95,10 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 		T('DIRTINESS PER KM (g C02/km)', { bold: true });
 		asciiSpread(view.modeRank.histogram.values, view.modeRank.histogram.mine).forEach((l) => T(l));
 	}
-	gap();
-	if (view.modeRank.cleanerNote) deck(view.modeRank.cleanerNote);
+	if (view.modeRank.cleanerNote) {
+		gap();
+		deck(view.modeRank.cleanerNote);
+	}
 	gap();
 	T(ruleStr('-'));
 	gap();
@@ -120,13 +122,11 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 		T(l.text, { bold: l.mark });
 	});
 	gap();
-	const cw = 20; // key column width — sized to the longest label below
 	const peopleApprox = Math.round(view.corridor.peoplePerDay / 1000) * 1000;
-	const peopleVal = `${inr(peopleApprox)}/day${view.corridor.isFallback ? ' (est)' : ''}`;
-	T(kv('Also on this route', peopleVal, cw));
-	T(kv('Their daily CO2', view.corridor.co2Label, cw));
-	T(' '.repeat(cw + 3) + `(${view.corridor.co2Equiv})`); // continuation, value column
-	T(kv('Using public transit', `${Math.round(view.corridor.ptShare * 100)}%`, cw));
+	const estSuffix = view.corridor.isFallback ? ' (est)' : '';
+	const ptPct = Math.round(view.corridor.ptShare * 100);
+	T(`${inr(peopleApprox)}/day here${estSuffix} · ${ptPct}% on transit`);
+	T(`${view.corridor.co2Label} CO2/day  (${view.corridor.co2Equiv})`);
 	gap();
 	T(ruleStr('-'));
 	gap();
@@ -175,8 +175,7 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 		gap();
 		deck(c.copy);
 		gap();
-		T(panelRow(`Usual (${c.usualLabel})`, `${inr(c.usualKg)} kg/yr`));
-		T(panelRow(`This trip (${c.pickedLabel})`, `${inr(c.pickedKg)} kg/yr`));
+		T(panelPair(c.usualLabel, inr(c.usualKg), c.pickedLabel, inr(c.pickedKg), 'kg/yr'));
 		// T(
 		// 	panelRule(
 		// 		c.direction === 'cleaner'
@@ -195,8 +194,7 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 			}
 			gap();
 
-			T(panelRow('Today', `${inr(view.swap.nowKg)} kg`));
-			T(panelRow('Better', `${inr(view.swap.swapKg)} kg`));
+			T(panelPair('Today', `${inr(view.swap.nowKg)}`, 'Better', `${inr(view.swap.swapKg)}`, 'kg'));
 			const trees = view.swap.treesSaved === 1 ? 'tree' : 'trees';
 			T(panelRule(`saves ${inr(view.swap.savedKg)} kg/yr  ~${view.swap.treesSaved} ${trees}`));
 		}
@@ -218,8 +216,7 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	ops.push({ t: 'img', id: 'car' });
 	T(`one car = ${view.parking.areaM2} m² of road`, { align: 'center' });
 	gap();
-	T(panelRow('Market value of that land', `~${view.parking.valueLabel}`));
-	T(panelRow('Rent the driver pays', '₹0'));
+	T(panelRow(`Land ~${view.parking.valueLabel} · rent paid ₹0`));
 	// T(panelRule('Paid for by everyone else!'));
 	gap();
 	deck(

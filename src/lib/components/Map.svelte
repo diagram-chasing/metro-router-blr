@@ -6,6 +6,7 @@
 
 	import { renderAllStationsAndLines } from '$lib/utils/mapHelpers';
 	import type { RouteSegment } from '$lib/exhibit/routeCandidates';
+	import { TILES_URL, GLYPHS_URL } from '$lib/viz/basemapSource';
 
 	export let originPick: [number, number] | null = null;
 	export let destinationPick: [number, number] | null = null;
@@ -33,10 +34,10 @@
 		sources: {
 			openmaptiles: {
 				type: 'vector',
-				url: 'https://tiles.openfreemap.org/planet'
+				url: TILES_URL
 			}
 		},
-		glyphs: 'https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf',
+		glyphs: GLYPHS_URL,
 		layers: [
 			{
 				id: 'background',

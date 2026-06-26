@@ -1,8 +1,16 @@
-/* IBM Plex Sans + Mono drive the exhibit/kiosk UI (loaded from Google Fonts).
-   The printed receipt and its on-screen preview (ReceiptDoc.svelte) render in plain
-   monospace to mirror the thermal printer's built-in font, so no bundled receipt
-   face is needed. */
-@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600;700&display=swap');
+/* IBM Plex Sans + Mono drive the exhibit/kiosk UI — self-hosted via @fontsource (bundled
+   by Vite) so the unattended wall has zero web-font dependency and never flashes fallback
+   type if the venue network drops. The printed receipt + its preview render in plain
+   monospace to mirror the thermal printer, so no bundled receipt face is needed. */
+@import '@fontsource/ibm-plex-sans/300.css';
+@import '@fontsource/ibm-plex-sans/400.css';
+@import '@fontsource/ibm-plex-sans/500.css';
+@import '@fontsource/ibm-plex-sans/600.css';
+@import '@fontsource/ibm-plex-sans/700.css';
+@import '@fontsource/ibm-plex-mono/400.css';
+@import '@fontsource/ibm-plex-mono/500.css';
+@import '@fontsource/ibm-plex-mono/600.css';
+@import '@fontsource/ibm-plex-mono/700.css';
 
 @import 'tailwindcss/base';
 @import 'tailwindcss/components';
