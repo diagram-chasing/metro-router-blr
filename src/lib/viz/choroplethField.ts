@@ -69,6 +69,13 @@ export class ChoroplethField {
 	private growthStart = -1e9;
 	private has = false;
 
+	// Snapshot gating: while frozen, server snapshots are buffered (not applied) so the displayed
+	// field holds dead steady through a route's reveal/recalc. releaseSnapshots() applies the latest
+	// at the reflect beat (the zoom-out), tying the corridor's climb to the route rather than to
+	// whenever a background poll happens to land.
+	private snapsFrozen = false;
+	private pendingRaw: Field | null = null;
+
 	// Recalc sweep (State B): an expanding ring of brightness from the new route.
 	private recStart = -1e9;
 	private recDur = 0;
@@ -176,6 +183,11 @@ export class ChoroplethField {
 	// compounds as routes pile up; `ourUnit` is frozen on the first snapshot so later growth reads
 	// as the corridors genuinely climbing rather than renormalising.
 	setSnapshot(raw: Field, now: number): void {
+		// Frozen: buffer the freshest snapshot but don't climb yet — released at the reflect beat.
+		if (this.snapsFrozen && this.has) {
+			this.pendingRaw = raw;
+			return;
+		}
 		const abs = raw.values.map((v) => v * raw.rawMax);
 		if (!this.ourUnitFrozen && raw.rawMax > 0) {
 			this.ourUnit = this.gain / raw.rawMax; // current peak → `gain` µg; future peaks exceed it
@@ -518,5 +530,23 @@ export class ChoroplethField {
 	clearRoute(): void {
 		this.revealAt.clear();
 		this.texForce = true;
+	}
+
+	// Hold the field steady: incoming server snapshots are buffered, not applied.
+	freezeSnapshots(): void {
+		this.snapsFrozen = true;
+	}
+
+	// Reflect beat: apply the latest buffered snapshot so the field climbs to its new state now,
+	// then re-arm the freeze so it stays steady until the next reflect. No-op (stays put) when no
+	// new server data arrived — the local demo deposit handles that case.
+	releaseSnapshots(now: number): void {
+		const raw = this.pendingRaw;
+		this.pendingRaw = null;
+		if (raw) {
+			this.snapsFrozen = false;
+			this.setSnapshot(raw, now);
+			this.snapsFrozen = true;
+		}
 	}
 }

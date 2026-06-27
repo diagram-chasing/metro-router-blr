@@ -170,10 +170,10 @@ vec2 fieldRecalc(vec2 uv) {
   float d = fieldDistToPath(cuv);
   float R = fieldPathRadius();
   float env = smoothstep(0.0, 0.22, p) * (1.0 - smoothstep(0.82, 1.6, p)); // eased in/out
-  float front = p * R * 0.9;                                // radiate ~ to the path's own size
+  float front = p * R * 1.05;                               // wavefront sweeps fully across the route
   float ringAmp = 1.0 - smoothstep(0.0, 1.0, p);           // fade before it rounds to a circle
-  float ring = exp(-pow((d - front) / 0.05, 2.0)) * ringAmp * env;
-  float region = exp(-pow(d / (R * 0.5 + 0.01), 2.0)) * env;
+  float ring = exp(-pow((d - front) / 0.06, 2.0)) * ringAmp * env;
+  float region = exp(-pow(d / (R * 0.7 + 0.01), 2.0)) * env;
   return vec2(ring, region);
 }
 
@@ -293,20 +293,22 @@ const FIELD_COMPOSE = /* glsl */ `
   grain += fieldSnoise(gl_FragCoord.xy * 0.5 + vec2(0.0, fieldFx.time * 0.6)) * IDLE_GRAIN_AMP * idleK;
   rgb *= 1.5 + grain;
 
-  // Recalc moment: cells around the route flip through their OWN heat values (a scramble), then
-  // settle as the region fades. Only the radiating ring goes whitish, faintly.
+  // Recalc moment: cells around the route churn hard through heat values (a visible scramble),
+  // then settle as the region fades; a bright wavefront radiates along the route's shape. Bold
+  // enough to read across the room — empty cells churn too, so the whole area around the route works.
   vec2 rc = fieldRecalc(geometry.uv);
-  if (rc.y > 0.0 && fMask > 0.5) {
+  if (rc.y > 0.0) {
     vec2 cell = floor(geometry.uv * fieldFx.gridSize);
-    float step = mod(floor(fieldFx.time * 6.0), 97.0);
-    float jitter = (fieldHash(cell + step) - 0.5) * 0.07;
-    vec3 scrambled = fieldRamp(clamp(fHue + jitter, 0.0, 1.0));
-    rgb = mix(rgb, scrambled, clamp(rc.y * 0.3, 0.0, 1.0));
-    a = max(a, clamp(rc.y * 0.18, 0.0, 1.0));
+    float step = mod(floor(fieldFx.time * 11.0), 131.0);
+    float jitter = (fieldHash(cell + step) - 0.5) * 0.55;
+    float churnHue = fMask > 0.5 ? fHue : 0.5; // hot cells churn hot; empty churn around neutral
+    vec3 scrambled = fieldRamp(clamp(churnHue + jitter, 0.0, 1.0));
+    rgb = mix(rgb, scrambled, clamp(rc.y * 0.9, 0.0, 1.0));
+    a = max(a, clamp(rc.y * 0.55, 0.0, 1.0));
   }
   if (rc.x > 0.0) {
-    rgb = mix(rgb, vec3(244.0, 248.0, 255.0) / 255.0, clamp(0.18 * rc.x, 0.0, 1.0));
-    a = max(a, clamp(0.14 * rc.x, 0.0, 1.0));
+    rgb = mix(rgb, vec3(255.0, 250.0, 236.0) / 255.0, clamp(0.75 * rc.x, 0.0, 1.0));
+    a = max(a, clamp(0.6 * rc.x, 0.0, 1.0));
   }
 
   // Route ignite: a bright, blocky line travelling cell by cell.

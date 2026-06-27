@@ -8,7 +8,7 @@
 	import { loadDeck, type Deck } from '$lib/viz/deck';
 	import { ChoroplethField, type HoodReading } from '$lib/viz/choroplethField';
 	import { buildFieldLayer, buildHoodLabels } from '$lib/viz/layers';
-	import { roadsOnlyStyle, WALL_BG, easeInOutCubic, easeOutCubic } from '$lib/viz/palette';
+	import { roadsOnlyStyle, WALL_BG, easeInOutCubic, easeOutCubic, easeInOutSine } from '$lib/viz/palette';
 	import { Params } from '$lib/viz/health';
 	import {
 		REST,
@@ -134,6 +134,11 @@
 			// num() rejects 0 (it wants >0), so parse directly to keep 0 meaningful.
 			const idleRaw = Number(p.get('idle'));
 			const idleAmt = isFinite(idleRaw) && idleRaw >= 0 ? idleRaw : 1;
+			// Ambient camera drift strength (?drift=): 1 = default, 0 = the camera holds dead
+			// still at rest, >1 reaches deeper on the gentle zoom-ins. Parsed like ?idle= so 0
+			// stays meaningful (num() rejects 0).
+			const driftRaw = Number(p.get('drift'));
+			const driftAmt = isFinite(driftRaw) && driftRaw >= 0 ? driftRaw : 1;
 			const demo = p.get('demo') === '1';
 
 			const deck = await loadDeck();
@@ -216,7 +221,11 @@
 			const loadBaseline = () => loadFieldBaseline(field, 'CollectiveMap baseline');
 			const pollField = () => pollFieldSnapshot(field, fieldUrl, now, 'CollectiveMap field poll');
 
-			const pollLines = async () => {
+			// `seed` advances the cursor past everything already in the DB without queuing it: the
+			// existing routes are already baked into the field (via pollField), so re-spotlighting
+			// them on load would replay the whole backlog. Only routes that arrive after this seed
+			// get the reveal animation.
+			const pollLines = async (seed = false) => {
 				try {
 					const res = await fetch(`/api/lines?sinceId=${lastId}`);
 					const { lines } = (await res.json()) as {
@@ -230,6 +239,7 @@
 					for (const l of lines) {
 						if (l.id <= lastId) continue; // forward-only; server already filters by sinceId
 						lastId = Math.max(lastId, l.id);
+						if (seed) continue; // cursor only — don't animate routes that predate this load
 						const r = flattenSegments(l.segments);
 						if (r.length < 2) continue;
 						const label =
@@ -277,11 +287,10 @@
 					// fades out as it zooms back. ug is deterministic, so compute it up front.
 					cardData = { route: activeTag, ug: field.estimateRouteUg() };
 				} else if (p2 === 'recalc') {
-					// Re-poll so the just-submitted route is folded into the field, then run a
-					// visible recalculation sweep from the route's centre — the corridors
-					// climb (our commutes compounding over the decade) as the wave passes.
-					// Demo routes aren't on the server, so deposit them locally to compound.
-					if (activeIsDemo) field.addRouteDeposit(routeCells, t);
+					// Recalculation sweep AROUND the route while we're still zoomed in — the field
+					// does NOT climb yet. Folding the route in is deferred to zoomBack so the order
+					// reads recalc → zoom out → reflect (the climb used to race ahead of the sweep).
+					// Keep the buffered snapshot fresh so it's current at that reflect beat.
 					void pollField();
 					let cx = 0;
 					let cy = 0;
@@ -294,6 +303,11 @@
 					field.setRecalc(field.cellIndexAt(cx, cy), t, DUR.recalc);
 					field.setRecalcPath(activeRoute); // pulse radiates along the route shape
 				} else if (p2 === 'zoomBack') {
+					// Reflect: now fold the route in so the corridor climbs (our commutes compounding
+					// over the decade) as the camera pulls back to the full field. Apply any buffered
+					// server snapshot first, then the demo's local deposit on top of it.
+					field.releaseSnapshots(t);
+					if (activeIsDemo) field.addRouteDeposit(routeCells, t);
 					field.clearRoute(); // ignite folds away, leaving the compounded corridor
 					map!.easeTo({
 						center: restView.center,
@@ -306,6 +320,58 @@
 				} else if (p2 === 'idle') {
 					field.clearRoute();
 				}
+			};
+
+			// ── Ambient idle drift ──
+			// When nothing is being featured the camera doesn't sit dead still: it slowly
+			// wanders the grid with long sine-eased glides — mostly gentle zoom-ins onto a
+			// sub-region, panning from one to the next, then breathing back out to the full
+			// resting frame every third move. Only ISSUED while idle; an in-flight glide is
+			// left to finish during the following "load" wait, and the route reveal's easeTo
+			// overrides it. At rest zoom the grid already fills the viewport (maxBounds clamps
+			// any pan), so the only motion with headroom is the zoom-in — exactly the calm
+			// effect we want. Empty queue → idle persists → it wanders freely; once routes
+			// arrive, idle is brief and the spotlight takes over.
+			const AMBIENT = { glide: 22, hold: 4 }; // s per glide / s held at each framing
+			let ambientNextAt = -1; // t the next glide may fire; <0 = not yet seeded
+			let ambientMove = 0; // glide counter; every 3rd breathes out to the full frame
+			const ambientEnabled = driftAmt > 0 && !reduceMotion;
+
+			const ambientDrift = (t: number) => {
+				if (!ambientEnabled || !field.ready) return;
+				if (ambientNextAt < 0) ambientNextAt = t + 6; // let the field reveal settle first
+				if (phase !== 'idle') {
+					// A route owns the camera (or is loading); resume a beat after it rests again.
+					ambientNextAt = t + AMBIENT.hold;
+					return;
+				}
+				if (t < ambientNextAt) return;
+
+				const [lonMin, latMin, lonMax, latMax] = field.bounds;
+				const w = lonMax - lonMin;
+				const h = latMax - latMin;
+				const breatheOut = ambientMove % 3 === 2;
+				ambientMove++;
+
+				let center: [number, number];
+				let zoom: number;
+				if (breatheOut) {
+					center = restView.center;
+					zoom = restView.zoom;
+				} else {
+					// A random sub-region, inset from the edges so maxBounds doesn't clamp it.
+					const mx = 0.28 * w;
+					const my = 0.28 * h;
+					center = [
+						lonMin + mx + Math.random() * (w - 2 * mx),
+						latMin + my + Math.random() * (h - 2 * my)
+					];
+					zoom = restView.zoom + (0.5 + 0.8 * Math.random()) * Math.min(1.6, driftAmt);
+				}
+
+				const dur = AMBIENT.glide * (0.85 + 0.3 * Math.random()); // ±15% organic timing
+				ambientNextAt = t + dur + AMBIENT.hold;
+				map!.easeTo({ center, zoom, duration: dur * 1000, easing: easeInOutSine });
 			};
 
 			const step = (t: number) => {
@@ -359,6 +425,7 @@
 			clock = createClock((t) => {
 				now = t;
 				step(t);
+				ambientDrift(t); // gentle camera wander during the quiet times
 				field.setFrame(t);
 				field.fillTexture(); // rebuilds the field texture only when the data moved
 
@@ -440,7 +507,7 @@
 					await new Promise((r) => setTimeout(r, Math.min(5000, 500 * (i + 1))));
 				}
 			}
-			await pollLines();
+			await pollLines(true); // seed past existing routes; only new submissions get spotlighted
 
 			// Frame the grid bbox to COVER the viewport (fill edge-to-edge, overflowing the
 			// looser axis) so no basemap shows around the grid. fitBounds is "contain", so we
@@ -460,6 +527,26 @@
 				}
 				restView.center = map.getCenter().toArray() as [number, number];
 				restView.zoom = map.getZoom();
+
+				// Reward the zoom-ins: the whole street network is baked at one flat opacity, so
+				// the residential tier reads as a faint wash and stays that way however far we
+				// move in. Grade it by zoom instead — hold the wide resting frame clean, then
+				// bloom road + neighbourhood-label presence over the next ~1.3 zoom levels so a
+				// zoom-in surfaces the side streets and place names. Keyed to the runtime cover
+				// zoom (only known now). Faint tier gains the most; arteries and the city name
+				// just firm up. easeTo's zoom interpolation drives this for free, both ways.
+				const z0 = restView.zoom;
+				const z1 = restView.zoom + 1.3;
+				const ramp = (a: number, b: number) => ['interpolate', ['linear'], ['zoom'], z0, a, z1, b];
+				const grade = (id: string, prop: string, a: number, b: number) => {
+					if (map!.getLayer(id)) map!.setPaintProperty(id, prop, ramp(a, b));
+				};
+				grade('wall-roads-faint', 'line-opacity', 0.18, 0.55); // baked residential/service
+				grade('wall-roads', 'line-opacity', 0.6, 0.88); // baked arteries
+				grade('roads-faint', 'line-opacity', 0.18, 0.55); // vector fallback (no bake)
+				grade('roads', 'line-opacity', 0.6, 0.9); // vector fallback (no bake)
+				grade('place-minor', 'text-opacity', 0.85, 1); // neighbourhood names firm up
+
 				// Never show beyond the grid: clamp every camera move (incl. edge-route easeTo) to the
 				// grid bbox, so framing a corridor near the border can't reveal the bare basemap around it.
 				map.setMaxBounds([
@@ -467,6 +554,10 @@
 					[lonMax, latMax]
 				]);
 			}
+
+			// From here on the field only changes at a route's reflect beat: background polls are
+			// buffered (frozen) and released in zoomBack, so the corridor never climbs mid-reveal.
+			field.freezeSnapshots();
 
 			clock.start();
 			pollTimer = setInterval(() => {

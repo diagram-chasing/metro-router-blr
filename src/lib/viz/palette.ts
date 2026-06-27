@@ -103,6 +103,10 @@ export const easeInOutCubic = (t: number): number =>
 
 export const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3);
 
+// Gentlest of the three — near-constant velocity with soft ends. For long ambient
+// glides where easeInOutCubic's hard accel/decel would read as a lurch.
+export const easeInOutSine = (t: number): number => -(Math.cos(Math.PI * t) - 1) / 2;
+
 // ── Dark basemap ──
 // "mapscii" roads: round-capped lines with a zero-length dash → a dotted track (echoing the
 // receipt's 1-bit dot map). Dash gap is in line-widths, so dot spacing scales with zoom.
