@@ -1,16 +1,17 @@
-// Accumulating emissions raster over the city: a city grid + a spatial decay kernel
-// + a grayscale field. Each accumulated route deposits its own CO₂e — by the mode
-// actually chosen, per the per-passenger-km factors in emissions.ts — smeared along
-// the real polyline. Same corridor glows ~10× more for a solo cab than a bus; the
-// "difference your choice makes" falls straight out of the factors.
+// Accumulating air-quality raster over the city: a city grid + a spatial decay kernel
+// + a grayscale field. Each accumulated route deposits its own tailpipe PM2.5 — by the mode
+// actually chosen, per the per-passenger-km factors in emissions.ts — smeared along the real
+// polyline. This drives the wall's "years of life lost" health field, so it must be the LOCAL
+// pollutant (PM2.5), not CO₂ (a global greenhouse gas that says nothing about air quality).
+// Metro deposits nothing (zero tailpipe); a solo car corridor glows brightest.
 //
 // Three grid types:
-//   raw  — absolute annual emissions burden along the corridors people travel.
-//   diff — excess over a cleaner choice along the same route (factor − metro),
-//          so transit/walk legs go dark and only the dirty legs glow.
+//   raw  — absolute annual PM2.5 burden along the corridors people travel.
+//   diff — excess over a cleaner choice along the same route (factor − metro); since metro PM2.5
+//          is 0 this equals raw (any tailpipe PM above zero-emission transit is excess).
 //   cf   — counterfactual "more public transport" (see GridType below).
 
-import { MODE_CO2E_G_PER_PKM, legKindToMode, haversineKm } from '$lib/emissions';
+import { MODE_PM25_G_PER_PKM, legKindToMode, haversineKm } from '$lib/emissions';
 import { listLines, type LineRow } from './db';
 
 // ── Grid: cell centres on a uniform lattice over Bengaluru ──
@@ -81,20 +82,20 @@ export type Field = {
 };
 
 function factorFor(kind: LineRow['segments'][number]['legKind']): number {
-	return MODE_CO2E_G_PER_PKM[legKindToMode(kind)];
+	return MODE_PM25_G_PER_PKM[legKindToMode(kind)];
 }
 
-// The "cleaner choice" baseline for diff = the metro per-pkm factor. We store the
-// chosen route, not the alternative's geometry, so we apply metro's factor along
-// the visitor's own corridor: excess = max(0, chosen − metro).
+// The "cleaner choice" baseline for diff = the metro per-pkm factor (0 for PM2.5). We store the
+// chosen route, not the alternative's geometry, so we apply metro's factor along the visitor's
+// own corridor: excess = max(0, chosen − metro).
 function cleanFactor(): number {
-	return MODE_CO2E_G_PER_PKM.metro;
+	return MODE_PM25_G_PER_PKM.metro;
 }
 
 // "Any public transport" — the bus/metro blend used to re-cost private legs in
 // the counterfactual grid. Walk and existing bus/metro legs keep their own.
 function publicTransitFactor(): number {
-	return (MODE_CO2E_G_PER_PKM.bus + MODE_CO2E_G_PER_PKM.metro) / 2;
+	return (MODE_PM25_G_PER_PKM.bus + MODE_PM25_G_PER_PKM.metro) / 2;
 }
 
 function cfFactor(kind: LineRow['segments'][number]['legKind'], shift: number): number {

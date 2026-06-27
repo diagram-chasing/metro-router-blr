@@ -1,7 +1,8 @@
-// The carbon model: the single authority that turns a journey into carbon.
-// Canonical rule — blend over the actual legs (a walk-access leg counts as 0).
-// Everything downstream (receipt headline, wall-map grey bucket, emissions field)
-// reads kilometres, intensity, and per-trip kg from here, so they cannot diverge.
+// The emissions model: the single authority that turns a journey into pollution. Two tracks
+// from the same legs — CARBON (g CO2e/pkm, a global greenhouse gas: the receipt's footprint and
+// the wall-map grey bucket) and LOCAL AIR QUALITY (g PM2.5/pkm, tailpipe particulate: the wall's
+// "years of life lost" field). Canonical rule — blend over the actual legs (a walk-access leg
+// counts as 0). Everything downstream reads from here, so the views cannot diverge.
 
 // [1] Aryan, Shinde & Dikshit (2025), "Evaluating the emission reduction
 //     potential of first underground metro rail in Mumbai", Discover
@@ -90,6 +91,50 @@ export const MODE_CO2E_G_PER_PKM: Record<Mode, number> = derive(
 
 // Resulting central values (for reference):
 //   CO2e g/pkm : car/cab 145 · auto 74 · metro 40 · two_wheeler 40 · bus 18 · active 0
+
+// ── Local air-quality (PM2.5) model ──
+// The wall is an AIR-QUALITY map: health.ts turns PM2.5 concentration into "years of life lost".
+// CO2 (above) is a global greenhouse gas and says nothing about local air quality, so the wall
+// field is driven by these tailpipe PM2.5 factors instead.
+//
+// Source: CSTEP (2023), "Bengaluru 2030: Impact of EVs on Vehicular Emissions", Table 5 (PM2.5
+// g/km by class × vehicle age) fleet-weighted by Table 6 (age composition). Per-band PM2.5 (g/km)
+// and the age weights (0-5 / 5-10 / 10-15+):
+//   2W   : 0.0117 0.0225 0.0225   ·  48% / 37% / 15%
+//   3W   : 0.0135 0.0135 0.0135   ·  48% / 37% / 15%
+//   4W(P): 0.0018 0.0054 0.0054   ·  35% / 34% / 32%
+//   4W(C): 0.4275 0.5085 0.5085   ·  50% / 36% / 14%   (Table 6 has no 4W(C) column; uses 4W(L)
+//                                                        as the commercial-fleet age proxy)
+//   Bus  : 0.378  2.8845 2.8845   ·  42% / 38% / 20%
+// "car" = 50/50 blend of 4W(P) personal and 4W(C) commercial/cab (the car/cab option spans both).
+// metro = 0 (electric, zero tailpipe). TAILPIPE PM — no well-to-wheel uplift.
+
+// Fleet-weighted tailpipe PM2.5 (g per VEHICLE-km).
+const MODE_PM25_G_PER_VKM: Record<Mode, number> = {
+	two_wheeler: 0.0173, // 0.0117·.48 + 0.0225·.37 + 0.0225·.15
+	auto: 0.0135, // constant across age bands
+	car: 0.236, // 50/50 of 4W(P) 0.0042 and 4W(C) 0.468
+	bus: 1.832, // 0.378·.42 + 2.8845·.38 + 2.8845·.20
+	metro: 0,
+	active: 0
+};
+
+// Per-passenger-km PM2.5 (g/pkm): a rider's fair share, dividing by occupancy as the CO2 model
+// does. Swap the divisor for 1 to attribute the whole vehicle's PM to the trip instead (which
+// would make diesel-bus corridors dominate the field rather than low-occupancy cars).
+export const MODE_PM25_G_PER_PKM: Record<Mode, number> = (() => {
+	const out = {} as Record<Mode, number>;
+	for (const mode of Object.keys(MODE_PM25_G_PER_VKM) as Mode[]) {
+		out[mode] = MODE_PM25_G_PER_VKM[mode] / OCCUPANCY[mode];
+	}
+	return out;
+})();
+
+// Central values (g PM2.5/pkm, for reference):
+//   car 0.182 · bus 0.046 · two_wheeler 0.014 · auto 0.009 · metro 0
+// The dirtiest mode's per-pkm PM2.5 — the reference a route's emission is normalised against when
+// scaling its on-screen field bump (so metro → 0, car → full).
+export const PM25_MAX_G_PER_PKM = Math.max(...Object.values(MODE_PM25_G_PER_PKM));
 
 export const MODE_LABEL: Record<Mode, string> = {
 	auto: 'Auto',
@@ -213,4 +258,38 @@ export function routeEmissions(legs: Leg[]): Emissions {
 export function tripEmissions(mode: Mode, km: number): Emissions {
 	const gPerKm = MODE_CO2E_G_PER_PKM[mode];
 	return { km, gPerKm, kgPerTrip: (km * gPerKm) / 1000, bucket: bucket(gPerKm) };
+}
+
+// ── Journey PM2.5 (local air quality) ──
+
+export type RoutePM25 = { km: number; gPerKm: number; gPerTrip: number };
+
+/**
+ * PM2.5 counterpart of routeEmissions: length-blend each leg's per-passenger-km PM2.5 factor.
+ * Walk and metro legs contribute 0. Returns zeros for an empty route.
+ */
+export function routePM25(legs: Leg[]): RoutePM25 {
+	let weighted = 0;
+	let totalKm = 0;
+	for (const leg of legs) {
+		const km = lengthKm(leg.coords);
+		if (km <= 0) continue;
+		weighted += km * MODE_PM25_G_PER_PKM[legKindToMode(leg.legKind)];
+		totalKm += km;
+	}
+	const gPerKm = totalKm > 0 ? weighted / totalKm : 0;
+	return { km: totalKm, gPerKm, gPerTrip: weighted };
+}
+
+/**
+ * Total grams of PM2.5 a commute deposits over `years` of travel: per-pkm factor × trip km ×
+ * trips/year × years. The wall's tangible "this much soot" figure (0 for a metro/walk commute).
+ */
+export function pm25GramsOverYears(
+	gPerPkm: number,
+	km: number,
+	tripsPerYear: number,
+	years: number
+): number {
+	return gPerPkm * km * tripsPerYear * years;
 }

@@ -1,8 +1,10 @@
 // GET /api/emissions?grid=raw|diff|cf&decay=<km>&shift=<0..1>&halfLife=<days>
 //
-// Returns the accumulating CO₂e emissions field as a normalised grid the homepage
-// choropleth (CollectiveMap) draws. See emissionsGrid.ts. `halfLife` (days) tunes the
-// slow rolling decay; 0 disables it (pure accumulation).
+// Returns the accumulating tailpipe-PM2.5 field as a normalised grid the homepage
+// choropleth (CollectiveMap) draws. Rebuilt live from the stored routes on every request
+// (no cache), so re-costing the modes only changes emissionsGrid.ts — existing data needs
+// no migration. See emissionsGrid.ts. `halfLife` (days) tunes the slow rolling decay; 0
+// disables it (pure accumulation).
 
 import type { RequestHandler } from '@sveltejs/kit';
 

@@ -8,7 +8,7 @@
 import { easeInOutCubic } from './palette';
 import { monthsFromConcentration, Params } from './health';
 import { NEIGHBOURHOODS } from '$lib/config/neighbourhoods';
-import { haversineKm } from '$lib/emissions';
+import { haversineKm, pm25GramsOverYears } from '$lib/emissions';
 
 export type Field = {
 	nLat: number;
@@ -388,12 +388,14 @@ export class ChoroplethField {
 	}
 
 	// Permanently add a route's deposit to the local layer (the demo so a new route compounds; real
-	// submissions arrive via the server field). Re-lerps from the displayed values so it climbs smoothly.
-	addRouteDeposit(cellIdxs: number[], now: number, strength = 0.9): void {
-		if (cellIdxs.length === 0 || this.extra.length === 0) return;
+	// submissions arrive via the server field). Re-lerps from the displayed values so it climbs
+	// smoothly. `emissionScale` (0..1) scales the bump by the route's PM2.5 vs the dirtiest mode, so
+	// a metro route (scale 0) adds nothing — no spurious bright thread — and a car adds the most.
+	addRouteDeposit(cellIdxs: number[], now: number, strength = 0.9, emissionScale = 1): void {
+		const amt = strength * this.peakAbs * clamp01(emissionScale);
+		if (amt <= 0 || cellIdxs.length === 0 || this.extra.length === 0) return;
 		const g = easeInOutCubic(clamp01((now - this.growthStart) / GROW_S));
 		this.ourPrev = this.ourTarget.map((v, i) => lerp(this.ourPrev[i] ?? 0, v, g));
-		const amt = strength * this.peakAbs;
 		for (const i of cellIdxs) if (i >= 0 && i < this.extra.length) this.extra[i] += amt;
 		this.ourTarget = this.serverAbs.map((v, i) => v + this.extra[i]);
 		this.growthStart = now;
@@ -446,10 +448,11 @@ export class ChoroplethField {
 	}
 
 	// The months this one route adds across its cells (the "+N mo" the recalc card surfaces).
-	// Synchronous/deterministic; matches addRouteDeposit's `strength` so demo and live agree.
-	estimateRouteMonths(cellIdxs: number[], strength = 0.9): number {
+	// Synchronous/deterministic; matches addRouteDeposit's `strength`/`emissionScale` so demo and
+	// live agree (a metro route, scale 0, adds 0 months).
+	estimateRouteMonths(cellIdxs: number[], strength = 0.9, emissionScale = 1): number {
 		if (!this.has || cellIdxs.length === 0) return 0;
-		const amt = strength * this.peakAbs;
+		const amt = strength * this.peakAbs * clamp01(emissionScale);
 		const baseScale = Params.base_scale;
 		const useBase = this.base.length === this.monthsNow.length;
 		const seen = new Set<number>();
@@ -466,11 +469,11 @@ export class ChoroplethField {
 		return sum;
 	}
 
-	// The µg/m³ this one route adds along its corridor (the recalc card figure). Uniform bump over
-	// its cells → one representative concentration; decade-compounded (gain folds in `years`).
-	estimateRouteUg(strength = 0.9): number {
-		if (!this.has) return 0;
-		return this.ourUnit * strength * this.peakAbs;
+	// Grams of PM2.5 this one commute deposits over the decade — the recalc card's tangible figure:
+	// the route's blended per-pkm PM2.5 factor × its km × trips/year × Params.years. 0 for a
+	// metro/walk commute (zero tailpipe).
+	estimateRouteGrams(km: number, tripsPerYear: number, gPerPkm: number): number {
+		return pm25GramsOverYears(gPerPkm, km, tripsPerYear, Params.years);
 	}
 
 	// ── State B: the submitted route's squares ──

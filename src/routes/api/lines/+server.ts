@@ -32,6 +32,7 @@ const toWire = (l: LineRow) => ({
 	chosenMode: l.chosenMode,
 	co2PerKmG: l.co2PerKmG,
 	greyBucket: l.greyBucket,
+	tripsPerYear: l.tripsPerYear, // wall needs this to compute grams-of-PM2.5-over-10-years
 	segments: l.segments,
 	originLabel: l.originLabel,
 	destinationLabel: l.destinationLabel

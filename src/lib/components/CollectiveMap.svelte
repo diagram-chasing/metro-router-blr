@@ -18,6 +18,7 @@
 		loadBaseline as loadFieldBaseline,
 		pollField as pollFieldSnapshot
 	} from '$lib/viz/wallField';
+	import { routePM25, PM25_MAX_G_PER_PKM, type Leg } from '$lib/emissions';
 
 	let { variant = 'wall' }: { variant?: 'home' | 'wall' } = $props();
 
@@ -36,13 +37,13 @@
 	let activeTag = $state<string | undefined>(undefined); // O→D label of the route on screen
 	let scaleW = $state(1); // wall type scale (from ?scale=, derived on-site from viewing distance)
 
-	// Recalc readout — a large, minimal card in the top band (route + the µg/m³ this journey
-	// added). Fixed position so it stays clear of the lit corridor and reads from across the
-	// room; only opacity animates. Driven from the rAF loop.
-	let card = $state<{ show: boolean; opacity: number; route?: string; ug: number }>({
+	// Recalc readout — a large, minimal card in the top band (route + the grams of PM2.5 this
+	// journey deposits over a decade). Fixed position so it stays clear of the lit corridor and
+	// reads from across the room; only opacity animates. Driven from the rAF loop.
+	let card = $state<{ show: boolean; opacity: number; route?: string; grams: number }>({
 		show: false,
 		opacity: 0,
-		ug: 0
+		grams: 0
 	});
 
 	let mapContainer: HTMLDivElement;
@@ -94,13 +95,26 @@
 		let phaseStart = 0;
 		let activeRoute: [number, number][] = [];
 		let activeIsDemo = false;
+		let activeKm = 0; // featured route's trip length (km)
+		let activePm25 = 0; // featured route's blended PM2.5 (g/passenger-km)
+		let activeTrips = 0; // featured route's trips/year
+		let activeScale = 0; // featured route's emission scale (0..1) vs the dirtiest mode
 		let routeCells: number[] = [];
 		// The featured route's card payload; null when no card is live. Set as the camera zooms
 		// in, cleared once it has zoomed back out.
-		let cardData: { route?: string; ug: number } | null = null;
+		let cardData: { route?: string; grams: number } | null = null;
 		// FIFO of routes awaiting their spotlight — every submission gets its moment; under
-		// backlog we compress the long phases (below) rather than dropping anyone.
-		type Pending = { route: [number, number][]; isDemo: boolean; label?: string };
+		// backlog we compress the long phases (below) rather than dropping anyone. Each carries the
+		// route's PM2.5 attributes so its card figure and field bump match the mode actually chosen.
+		type Pending = {
+			route: [number, number][];
+			isDemo: boolean;
+			label?: string;
+			km: number;
+			pm25PerPkm: number;
+			tripsPerYear: number;
+			emissionScale: number;
+		};
 		const queue: Pending[] = [];
 
 		// Compress only the long, non-reveal phases when routes are waiting, so nobody waits
@@ -233,7 +247,8 @@
 							id: number;
 							originLabel?: string;
 							destinationLabel?: string;
-							segments: { coords: [number, number][] }[];
+							tripsPerYear: number | null;
+							segments: Leg[];
 						}[];
 					};
 					for (const l of lines) {
@@ -246,7 +261,19 @@
 							l.originLabel && l.destinationLabel
 								? `${l.originLabel} → ${l.destinationLabel}`
 								: undefined;
-						queue.push({ route: r, isDemo: false, label }); // every route, not just the newest
+						// Blend the route's PM2.5 over its legs (walk/metro count 0) so the card and the
+						// field bump reflect the mode actually chosen.
+						const pm = routePM25(l.segments);
+						const emissionScale = PM25_MAX_G_PER_PKM > 0 ? pm.gPerKm / PM25_MAX_G_PER_PKM : 0;
+						queue.push({
+							route: r,
+							isDemo: false,
+							label,
+							km: pm.km,
+							pm25PerPkm: pm.gPerKm,
+							tripsPerYear: l.tripsPerYear ?? 288,
+							emissionScale
+						}); // every route, not just the newest
 					}
 					queued = queue.length;
 				} catch (err) {
@@ -284,8 +311,11 @@
 							easing: easeInOutCubic
 						});
 					// Card rides the whole featured window: it appears as the camera zooms in and
-					// fades out as it zooms back. ug is deterministic, so compute it up front.
-					cardData = { route: activeTag, ug: field.estimateRouteUg() };
+					// fades out as it zooms back. The grams figure is deterministic, so compute it up front.
+					cardData = {
+						route: activeTag,
+						grams: field.estimateRouteGrams(activeKm, activeTrips, activePm25)
+					};
 				} else if (p2 === 'recalc') {
 					// Recalculation sweep AROUND the route while we're still zoomed in — the field
 					// does NOT climb yet. Folding the route in is deferred to zoomBack so the order
@@ -307,7 +337,7 @@
 					// over the decade) as the camera pulls back to the full field. Apply any buffered
 					// server snapshot first, then the demo's local deposit on top of it.
 					field.releaseSnapshots(t);
-					if (activeIsDemo) field.addRouteDeposit(routeCells, t);
+					if (activeIsDemo) field.addRouteDeposit(routeCells, t, 0.9, activeScale);
 					field.clearRoute(); // ignite folds away, leaving the compounded corridor
 					map!.easeTo({
 						center: restView.center,
@@ -388,6 +418,10 @@
 						activeRoute = next.route;
 						activeIsDemo = next.isDemo;
 						activeTag = next.label;
+						activeKm = next.km;
+						activePm25 = next.pm25PerPkm;
+						activeTrips = next.tripsPerYear;
+						activeScale = next.emissionScale;
 						enter('load', t); // "load" the route for loadDur seconds before revealing it
 					}
 					return;
@@ -461,9 +495,14 @@
 								: phase === 'zoomBack'
 									? 1 - easeInOutCubic(clamp01(ce / DUR.zoomBack))
 									: 0;
-					card = { show: co > 0.001, opacity: clamp01(co), route: cardData.route, ug: cardData.ug };
+					card = {
+						show: co > 0.001,
+						opacity: clamp01(co),
+						route: cardData.route,
+						grams: cardData.grams
+					};
 				} else if (card.show) {
-					card = { show: false, opacity: 0, ug: 0 };
+					card = { show: false, opacity: 0, grams: 0 };
 				}
 
 				// Hero pulse: fade in, hold, fade out, then stay hidden until the next cycle. Keyed
@@ -488,13 +527,26 @@
 				overlay?.setProps({ layers });
 			}, watchdog);
 
-			// Demo: queue a synthetic route periodically so State B can be seen without
-			// live submissions.
+			// Demo: queue a synthetic route periodically so State B can be seen without live
+			// submissions. Cycle the mode so the attract loop shows the mode-aware intensity — a
+			// metro deposits nothing (no bright thread), a car the most.
+			const DEMO_KINDS = ['cab', 'bus', 'auto', 'metro'] as const;
+			let demoN = 0;
 			const fireDemo = () => {
 				const a: [number, number] = [77.55 + Math.random() * 0.16, 12.9 + Math.random() * 0.16];
 				const b: [number, number] = [77.55 + Math.random() * 0.16, 12.9 + Math.random() * 0.16];
 				const mid: [number, number] = [(a[0] + b[0]) / 2 + 0.01, (a[1] + b[1]) / 2 - 0.01];
-				queue.push({ route: [a, mid, b], isDemo: true });
+				const route: [number, number][] = [a, mid, b];
+				const pm = routePM25([{ coords: route, legKind: DEMO_KINDS[demoN++ % DEMO_KINDS.length] }]);
+				const emissionScale = PM25_MAX_G_PER_PKM > 0 ? pm.gPerKm / PM25_MAX_G_PER_PKM : 0;
+				queue.push({
+					route,
+					isDemo: true,
+					km: pm.km,
+					pm25PerPkm: pm.gPerKm,
+					tripsPerYear: 480,
+					emissionScale
+				});
 				queued = queue.length;
 			};
 
@@ -593,12 +645,16 @@
 
 	{#if card.show}
 		<!-- The featured route's readout as a little receipt slip: white paper, monospace, a dashed
-		     rule, and the emissions added in a reverse (black-on-white) hero bar — matching
-		     src/lib/receipt. On screen for the whole zoomed-in window. -->
+		     rule, and the PM2.5 this commute deposits over a decade in a reverse (black-on-white)
+		     hero bar — matching src/lib/receipt. On screen for the whole zoomed-in window. -->
 		<div class="routecard slip" style="opacity:{card.opacity}; --wall-scale:{scaleW}">
 			<div class="route">{card.route ?? 'New journey'}</div>
 			<div class="rule"></div>
-			<div class="emis">+{Math.round(card.ug)}<span class="unit"> µg/m³</span></div>
+			{#if card.grams >= 1000}
+				<div class="emis">+{(card.grams / 1000).toFixed(1)}<span class="unit"> kg PM2.5 / 10yr</span></div>
+			{:else}
+				<div class="emis">+{Math.round(card.grams)}<span class="unit"> g PM2.5 / 10yr</span></div>
+			{/if}
 		</div>
 	{/if}
 
