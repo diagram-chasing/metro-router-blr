@@ -15,7 +15,8 @@
 		"lint": "prettier --check . && eslint .",
 		"serve": "pnpm build && node build",
 		"receipts:matrix": "vite-node scripts/receiptMatrix.ts",
-		"basemap:build": "vite-node scripts/buildBasemap.ts"
+		"basemap:build": "vite-node scripts/buildBasemap.ts",
+		"wall-roads:build": "vite-node scripts/buildWallRoads.ts"
 	},
 	"devDependencies": {
 		"@eslint/compat": "^1.2.5",

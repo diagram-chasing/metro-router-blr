@@ -124,62 +124,97 @@ export const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3);
 // ── Dark basemap ──
 // Same OpenFreeMap vector source as the exhibit/accumulation maps, restyled to a
 // near-black canvas with faint cool water and road context the glow sits over.
+
+// "mapscii" roads: round-capped lines with a zero-length dash → a dotted track,
+// echoing the receipt's 1-bit dot map (see receipt/viz/braille.ts). Dash gap is in
+// line-widths, so dot spacing scales with the road width across zoom.
+const roadLayer = (
+	id: string,
+	classes: string[],
+	w: [number, number][],
+	opacity: number
+): maplibre.LayerSpecification => ({
+	id,
+	type: 'line',
+	source: 'openmaptiles',
+	'source-layer': 'transportation',
+	filter: ['in', 'class', ...classes],
+	layout: { 'line-cap': 'round', 'line-join': 'round' },
+	paint: {
+		'line-color': '#5a7798',
+		'line-width': ['interpolate', ['linear'], ['zoom'], ...w.flat()],
+		'line-dasharray': [0, 2.2],
+		'line-opacity': opacity
+	}
+});
+
+// OSM place labels (neighbourhood / suburb / town / city names) from the vector
+// tiles, for geographic context. The wall's own numbers sit on top via a deck TextLayer.
+const placeLayer = (
+	id: string,
+	classes: string[],
+	font: string,
+	size: [number, number][],
+	color: string,
+	opacity: number
+): maplibre.LayerSpecification => ({
+	id,
+	type: 'symbol',
+	source: 'openmaptiles',
+	'source-layer': 'place',
+	filter: ['in', 'class', ...classes],
+	layout: {
+		'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name']],
+		'text-font': [font],
+		'text-size': ['interpolate', ['linear'], ['zoom'], ...size.flat()],
+		'text-transform': 'uppercase',
+		'text-letter-spacing': 0.08,
+		'text-max-width': 7
+	},
+	paint: {
+		'text-color': color,
+		'text-halo-color': '#04060c',
+		'text-halo-width': 1.4,
+		'text-halo-blur': 0.4,
+		'text-opacity': opacity
+	}
+});
+
+// Map-label font: IBM Plex Mono Medium, matching the receipt/legend monospace language.
+// MapLibre wants a self-hosted glyph stack — openfreemap only serves Noto — so this stack is
+// staged at static/fonts/IBM Plex Mono Medium/ (baked once with maplibre.org/font-maker); the
+// name must match that folder exactly. Needs PUBLIC_GLYPHS_URL pointed at the local /fonts
+// (dev included), else labels fall back/blank on the remote default.
+const LABEL_FONT = 'IBM Plex Mono Medium';
+
+// Shared place-name labels: minor (suburb/neighbourhood) + major (city/town). The hood
+// figures (layers.ts) sit beside these names, so every basemap variant keeps them.
+const placeLabels = (): maplibre.LayerSpecification[] => [
+	placeLayer(
+		'place-minor',
+		['suburb', 'neighbourhood', 'quarter', 'village'],
+		LABEL_FONT,
+		[
+			[10, 9],
+			[14, 13]
+		],
+		'#9fb1c8',
+		0.85
+	),
+	placeLayer(
+		'place-major',
+		['city', 'town'],
+		LABEL_FONT,
+		[
+			[9, 12],
+			[14, 18]
+		],
+		'#d7e4f5',
+		0.95
+	)
+];
+
 export function darkStyle(bg: string = WALL_BG): maplibre.StyleSpecification {
-	// "mapscii" roads: round-capped lines with a zero-length dash → a dotted track,
-	// echoing the receipt's 1-bit dot map (see receipt/viz/braille.ts). Dash gap is in
-	// line-widths, so dot spacing scales with the road width across zoom.
-	const road = (
-		id: string,
-		classes: string[],
-		w: [number, number][],
-		opacity: number
-	): maplibre.LayerSpecification => ({
-		id,
-		type: 'line',
-		source: 'openmaptiles',
-		'source-layer': 'transportation',
-		filter: ['in', 'class', ...classes],
-		layout: { 'line-cap': 'round', 'line-join': 'round' },
-		paint: {
-			'line-color': '#5a7798',
-			'line-width': ['interpolate', ['linear'], ['zoom'], ...w.flat()],
-			'line-dasharray': [0, 2.2],
-			'line-opacity': opacity
-		}
-	});
-
-	// OSM place labels (neighbourhood / suburb / town / city names) from the vector
-	// tiles, for geographic context. The wall's own numbers sit on top via a deck TextLayer.
-	const place = (
-		id: string,
-		classes: string[],
-		font: string,
-		size: [number, number][],
-		color: string,
-		opacity: number
-	): maplibre.LayerSpecification => ({
-		id,
-		type: 'symbol',
-		source: 'openmaptiles',
-		'source-layer': 'place',
-		filter: ['in', 'class', ...classes],
-		layout: {
-			'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name']],
-			'text-font': [font],
-			'text-size': ['interpolate', ['linear'], ['zoom'], ...size.flat()],
-			'text-transform': 'uppercase',
-			'text-letter-spacing': 0.08,
-			'text-max-width': 7
-		},
-		paint: {
-			'text-color': color,
-			'text-halo-color': '#04060c',
-			'text-halo-width': 1.4,
-			'text-halo-blur': 0.4,
-			'text-opacity': opacity
-		}
-	});
-
 	// Roads + place labels only — no water or greenery. The dotted street network as
 	// context under the field, with names for orientation.
 	return {
@@ -191,38 +226,56 @@ export function darkStyle(bg: string = WALL_BG): maplibre.StyleSpecification {
 		},
 		layers: [
 			{ id: 'background', type: 'background', paint: { 'background-color': bg } },
-			road('road-secondary', ['secondary', 'tertiary'], [
+			roadLayer('road-secondary', ['secondary', 'tertiary'], [
 				[9, 0.9],
 				[16, 2.2]
 			], 0.22),
-			road('road-primary', ['primary', 'trunk', 'motorway'], [
+			roadLayer('road-primary', ['primary', 'trunk', 'motorway'], [
 				[6, 0.9],
 				[16, 3.0]
 			], 0.94),
-			place(
-				'place-minor',
-				['suburb', 'neighbourhood', 'quarter', 'village'],
-				'Noto Sans Regular',
+			...placeLabels()
+		]
+	};
+}
+
+// ── Roads-only basemap (receipt aesthetic) ──
+// The wall basemap restyled to match the printed route-map (receipt/viz/RouteMap.svelte):
+// one uniform, evenly-dotted street network as faint ground — no water or greenery, and no
+// primary/secondary emphasis — echoing the receipt's flat 1-bit dot field. Place names are
+// kept for orientation (the hood figures sit beside them).
+export function roadsOnlyStyle(bg: string = WALL_BG): maplibre.StyleSpecification {
+	return {
+		version: 8,
+		name: 'Wall roads',
+		glyphs: GLYPHS_URL,
+		sources: {
+			openmaptiles: { type: 'vector', url: TILES_URL }
+		},
+		layers: [
+			{ id: 'background', type: 'background', paint: { 'background-color': bg } },
+			// Incidental tracks (service/path/track): kept on but very faint, so they only
+			// surface here and there without thickening the field. Drawn under the network.
+			roadLayer(
+				'roads-faint',
+				['service', 'path', 'track'],
 				[
-					[10, 9],
-					[14, 13]
+					[9, 0.7],
+					[16, 1.6]
 				],
-				'#9fb1c8',
-				0.85
+				0.18
 			),
-			place(
-				'place-major',
-				['city', 'town'],
-				// Noto Sans Regular (not Medium) so the same self-hosted glyph stack covers every
-				// label offline — the openfreemap glyph endpoint has no "Noto Sans Medium" stack.
-				'Noto Sans Regular',
+			// The street network at one weight/opacity → an even dotted field, not tiered.
+			roadLayer(
+				'roads',
+				['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor'],
 				[
-					[9, 12],
-					[14, 18]
+					[9, 0.9],
+					[16, 2.2]
 				],
-				'#d7e4f5',
-				0.95
-			)
+				0.6
+			),
+			...placeLabels()
 		]
 	};
 }

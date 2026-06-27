@@ -8,19 +8,23 @@
 	import { loadDeck, type Deck } from '$lib/viz/deck';
 	import { ChoroplethField, type Field, type HoodReading } from '$lib/viz/choroplethField';
 	import { buildFieldLayer, buildHoodLabels } from '$lib/viz/layers';
-	import { darkStyle, WALL_BG, easeInOutCubic, easeOutCubic, divergingAt } from '$lib/viz/palette';
+	import { roadsOnlyStyle, WALL_BG, easeInOutCubic, easeOutCubic } from '$lib/viz/palette';
 	import { Params } from '$lib/viz/health';
 	import EmptyState from '$lib/components/wall/EmptyState.svelte';
 
 	let { variant = 'wall' }: { variant?: 'home' | 'wall' } = $props();
 
-	// Legend swatches: the diverging ramp sampled at discrete steps (cool → neutral → hot), drawn
-	// as separate blocks rather than a smooth gradient so the scale reads clearly from a distance.
-	const swatches = [0, 0.17, 0.34, 0.5, 0.66, 0.83, 1].map((t) => divergingAt(t));
-
 	// Reactive overlay bits (everything else is imperative for perf).
 	let count = $state<number | null>(null);
-	let headline = $state(0);
+	let yearsLost = $state(0); // avg years of life added by commutes, over affected corridors
+	// Hero label brackets the number: top line, figure, bottom line. ?title= / ?subtitle=
+	// override on-site; pass either empty to drop that line.
+	let title = $state('YEARS OF LIFE LOST');
+	let subtitle = $state('FROM THESE COMMUTES');
+	let titleEvery = $state(40); // s between hero appearances; ?titleEvery= overrides
+	let heroOpacity = $state(0); // hero pulse opacity, driven from the rAF loop
+	let loading = $state(false); // true while the pre-reveal progress bar fills
+	let loadProgress = $state(0); // 0..1 fill of that bottom-edge bar
 	let queued = $state(0); // routes waiting their spotlight — surfaced as "+N others joined"
 	let activeTag = $state<string | undefined>(undefined); // O→D label of the route on screen
 	let scaleW = $state(1); // wall type scale (from ?scale=, derived on-site from viewing distance)
@@ -62,12 +66,15 @@
 	const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 	const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
 
-	// Anchored recalc card envelope (s): rise, hold, fall. ~2.9s total — outlasts `recalc` and
-	// fades through `zoomBack`, tracking the corridor as the camera pulls back.
-	const CARD_RISE = 0.5;
-	const CARD_HOLD = 1.5;
-	const CARD_FALL = 0.9;
-	const CARD_TOTAL = CARD_RISE + CARD_HOLD + CARD_FALL;
+	// "Loading" dwell (s) before a new route reveals — a thin bar fills the bottom edge while the
+	// route is "fetched", then the reveal runs. ?load= overrides.
+	const LOAD_DEFAULT = 20;
+
+	// Hero pulse window (s): a brief appearance, fixed regardless of the period (the gap), so a
+	// longer ?titleEvery= just widens the gap rather than making the title linger on screen.
+	const HERO_RISE = 0.8;
+	const HERO_HOLD = 4;
+	const HERO_FALL = 1.2;
 
 	onMount(() => {
 		let disposed = false;
@@ -84,13 +91,14 @@
 		const restView = { center: [REST.lng, REST.lat] as [number, number], zoom: REST.zoom };
 
 		// State machine.
-		let phase: 'idle' | (typeof PHASES)[number] = 'idle';
+		let phase: 'idle' | 'load' | (typeof PHASES)[number] = 'idle';
 		let phaseStart = 0;
 		let activeRoute: [number, number][] = [];
 		let activeIsDemo = false;
 		let routeCells: number[] = [];
-		// The just-submitted route's recalc-card payload; null when no card is live.
-		let cardData: { route?: string; ug: number; start: number } | null = null;
+		// The featured route's card payload; null when no card is live. Set as the camera zooms
+		// in, cleared once it has zoomed back out.
+		let cardData: { route?: string; ug: number } | null = null;
 		// FIFO of routes awaiting their spotlight — every submission gets its moment; under
 		// backlog we compress the long phases (below) rather than dropping anyone.
 		type Pending = { route: [number, number][]; isDemo: boolean; label?: string };
@@ -124,6 +132,11 @@
 			const gain = num(p, 'gain', Params.our_gain_per_year);
 			field.setGain(gain, years);
 			scaleW = num(p, 'scale', 1); // wall type scale; set on-site from the viewing distance
+			title = p.get('title') ?? title; // top line; ?title=YEARS+OF+LIFE+LOST
+			subtitle = p.get('subtitle') ?? subtitle; // bottom line under the number
+			titleEvery = num(p, 'titleEvery', 40); // hero shows briefly once per this many seconds
+			const loadDur = num(p, 'load', LOAD_DEFAULT); // "loading" dwell before a route reveals
+			const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
 			// Idle ambient-motion strength (?idle=): 1 = default, 0 = the old static look, >1 bolder.
 			// num() rejects 0 (it wants >0), so parse directly to keep 0 meaningful.
 			const idleRaw = Number(p.get('idle'));
@@ -135,7 +148,7 @@
 
 			map = new maplibre.Map({
 				container: mapContainer,
-				style: darkStyle(bg),
+				style: roadsOnlyStyle(bg),
 				center: [REST.lng, REST.lat],
 				zoom,
 				pitch: 0,
@@ -150,6 +163,58 @@
 
 			overlay = new deck.MapboxOverlay({ interleaved: true, layers: [] });
 			map.addControl(overlay as unknown as maplibre.IControl);
+
+			// Constant dotted road network, baked over the grid bbox (static/wall-roads.json via
+			// `pnpm wall-roads:build`). Live tiles drop minor/service roads at the wide resting
+			// zoom, so they'd pop in only when zoomed into a corridor; baked, the whole network is
+			// steady at every scale and covers the full grid. Falls back to the style's vector road
+			// layers when the bake hasn't been generated yet.
+			const addBakedRoads = async () => {
+				try {
+					const res = await fetch('/wall-roads.json');
+					if (!res.ok) return; // not baked → keep the vector road layers from roadsOnlyStyle
+					const wr = (await res.json()) as {
+						roads: [number, number][][];
+						roadsFaint: [number, number][][];
+					};
+					const fc = (lines: [number, number][][]) => ({
+						type: 'FeatureCollection' as const,
+						features: lines.map((coordinates) => ({
+							type: 'Feature' as const,
+							properties: {},
+							geometry: { type: 'LineString' as const, coordinates }
+						}))
+					});
+					const dotted = (
+						id: string,
+						opacity: number,
+						w: [number, number, number, number]
+					): maplibre.LayerSpecification => ({
+						id,
+						type: 'line',
+						source: id,
+						layout: { 'line-cap': 'round', 'line-join': 'round' },
+						paint: {
+							'line-color': '#5a7798',
+							'line-width': ['interpolate', ['linear'], ['zoom'], w[0], w[1], w[2], w[3]],
+							'line-dasharray': [0, 2.2],
+							'line-opacity': opacity
+						}
+					});
+					const before = map!.getLayer('place-minor') ? 'place-minor' : undefined;
+					if (!map!.getSource('wall-roads')) {
+						map!.addSource('wall-roads', { type: 'geojson', data: fc(wr.roads) });
+						map!.addSource('wall-roads-faint', { type: 'geojson', data: fc(wr.roadsFaint) });
+						map!.addLayer(dotted('wall-roads-faint', 0.18, [9, 0.7, 16, 1.6]), before);
+						map!.addLayer(dotted('wall-roads', 0.6, [9, 0.9, 16, 2.2]), before);
+					}
+					// Drop the vector tiers so the baked network isn't doubled or zoom-dependent.
+					for (const id of ['roads', 'roads-faint']) if (map!.getLayer(id)) map!.removeLayer(id);
+				} catch (err) {
+					console.warn('CollectiveMap wall-roads load failed:', err);
+				}
+			};
+			await addBakedRoads();
 
 			const fieldUrl = `/api/emissions?grid=raw&decay=1.2&cell=${cellDeg}`;
 
@@ -222,7 +287,10 @@
 			const enter = (p2: typeof phase, t: number) => {
 				phase = p2;
 				phaseStart = t;
-				if (p2 === 'dim') {
+				if (p2 === 'load') {
+					loading = true;
+					loadProgress = 0;
+				} else if (p2 === 'dim') {
 					routeCells = field.rasterizeRoute(activeRoute);
 					field.igniteRoute(routeCells, t + DUR.dim, DUR.reveal);
 					const b = new maplibre.LngLatBounds();
@@ -234,6 +302,9 @@
 							duration: (DUR.dim + DUR.reveal) * 1000,
 							easing: easeInOutCubic
 						});
+					// Card rides the whole featured window: it appears as the camera zooms in and
+					// fades out as it zooms back. ug is deterministic, so compute it up front.
+					cardData = { route: activeTag, ug: field.estimateRouteUg() };
 				} else if (p2 === 'recalc') {
 					// Re-poll so the just-submitted route is folded into the field, then run a
 					// visible recalculation sweep from the route's centre — the corridors
@@ -251,9 +322,6 @@
 					cy /= activeRoute.length || 1;
 					field.setRecalc(field.cellIndexAt(cx, cy), t, DUR.recalc);
 					field.setRecalcPath(activeRoute); // pulse radiates along the route shape
-					// Hand the card its payload: the emissions this journey added. It narrates the
-					// recalc sweep running underneath it.
-					cardData = { route: activeTag, ug: field.estimateRouteUg(), start: t };
 				} else if (p2 === 'zoomBack') {
 					field.clearRoute(); // ignite folds away, leaving the compounded corridor
 					map!.easeTo({
@@ -262,6 +330,8 @@
 						duration: DUR.zoomBack * 1000,
 						easing: easeInOutCubic
 					});
+				} else if (p2 === 'settle') {
+					cardData = null; // card has faded out with the zoom-back
 				} else if (p2 === 'idle') {
 					field.clearRoute();
 				}
@@ -281,6 +351,16 @@
 						activeRoute = next.route;
 						activeIsDemo = next.isDemo;
 						activeTag = next.label;
+						enter('load', t); // "load" the route for loadDur seconds before revealing it
+					}
+					return;
+				}
+				if (phase === 'load') {
+					field.setDim(1); // map rests while the bar fills
+					loadProgress = clamp01((t - phaseStart) / loadDur);
+					if (t - phaseStart >= loadDur) {
+						loading = false;
+						loadProgress = 0;
 						enter('dim', t);
 					}
 					return;
@@ -317,10 +397,11 @@
 					hoods = field.hoodMonths();
 					// Methods note: the map bed is TOTAL air = real ACAG ambient PM2.5 (the city's
 					// existing burden, traffic included) + the commute increment. The headline,
-					// though, reports only the MARGINAL months the submitted commutes add on top of
+					// though, reports only the MARGINAL years the submitted commutes add on top of
 					// that ambient bed — a what-if attributable to these journeys, not the city's
-					// full burden (which is dominated by ambient air the commutes didn't cause).
-					headline = Math.round(field.marginalMonths());
+					// full burden (which is dominated by ambient air the commutes didn't cause) —
+					// averaged over the corridors they actually touch, not the empty bbox.
+					yearsLost = field.marginalYearsAdded();
 				}
 
 				// Continuous `t` (not quantised) → smooth shader animation; the texture itself
@@ -329,23 +410,41 @@
 					? buildFieldLayer(deck, field, { time: t, idle: idleAmt })
 					: null;
 
-				// Recalc card: fade on the rise/hold/fall envelope. Fixed position, so only opacity
-				// animates — no jitter at distance.
+				// Route card: fades in as the camera zooms to the route, holds through the featured
+				// window, fades out as it zooms back. Tied to the phase, so it's on for exactly the
+				// zoomed-in span. Fixed position, so only opacity animates — no jitter at distance.
 				if (cardData) {
-					const e = t - cardData.start;
-					if (e > CARD_TOTAL) {
-						cardData = null;
-						if (card.show) card = { show: false, opacity: 0, ug: 0 };
-					} else {
-						const op =
-							e < CARD_RISE
-								? easeOutCubic(clamp01(e / CARD_RISE))
-								: e < CARD_RISE + CARD_HOLD
-									? 1
-									: 1 - Math.pow(clamp01((e - CARD_RISE - CARD_HOLD) / CARD_FALL), 3);
-						card = { show: true, opacity: clamp01(op), route: cardData.route, ug: cardData.ug };
-					}
+					const ce = t - phaseStart;
+					const co =
+						phase === 'dim'
+							? easeOutCubic(clamp01(ce / DUR.dim))
+							: phase === 'reveal' || phase === 'hold' || phase === 'recalc'
+								? 1
+								: phase === 'zoomBack'
+									? 1 - easeInOutCubic(clamp01(ce / DUR.zoomBack))
+									: 0;
+					card = { show: co > 0.001, opacity: clamp01(co), route: cardData.route, ug: cardData.ug };
+				} else if (card.show) {
+					card = { show: false, opacity: 0, ug: 0 };
 				}
+
+				// Hero pulse: fade in, hold, fade out, then stay hidden until the next cycle. Keyed
+				// to `now % titleEvery` so the window is fixed and the period sets only the gap.
+				let hv: number;
+				if (reduceMotion) {
+					hv = 1;
+				} else {
+					const hc = titleEvery > 0 ? now % titleEvery : 0;
+					hv =
+						hc < HERO_RISE
+							? easeOutCubic(clamp01(hc / HERO_RISE))
+							: hc < HERO_RISE + HERO_HOLD
+								? 1
+								: hc < HERO_RISE + HERO_HOLD + HERO_FALL
+									? 1 - Math.pow(clamp01((hc - HERO_RISE - HERO_HOLD) / HERO_FALL), 3)
+									: 0;
+				}
+				if (heroOpacity !== hv) heroOpacity = hv; // skip 60fps no-op writes while hidden
 
 				const layers = fieldLayer ? [fieldLayer, ...buildHoodLabels(deck, hoods, lt, scaleW)] : [];
 				overlay?.setProps({ layers });
@@ -425,10 +524,16 @@
 <div class="wrap" class:wall={variant === 'wall'} style="--wall-scale:{scaleW}">
 	<div bind:this={mapContainer} class="map"></div>
 
+	{#if loading}
+		<!-- Thin "loading" bar filling the bottom edge L→R while the next route is prepared. -->
+		<div class="loadbar"><div class="fill" style="transform:scaleX({loadProgress})"></div></div>
+	{/if}
+
 	{#if card.show}
-		<!-- The recalc readout as a little receipt slip: white paper, monospace, a dashed rule, and
-		     the emissions added in a reverse (black-on-white) hero bar — matching src/lib/receipt. -->
-		<div class="routecard" style="opacity:{card.opacity}; --wall-scale:{scaleW}">
+		<!-- The featured route's readout as a little receipt slip: white paper, monospace, a dashed
+		     rule, and the emissions added in a reverse (black-on-white) hero bar — matching
+		     src/lib/receipt. On screen for the whole zoomed-in window. -->
+		<div class="routecard slip" style="opacity:{card.opacity}; --wall-scale:{scaleW}">
 			<div class="route">{card.route ?? 'New journey'}</div>
 			<div class="rule"></div>
 			<div class="emis">+{Math.round(card.ug)}<span class="unit"> µg/m³</span></div>
@@ -436,33 +541,18 @@
 	{/if}
 
 	{#if count !== null && count > 0}
-		<!-- Safe-area inset keeps everything critical off a keystoned/vignetted projector edge -->
+		<!-- The title as a receipt slip — same language as src/lib/receipt/ReceiptDoc: white paper,
+		     mono, a dashed rule, the number in a reverse (white-on-black) hero bar. Top-left, inset
+		     off the keystoned/vignetted projector edge. ?title= / ?subtitle= set the lines; either
+		     empty drops that line. -->
 		<div class="safe">
-			<div class="header">
-				<!-- <div class="figure">
-					<span class="n">{headline.toLocaleString()}</span>
-				</div> -->
-				<!-- {#if activeTag}
-					<div class="callout">
-						<span class="lead">your route</span>
-						{activeTag}{#if queued > 0}{/if}
-					</div>
-				{/if} -->
-			</div>
-
-			<div class="footer">
-				<div class="legend">
-					<div class="legend-title">Months of life lost</div>
-					<div class="swatches">
-						{#each swatches as c, i (i)}
-							<span class="sw" style="background: rgb({c[0]}, {c[1]}, {c[2]})"></span>
-						{/each}
-					</div>
-					<div class="legend-labels">
-						<span>Fewer</span>
-						<span>More ▸</span>
-					</div>
-				</div>
+			<div class="hero slip" style="opacity:{heroOpacity}">
+				{#if title}
+					<div class="line">{title}</div>
+					<div class="rule"></div>
+				{/if}
+				<div class="total">{yearsLost.toFixed(1)}</div>
+				{#if subtitle}<div class="fine">{subtitle}</div>{/if}
 			</div>
 		</div>
 	{:else if count !== null}
@@ -487,6 +577,25 @@
 		width: 100%;
 		height: 100%;
 	}
+	/* Thin pre-reveal loading bar — full-width faint track at the very bottom edge, warm fill
+	   scaling in from the left. Above the overlays so it's never occluded. */
+	.loadbar {
+		position: absolute;
+		left: 0;
+		right: 0;
+		bottom: 0;
+		height: calc(var(--wall-scale) * 4px);
+		background: rgba(255, 255, 255, 0.08);
+		z-index: 18;
+		pointer-events: none;
+	}
+	.loadbar .fill {
+		height: 100%;
+		width: 100%;
+		transform-origin: left center;
+		background: #ffe2d6;
+		will-change: transform;
+	}
 	/* Generous safe inset — critical content stays clear of projector edges. */
 	.safe {
 		position: absolute;
@@ -498,82 +607,75 @@
 		justify-content: space-between;
 		pointer-events: none;
 	}
-	.header {
-		display: flex;
-		flex-direction: column;
-		gap: calc(var(--wall-scale) * 7px);
-	}
-	.kicker {
-		font-family: 'IBM Plex Mono', ui-monospace, monospace;
-		font-size: calc(var(--wall-scale) * 13px);
-		letter-spacing: 0.22em;
-		text-transform: uppercase;
-		color: #8ea0b8;
-	}
-	.figure {
-		display: flex;
-		align-items: baseline;
-		gap: calc(var(--wall-scale) * 12px);
-		flex-wrap: wrap;
-	}
-	.figure .n {
-		font-family: 'IBM Plex Sans', system-ui, sans-serif;
-		font-size: calc(var(--wall-scale) * clamp(44px, 6vw, 92px));
-		font-weight: 700;
-		line-height: 1;
-		color: #ffe2d6;
-		font-variant-numeric: tabular-nums;
-		letter-spacing: -0.01em;
-	}
-	.figure .u {
-		font-family: 'IBM Plex Mono', ui-monospace, monospace;
-		font-size: calc(var(--wall-scale) * 15px);
-		letter-spacing: 0.1em;
-		color: #b3c2d6;
-	}
-	.callout {
-		font-family: 'IBM Plex Mono', ui-monospace, monospace;
-		font-size: calc(var(--wall-scale) * 15px);
-		letter-spacing: 0.06em;
-		color: #dfe9f6;
-		margin-top: calc(var(--wall-scale) * 4px);
-	}
-	.callout .lead {
-		color: #ffd9a8;
-		text-transform: uppercase;
-		letter-spacing: 0.16em;
-		margin-right: 0.6em;
-	}
-	.callout .more {
-		color: #8ea0b8;
-	}
-	/* Recalc readout styled as a receipt slip: white paper, monospace, a dashed rule, and the
-	   emissions in a reverse (black-on-white) hero — same language as src/lib/receipt/ReceiptDoc.
-	   No glass/blur/glow; crisp 1-bit, font smoothing off, to match the printed aesthetic. */
-	.routecard {
-		position: absolute;
-		top: clamp(24px, 6%, 110px);
-		left: 50%;
-		transform: translateX(-50%);
-		z-index: 16;
-		pointer-events: none;
-		display: flex;
-		flex-direction: column;
-		gap: calc(var(--wall-scale) * 11px);
-		min-width: calc(var(--wall-scale) * 300px);
-		padding: calc(var(--wall-scale) * 16px) calc(var(--wall-scale) * 18px);
+	/* Shared receipt-slip surface — white paper, mono, crisp 1-bit, same language as
+	   src/lib/receipt/ReceiptDoc (.paper). Both the hero title and the route card use it. */
+	.slip {
 		background: #fff;
 		color: #000;
 		font-family: ui-monospace, 'Liberation Mono', 'Cascadia Mono', 'DejaVu Sans Mono', Menlo,
 			'Courier New', monospace;
 		-webkit-font-smoothing: none;
 		font-smooth: never;
-		box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
+		box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+	}
+	.hero {
+		display: flex;
+		flex-direction: column;
+		gap: calc(var(--wall-scale) * 8px);
+		width: fit-content;
+		max-width: 60%;
+		padding: calc(var(--wall-scale) * 12px) calc(var(--wall-scale) * 15px);
+		text-align: center;
+		/* Opacity is driven from the rAF loop (pulse once per ?titleEvery=s). */
+		will-change: opacity;
+	}
+	.hero .line {
+		font-size: calc(var(--wall-scale) * clamp(14px, 1.4vw, 26px));
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+		line-height: 1.15;
+	}
+	.hero .rule {
+		border-top: 2px dashed #000;
+	}
+	/* The reverse hero bar (white-on-black), after ReceiptDoc's .rev inverted total. */
+	.hero .total {
+		background: #000;
+		color: #fff;
+		font-size: calc(var(--wall-scale) * clamp(46px, 5.8vw, 106px));
+		font-weight: 700;
+		line-height: 1;
+		letter-spacing: -0.01em;
+		padding: calc(var(--wall-scale) * 7px) calc(var(--wall-scale) * 14px);
+		font-variant-numeric: tabular-nums;
+	}
+	.hero .fine {
+		font-size: calc(var(--wall-scale) * clamp(12px, 1.2vw, 19px));
+		font-weight: 700;
+		text-transform: uppercase;
+		letter-spacing: 0.06em;
+	}
+	/* Recalc readout styled as a receipt slip: white paper, monospace, a dashed rule, and the
+	   emissions in a reverse (black-on-white) hero — same language as src/lib/receipt/ReceiptDoc.
+	   No glass/blur/glow; crisp 1-bit, font smoothing off, to match the printed aesthetic. */
+	.routecard {
+		position: absolute;
+		right: clamp(20px, 4.5%, 84px);
+		bottom: clamp(20px, 4.5%, 84px);
+		z-index: 16;
+		pointer-events: none;
+		display: flex;
+		flex-direction: column;
+		gap: calc(var(--wall-scale) * 8px);
+		min-width: calc(var(--wall-scale) * 220px);
+		max-width: calc(var(--wall-scale) * 320px);
+		padding: calc(var(--wall-scale) * 12px) calc(var(--wall-scale) * 14px);
 		transition: opacity 0.15s linear;
 		will-change: opacity;
 	}
 	.routecard .route {
-		font-size: calc(var(--wall-scale) * 22px);
+		font-size: calc(var(--wall-scale) * 15px);
 		font-weight: 700;
 		text-transform: uppercase;
 		letter-spacing: 0.06em;
@@ -587,72 +689,18 @@
 	.routecard .emis {
 		background: #000;
 		color: #fff;
-		font-size: calc(var(--wall-scale) * clamp(40px, 5vw, 76px));
+		font-size: calc(var(--wall-scale) * clamp(26px, 3vw, 44px));
 		font-weight: 700;
 		line-height: 1;
 		text-align: center;
 		letter-spacing: 0.01em;
-		padding: calc(var(--wall-scale) * 10px) calc(var(--wall-scale) * 12px);
+		padding: calc(var(--wall-scale) * 8px) calc(var(--wall-scale) * 10px);
 		font-variant-numeric: tabular-nums;
 	}
 	.routecard .emis .unit {
 		font-size: 0.4em;
 		font-weight: 700;
 		letter-spacing: 0.05em;
-	}
-	.footer {
-		display: flex;
-		align-items: flex-end;
-		justify-content: space-between;
-		gap: calc(var(--wall-scale) * 16px);
-		flex-wrap: wrap;
-	}
-	/* Legend as a receipt slip too: white paper, mono, discrete colour blocks (not a gradient)
-	   with crisp black outlines, and clear end labels. Same language as .routecard. */
-	.legend {
-		display: flex;
-		flex-direction: column;
-		gap: calc(var(--wall-scale) * 8px);
-		padding: calc(var(--wall-scale) * 12px) calc(var(--wall-scale) * 14px);
-		background: #fff;
-		color: #000;
-		font-family: ui-monospace, 'Liberation Mono', 'Cascadia Mono', 'DejaVu Sans Mono', Menlo,
-			'Courier New', monospace;
-		-webkit-font-smoothing: none;
-		font-smooth: never;
-		box-shadow: 0 8px 30px rgba(0, 0, 0, 0.55);
-	}
-	.legend .legend-title {
-		font-size: calc(var(--wall-scale) * 13px);
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
-	}
-	.legend .swatches {
-		display: flex;
-		gap: calc(var(--wall-scale) * 3px);
-	}
-	.legend .sw {
-		width: calc(var(--wall-scale) * 34px);
-		height: calc(var(--wall-scale) * 16px);
-		border: 1.5px solid #000;
-	}
-	.legend .legend-labels {
-		display: flex;
-		justify-content: space-between;
-		font-size: calc(var(--wall-scale) * 12px);
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.05em;
-	}
-	.caveat {
-		max-width: calc(var(--wall-scale) * 360px);
-		text-align: right;
-		font-family: 'IBM Plex Mono', ui-monospace, monospace;
-		font-size: calc(var(--wall-scale) * 12px);
-		line-height: 1.5;
-		letter-spacing: 0.04em;
-		color: #76889f;
 	}
 	:global(.maplibregl-ctrl-logo),
 	:global(.maplibregl-ctrl-attrib-button) {

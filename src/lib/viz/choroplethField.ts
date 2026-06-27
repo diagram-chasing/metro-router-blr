@@ -95,6 +95,9 @@ export class ChoroplethField {
 	// Months attributable to the commute layer ALONE: Σ months(base+ours) − months(base).
 	// The marginal what-if over the ambient bed, for the headline figure.
 	private marginal = 0;
+	// Same marginal, but averaged over only the cells the commutes actually touch (deposit
+	// ≥ 1% of peak) — the per-affected-location figure, not diluted by the empty bbox.
+	private marginalAffMonths = 0;
 	// Absolute WHO-anchored hue scale (months). Neutral (the diverging midpoint) sits at the
 	// city's cleanest ambient cell; the cool extreme is the WHO line (0 months). So no cell the
 	// city actually breathes ever renders cool — honest for a public-health wall. Computed once.
@@ -249,17 +252,26 @@ export class ChoroplethField {
 		const useBase = this.base.length === m.length; // ignore baseline if grid size differs
 		let max = 0;
 		let marginal = 0;
+		let affMarginal = 0;
+		let affCount = 0;
+		const affEps = this.peakAbs * 0.01; // "touched by the commutes" = ≥1% of peak deposit
 		for (let i = 0; i < m.length; i++) {
 			const our = lerp(this.ourPrev[i] ?? 0, this.ourTarget[i] ?? 0, g);
 			const baseUg = useBase ? baseScale * this.base[i] : 0;
 			const ug = baseUg + this.ourUnit * our;
 			const mo = monthsFromConcentration(ug);
 			m[i] = mo;
-			marginal += mo - monthsFromConcentration(baseUg); // months the commutes add here
+			const add = mo - monthsFromConcentration(baseUg); // months the commutes add here
+			marginal += add;
+			if (our > affEps) {
+				affMarginal += add;
+				affCount++;
+			}
 			if (mo > max) max = mo;
 		}
 		this.baseMax = max;
 		this.marginal = marginal;
+		this.marginalAffMonths = affCount > 0 ? affMarginal / affCount : 0;
 	}
 
 	// Route cells rise to full brightness then HOLD (plateau) so the drawn line reads
@@ -445,6 +457,13 @@ export class ChoroplethField {
 	// summed over the grid. The marginal what-if the wall headlines, not the city's full burden.
 	marginalMonths(): number {
 		return this.marginal;
+	}
+
+	// Average added YEARS of life lost across the cells the commutes actually touch — the
+	// marginal what-if these journeys add on top of ambient air, for a typical location
+	// along the corridors rather than diluted across the empty bbox. The wall's headline.
+	marginalYearsAdded(): number {
+		return this.marginalAffMonths / 12;
 	}
 
 	// The months this one route adds across its cells — the figure the recalc

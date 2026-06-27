@@ -83,18 +83,24 @@ PUBLIC_TILES_URL=pmtiles:///tiles/bengaluru.pmtiles
 > Note: a plain `pmtiles extract` of a Protomaps planet would NOT work — different schema.
 > The glyphs and UI fonts below are already staged in the repo.
 
-### 2b. Glyph fonts (map labels) — DONE (staged in repo)
+### 2b. Glyph fonts (map labels) — staged in repo
 
-The Latin Noto Sans Regular ranges the wall style needs are mirrored to
-`static/fonts/Noto Sans Regular/{range}.pbf`. (The style now uses Regular for all labels —
-the openfreemap endpoint has no "Noto Sans Medium" stack.) Flip to them with:
+The map labels use **IBM Plex Mono Medium** (the receipt/legend monospace language;
+`LABEL_FONT` in `src/lib/viz/palette.ts`). The openfreemap glyph endpoint only serves
+**Noto**, so this stack is baked into a local MapLibre glyph stack at
+`static/fonts/IBM Plex Mono Medium/{range}.pbf`. Because it's self-hosted, point glyphs at the
+local stack — **needed in dev too**, since the remote default 404s on Plex:
 
 ```bash
 PUBLIC_GLYPHS_URL=/fonts/{fontstack}/{range}.pbf
 ```
 
-If labels appear with non-Latin characters, mirror the extra ranges the same way
-(`curl https://tiles.openfreemap.org/fonts/Noto%20Sans%20Regular/<range>.pbf`).
+To re-bake or swap the face, use **MapLibre Font Maker** (https://maplibre.org/font-maker/ —
+runs client-side, no upload, no native build): feed it the OFL TTF (`github.com/IBM/plex` or
+`fonts.google.com`; `@fontsource` ships only woff2), unzip into `static/fonts/`, and make the
+folder name match `LABEL_FONT` **exactly**. The Latin Noto Sans Regular ranges remain staged
+at `static/fonts/Noto Sans Regular/{range}.pbf` as a fallback — revert `LABEL_FONT` to
+`'Noto Sans Regular'` to use them.
 
 ### 2c. UI fonts (headline/legend — IBM Plex) — DONE
 

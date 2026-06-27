@@ -115,9 +115,10 @@ const FIELDFX_DEFAULTS: FieldFxProps = {
 const FIELD_LIB = /* glsl */ `
 ${glslColorRamp('fieldRamp')}
 
-// Opacity follows busyness: a soft floor so faint cells still read, ramping to full.
+// Opacity follows busyness: a soft floor so faint cells still read, ramping to full. Floor
+// and mid-curve lifted a touch so the field reads brighter over the dark basemap.
 float fieldOpacity(float intensity) {
-  return (54.0 + 192.0 * pow(clamp(intensity, 0.0, 1.0), 0.6)) / 255.0;
+  return (70.0 + 196.0 * pow(clamp(intensity, 0.0, 1.0), 0.52)) / 255.0;
 }
 
 // Cheap hash + value noise — for the recalc flicker now, grain/flow effects later.

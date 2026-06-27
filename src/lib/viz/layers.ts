@@ -78,14 +78,15 @@ export function declutterHoods(hoods: HoodReading[], sepDeg = 0.042, iters = 60)
 	return pts.map((p) => ({ ...p.h, c: [p.x / kx, p.y] as [number, number] }));
 }
 
-// Our numbers: one bold "months of life lost" figure per neighbourhood. The place
+// Our numbers: one bold "years of life lost" figure per neighbourhood. The place
 // NAMES come from the OSM basemap (darkStyle); these are just the values. Drawn last
 // so they composite on top of the choropleth; the dark chip + halo keep them readable
 // over any cell colour.
 export function buildHoodLabels(deck: Deck, hoods: HoodReading[], tick: number, scale = 1) {
-	// Months of life lost (always ≥ 0 under the WHO-anchored scale). The "mo" unit cue keeps
-	// the bare number decodable cold, for a viewer who arrives mid-cycle from across the room.
-	const fmt = (m: number) => `${Math.round(m)}mo`;
+	// Years of life lost (always ≥ 0 under the WHO-anchored scale), one decimal — same unit as
+	// the hero figure. The "yr" cue keeps the bare number decodable cold, for a viewer who
+	// arrives mid-cycle from across the room. (hoodMonths() reports months; /12 → years.)
+	const fmt = (m: number) => `${(m / 12).toFixed(1)}yr`;
 	const font = '"IBM Plex Mono", ui-monospace, SFMono-Regular, monospace';
 	const placed = declutterHoods(hoods);
 	return [
