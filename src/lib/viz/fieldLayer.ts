@@ -1,30 +1,10 @@
-// A BitmapLayer subclass that renders the health field as a GPU-shaded texture.
-//
-// The split that makes this fast and extensible: the texture carries slow DATA
-// (per-cell hue / intensity / ignite / mask, re-uploaded only when the field
-// actually changes) and the fragment shader does all PRESENTATION + ANIMATION
-// from uniforms (`time`, `dim`, the recalc pulse, …). Adding an effect — heatwave
-// flow, contour glow, grain, ripples — is editing the GLSL below against inputs
-// that are already wired (the field texture, `geometry.uv` in [0,1] across the
-// bbox, and the `fieldFx` uniform block), not re-plumbing the layer. Modelled on
-// the Paper shaders vocabulary: an image/shape input + time + a generous knob set.
-//
-// deck.gl touches window at import time, so this file only TYPE-imports it; the
-// real subclass is built from the runtime BitmapLayer via makeFieldLayer() inside
-// loadDeck(), keeping the heavy bundle out of SSR.
 
 import type { BitmapLayer } from '@deck.gl/layers';
 import { glslColorRamp } from './palette';
 
-// Field texel channels (rgba8): the shader reads these by name.
-//   R = hue        diverging-ramp parameter t (0..1) from months
-//   G = intensity  busyness 0..1 (drives opacity / glow; the "shape" for effects)
-//   B = ignite     route-reveal bloom 0..1 (transient, sequential)
-//   A = mask       1 where the cell carries exposure, 0 = empty (basemap shows)
+// Texel channels (rgba8): R=hue t (0..1 from months), G=intensity, B=ignite, A=mask (0=empty).
 
-// std140 uniform block. Order here MUST match `uniformTypes` below — the GLSL
-// compiler and luma compute the same std140 offsets from the same declaration
-// order, so they stay in agreement. Keep floats grouped, vec2 on an 8-byte slot.
+// std140 block — field order MUST match `uniformTypes` below (offsets are derived from each).
 const uniformBlock = /* glsl */ `
 layout(std140) uniform fieldFxUniforms {
   float time;          // seconds, monotonic — the animation driver
@@ -37,13 +17,11 @@ layout(std140) uniform fieldFxUniforms {
   vec2  gridSize;      // (cols, rows) — for grid lines and per-cell flicker
   float noise;         // reserved: grain amount 0..1 (default 0)
   float idle;          // master idle-motion amount 0..1 (0 disables); from ?idle=
-  // The recalc route, resampled to 8 points (uv), packed 2/vec4 — the ring radiates
-  // as an offset curve of THIS path, not a circle from a centroid.
-  vec4  pathA;
+  vec4  pathA;         // recalc route, 8 uv points packed 2/vec4
   vec4  pathB;
   vec4  pathC;
   vec4  pathD;
-  float pathCount;     // number of valid points (2..8); <2 → circle fallback
+  float pathCount;     // valid points (2..8); <2 → circle fallback
 } fieldFx;
 `;
 
@@ -100,7 +78,7 @@ const FIELDFX_DEFAULTS: FieldFxProps = {
 	scale: 1,
 	gridSize: [1, 1],
 	noise: 0,
-	idle: 1,
+	idle: 2,
 	pathA: [0, 0, 0, 0],
 	pathB: [0, 0, 0, 0],
 	pathC: [0, 0, 0, 0],
@@ -108,35 +86,30 @@ const FIELDFX_DEFAULTS: FieldFxProps = {
 	pathCount: 0
 };
 
-// ── GLSL library (injected once, at fs:#decl) ──
-// Everything an effect needs lives here. `bitmapTexture` (the field) and
-// `geometry.uv` are in scope inside the colour hook, so helpers can re-sample
-// neighbours (contour / gradient / flow) — not just the current texel.
+
 const FIELD_LIB = /* glsl */ `
 ${glslColorRamp('fieldRamp')}
 
-// Opacity follows busyness: a soft floor so faint cells still read, ramping to full. Floor
-// and mid-curve lifted a touch so the field reads brighter over the dark basemap.
+// Opacity from busyness: soft floor so faint cells still read, ramping to full.
 float fieldOpacity(float intensity) {
   return (70.0 + 196.0 * pow(clamp(intensity, 0.0, 1.0), 0.52)) / 255.0;
 }
 
-// Cheap hash + value noise — for the recalc flicker now, grain/flow effects later.
+// Cheap hash for the recalc flicker.
 float fieldHash(vec2 p) {
   p = fract(p * vec2(123.34, 456.21));
   p += dot(p, p + 45.32);
   return fract(p.x * p.y);
 }
 
-// 4x4 ordered (Bayer) dither in [0,1) — breaks the ramp into a blocky stipple.
+// 4x4 ordered (Bayer) dither in [0,1) — a blocky stipple.
 float fieldBayer(vec2 px) {
   float m[16] = float[16](0.,8.,2.,10., 12.,4.,14.,6., 3.,11.,1.,9., 15.,7.,13.,5.);
   int i = int(mod(px.x, 4.0)) + int(mod(px.y, 4.0)) * 4;
   return m[i] / 16.0;
 }
 
-// Grid-line mask: ~1 on cell borders, 0 inside — AA'd against cell size so it
-// stays a crisp one-pixel lattice at any zoom. Sells the "grid" read.
+// Grid-line mask: 1 on cell borders, 0 inside, AA'd to a crisp 1px lattice at any zoom.
 float fieldGrid(vec2 uv) {
   vec2 c = uv * fieldFx.gridSize;
   vec2 g = abs(fract(c) - 0.5);
@@ -145,15 +118,14 @@ float fieldGrid(vec2 uv) {
   return max(line.x, line.y);
 }
 
-// Distance from p to segment a–b (all in aspect-corrected uv).
+// Distance from p to segment a–b (aspect-corrected uv).
 float fieldSegDist(vec2 p, vec2 a, vec2 b) {
   vec2 pa = p - a, ba = b - a;
   float h = clamp(dot(pa, ba) / max(dot(ba, ba), 1e-6), 0.0, 1.0);
   return length(pa - ba * h);
 }
 
-// Distance from uv to the recalc ROUTE polyline (aspect-corrected so it's isotropic on
-// screen). Falls back to distance-from-origin (a circle) when no path was supplied.
+// Distance from uv to the recalc route polyline; circle fallback (distance-from-origin) when no path.
 float fieldDistToPath(vec2 uv) {
   vec2 asp = vec2(fieldFx.aspect, 1.0);
   vec2 q = uv * asp;
@@ -170,9 +142,7 @@ float fieldDistToPath(vec2 uv) {
   return best;
 }
 
-// Radius of the route (max distance of its points from their centroid, aspect-uv) —
-// the natural scale at which an offset of the path still reads AS the path before it
-// rounds off into a circle.
+// Route radius: max distance of its points from their centroid (aspect-uv).
 float fieldPathRadius() {
   int n = int(fieldFx.pathCount + 0.5);
   if (n < 2) return 0.3;
@@ -188,12 +158,8 @@ float fieldPathRadius() {
   return r;
 }
 
-// The recalc effect, as (ring, region) both eased over the recalc window:
-//   x = ring   — a path-shaped pulse radiating outward (the white moment). Travel is
-//                scaled to the route's own size and damped as it expands, so it keeps
-//                the path's shape instead of rounding into a circle.
-//   y = region — a soft mask over the area around the route. The compose step churns
-//                this per-cell (a "recalculating" dither) rather than whitening it.
+// Recalc effect as (ring, region), both eased over the recalc window: ring = a path-shaped
+// pulse radiating outward; region = a soft mask over the area around the route (churned per-cell).
 vec2 fieldRecalc(vec2 uv) {
   float dur = fieldFx.recalcDur;
   if (dur <= 0.0) return vec2(0.0);
@@ -211,15 +177,11 @@ vec2 fieldRecalc(vec2 uv) {
   return vec2(ring, region);
 }
 
-// ── Idle ambience (Paper-shaders ports): luminance/alpha-only motion at rest ──
-// One block of knobs for the whole resting animation — keep every effect faint; this is
-// ambience UNDER the data, never a screensaver. All of it is gated by idle*dim at the call
-// site, so it's strongest at rest and recedes during a submit. Nothing here moves a texel.
+// ── Idle ambience knobs (faint motion at rest; gated by idle*dim at the call site) ──
 const float IDLE_CAUSTIC_SCALE  = 0.6;  // spatial freq of the "living air" veins
 const float IDLE_CAUSTIC_AMP    = 0.12; // max added alpha for the veins in empty cells
 const float IDLE_HAZE_SPEED     = 0.06; // corridor heat-haze travel speed
-const float IDLE_HAZE_AMP       = 0.10; // max warm glow added over hot corridors (kept low so
-                                        // the grid still reads through the brightest highlight)
+const float IDLE_HAZE_AMP       = 0.10; // max warm glow added over hot corridors
 const float IDLE_GRAIN_AMP      = 0.06; // drifting simplex grain shimmer amplitude
 const float IDLE_BREATH_AMP     = 0.06; // global brightness swell (±)
 const float IDLE_BREATH_PERIOD  = 10.0; // seconds per inhale/exhale
@@ -228,9 +190,7 @@ vec2 fieldRot(vec2 uv, float th) {
   return mat2(cos(th), sin(th), -sin(th), cos(th)) * uv;
 }
 
-// Neuro-noise (zozuar / Paper shaders), trimmed 15→10 iterations for the wall: iterative
-// rotated sine-folding → fluid, vein-like caustics. Time advances the domain, so the veins
-// drift while the grid stays put.
+// Neuro-noise (zozuar / Paper shaders), 10 iterations: rotated sine-folding → vein-like caustics.
 float fieldNeuro(vec2 uv, float t) {
   vec2 sineAcc = vec2(0.0);
   vec2 res = vec2(0.0);
@@ -246,7 +206,7 @@ float fieldNeuro(vec2 uv, float t) {
   return res.x + res.y;
 }
 
-// Simplex noise (Ashima / Paper shaders) — for the drifting grain shimmer.
+// Simplex noise (Ashima / Paper shaders) — for the grain shimmer.
 vec3 fieldPermute(vec3 x) { return mod(((x * 34.0) + 1.0) * x, 289.0); }
 float fieldSnoise(vec2 v) {
   const vec4 C = vec4(0.211324865405187, 0.366025403784439, -0.577350269189626, 0.024390243902439);
@@ -270,27 +230,20 @@ float fieldSnoise(vec2 v) {
   return 130.0 * dot(m, g);
 }
 
-// Cool "living air": a faint, drifting vein structure for the empty/low cells. Returns 0..1
-// (the caller tints it cool and scales the alpha). Aspect-corrected so the veins read round.
-// Threshold sits inside fieldNeuro's actual output range (~0.2..1.2) so the veins read instead
-// of clipping to black; the soft band keeps the filament look without flooding the periphery.
+// Cool "living air": faint drifting veins for the empty/low cells. Returns 0..1; aspect-corrected.
 float fieldCaustic(vec2 uv) {
   vec2 cuv = uv * vec2(fieldFx.aspect, 1.0) * IDLE_CAUSTIC_SCALE;
   float n = fieldNeuro(cuv, fieldFx.time * 0.18);
   return clamp(smoothstep(0.45, 1.05, n), 0.0, 1.0);
 }
 
-// Corridor heat-haze (heatmap-derived): a warm highlight sweeping the hot corridors so they
-// read as radiating. The sweep is NOISE-DRIVEN — its heading slowly turns and its front
-// meanders — so the motion never settles into one repeating direction. Returns ~0.5..1.5; the
-// caller subtracts 0.5 and masks by intensity, so only the data region smolders.
+// Corridor heat-haze: a warm highlight sweeping the hot corridors. Noise-driven heading + front
+// (never settles into one direction). Returns ~0.5..1.5; caller subtracts 0.5 and masks by intensity.
 float fieldHaze(vec2 uv) {
   vec2 p = uv * vec2(fieldFx.aspect, 1.0);
   float t = fieldFx.time;
-  // Heading wanders on a slow low-freq noise, so the sweep re-aims over time (no fixed axis).
   float ang = 2.4 + 1.3 * fieldSnoise(vec2(t * 0.012, 3.1));
   vec2 dir = vec2(cos(ang), sin(ang));
-  // Phase warp: the front bends and paces unevenly instead of marching like a ruler.
   float warp = 0.7 * fieldSnoise(p * 0.8 + vec2(t * 0.03, -t * 0.02));
   float y = fract(dot(p, dir) - t * IDLE_HAZE_SPEED + warp);
   float wave = smoothstep(0.3, 0.65, y) * (1.0 - smoothstep(0.65, 1.0, y));
@@ -299,8 +252,7 @@ float fieldHaze(vec2 uv) {
 `;
 
 // ── GLSL composition (injected at fs:DECKGL_FILTER_COLOR) ──
-// `color` arrives as the raw field texel (tint/desaturate are left default, so rgb
-// passes through untouched); we decode the channels and rebuild the pixel.
+// `color` arrives as the raw field texel; decode the channels and rebuild the pixel.
 const FIELD_COMPOSE = /* glsl */ `
   float fHue = color.r;
   float fInt = color.g;
@@ -310,8 +262,7 @@ const FIELD_COMPOSE = /* glsl */ `
   vec3 rgb = fieldRamp(fHue);
   float a = fieldOpacity(fInt);
 
-  // Empty cell: a barely-there fill so the dotted basemap reads through, while the
-  // grid lines below still draw the lattice across the bbox.
+  // Empty cell: a barely-there fill so the dotted basemap reads through under the grid lines.
   if (fMask < 0.5 && fInt < 0.004) {
     rgb = vec3(40.0, 48.0, 64.0) / 255.0;
     a = 8.0 / 255.0;
@@ -320,43 +271,38 @@ const FIELD_COMPOSE = /* glsl */ `
   // Dim the background field during a submit — the pulse and route ride over it.
   a *= fieldFx.dim;
 
-  // ── Idle ambience (luminance/alpha only — the grid and texels never move) ──
-  // idleK folds in dim, so all of this is strongest at rest and recedes during a submit.
+  // ── Idle ambience (luminance/alpha only) — folds in dim, so strongest at rest ──
   float idleK = fieldFx.idle * fieldFx.dim;
 
-  // Caustic "living air": cool veins drifting through the empty / low-exposure cells.
+  // Caustic "living air": cool veins drifting through the empty / low cells.
   float emptyW = 1.0 - smoothstep(0.0, 0.18, fInt);
   float caustic = fieldCaustic(geometry.uv) * idleK * emptyW;
   rgb = mix(rgb, vec3(70.0, 150.0, 236.0) / 255.0, clamp(caustic * 0.6, 0.0, 1.0));
   a += caustic * IDLE_CAUSTIC_AMP;
 
-  // Corridor heat-haze: a slow warm wave sweeping the hot corridors so they smolder. Gentle
-  // colour push so it warms the corridor without blowing it toward white and hiding the grid.
+  // Corridor heat-haze: a slow warm wave so hot corridors smolder.
   float haze = (fieldHaze(geometry.uv) - 0.5) * pow(clamp(fInt, 0.0, 1.0), 0.8) * idleK;
   rgb = mix(rgb, fieldRamp(clamp(fHue + 0.06, 0.0, 1.0)), clamp(haze * 0.4, 0.0, 1.0));
   a += max(haze, 0.0) * IDLE_HAZE_AMP;
 
-  // Global breath: a slow brightness swell so even a still field feels alive.
+  // Global breath: a slow brightness swell.
   a *= 1.0 + IDLE_BREATH_AMP * idleK * sin(fieldFx.time * 6.2831853 / IDLE_BREATH_PERIOD);
 
-  // Breathing grain: the static Bayer stipple + a slow drifting simplex shimmer on top.
-  // (Alpha-dither would stipple the cool underlayer and read as blue speckle, so it's on rgb.)
+  // Breathing grain: static Bayer stipple + a slow drifting simplex shimmer (on rgb, not alpha).
   float grain = (fieldBayer(gl_FragCoord.xy) - 0.5) * 0.12;
   grain += fieldSnoise(gl_FragCoord.xy * 0.5 + vec2(0.0, fieldFx.time * 0.6)) * IDLE_GRAIN_AMP * idleK;
-  rgb *= 1.0 + grain;
+  rgb *= 1.5 + grain;
 
-  // Recalc moment. The AREA around the route "recalculates": each cell flips through
-  // heat VALUES (a value scramble), then settles as the region fades — not a white wash.
-  // Only the radiating ring goes whitish, and faintly.
+  // Recalc moment: cells around the route flip through their OWN heat values (a scramble), then
+  // settle as the region fades. Only the radiating ring goes whitish, faintly.
   vec2 rc = fieldRecalc(geometry.uv);
   if (rc.y > 0.0 && fMask > 0.5) {
     vec2 cell = floor(geometry.uv * fieldFx.gridSize);
-    float step = mod(floor(fieldFx.time * 6.0), 97.0);       // slower, calmer churn steps
-    // Jitter the cell's OWN value, not a random one — warm stays warm, cool stays cool. Small.
+    float step = mod(floor(fieldFx.time * 6.0), 97.0);
     float jitter = (fieldHash(cell + step) - 0.5) * 0.07;
     vec3 scrambled = fieldRamp(clamp(fHue + jitter, 0.0, 1.0));
     rgb = mix(rgb, scrambled, clamp(rc.y * 0.3, 0.0, 1.0));
-    a = max(a, clamp(rc.y * 0.18, 0.0, 1.0));                 // bring churning cells up to read
+    a = max(a, clamp(rc.y * 0.18, 0.0, 1.0));
   }
   if (rc.x > 0.0) {
     rgb = mix(rgb, vec3(244.0, 248.0, 255.0) / 255.0, clamp(0.18 * rc.x, 0.0, 1.0));
@@ -369,15 +315,14 @@ const FIELD_COMPOSE = /* glsl */ `
     a = max(a, clamp(fIgnite * 1.15, 0.0, 1.0));
   }
 
-  // Grid lines LAST, so the dark lattice reads across the field, the ambience and the route —
-  // a touch stronger now so it stays legible through the brightest idle highlight.
+  // Grid lines LAST, so the dark lattice reads across the field, ambience and route.
   rgb *= 1.0 - 0.38 * fieldGrid(geometry.uv);
 
   color = vec4(rgb, clamp(a, 0.0, 1.0));
 `;
 
-// The field data the layer turns into its texture. A new object ref signals a change
-// (deck diffs props by reference), so passing the same ref means "no re-upload".
+// Field data the layer turns into its texture. A new object ref signals a change (deck diffs
+// props by reference), so passing the same ref means "no re-upload".
 export type FieldImage = { width: number; height: number; data: Uint8Array };
 
 type LumaTexture = {
@@ -393,14 +338,10 @@ const samplerFor = (smooth: boolean) => {
 	return { minFilter: f, magFilter: f, addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' };
 };
 
-// Build the FieldLayer class from the runtime BitmapLayer (passed in by loadDeck
-// so the static deck import stays out of this module / out of SSR).
-//
-// We own the texture rather than going through BitmapLayer's async `image` prop:
-// that path silently produced an empty (all-zero) texture, so the field never
-// rendered. Instead `fieldData` (raw rgba8) is uploaded straight to a device
-// texture and bound as `bitmapTexture` in draw(); the inherited bitmap fragment
-// shader samples it and our injected hooks colour it.
+// Build the FieldLayer class from the runtime BitmapLayer (passed by loadDeck so the static
+// deck import stays out of SSR). We own the texture rather than BitmapLayer's async `image`
+// prop — that path silently produced an empty texture; here `fieldData` (raw rgba8) uploads
+// straight to a device texture, bound as `bitmapTexture` in draw().
 export function makeFieldLayer(Base: typeof BitmapLayer) {
 	class FieldLayer extends (Base as new (...args: unknown[]) => BitmapLayer) {
 		static layerName = 'FieldLayer';

@@ -1,17 +1,13 @@
-// Pure deck.gl layer builders for the homepage choropleth map. The field is one
-// GPU-shaded texture (FieldLayer) — no per-cell geometry, so no seams at any zoom —
-// and all animation lives in shader uniforms (see fieldLayer.ts). The texture only
-// re-uploads when the field's data actually changes.
+// deck.gl layer builders for the choropleth map: the field is one GPU-shaded texture
+// (FieldLayer, see fieldLayer.ts); animation lives in shader uniforms.
 
 import type { Deck } from './deck';
 import type { ChoroplethField, HoodReading } from './choroplethField';
 
 type FieldLayerInstance = InstanceType<Deck['FieldLayer']>;
 
-// The health field as a single shaded texture stretched over the grid bbox. `time`
-// drives the shader animation (recalc pulse / theatre). Default is the blocky grid
-// look (NEAREST + shader grid lines + dither); pass `smooth:true` for a bilinear,
-// continuous (HD) field instead.
+// The health field as a single shaded texture over the grid bbox. `time` drives the shader
+// animation; default is the blocky grid look, `smooth:true` for a bilinear (HD) field.
 export function buildFieldLayer(
 	deck: Deck,
 	field: ChoroplethField,
@@ -47,11 +43,9 @@ export function buildFieldLayer(
 	return new Ctor(props);
 }
 
-// Spread clustered labels apart so they don't pile up. A few iterations of pairwise
-// repulsion (only between labels closer than `sepDeg`) nudges crowded ones outward
-// while leaving well-spaced ones put — organic, not a grid, and deterministic so the
-// positions don't jitter between ticks. Works in a cos-lat plane so pushes read even
-// on screen. `sepDeg` is the target minimum spacing in degrees.
+// Spread clustered labels apart: a few iterations of pairwise repulsion (only between labels
+// closer than `sepDeg`) nudge crowded ones outward, deterministic so they don't jitter. Works
+// in a cos-lat plane. `sepDeg` is the target minimum spacing in degrees.
 export function declutterHoods(hoods: HoodReading[], sepDeg = 0.042, iters = 60): HoodReading[] {
 	if (hoods.length < 2) return hoods;
 	const latMid = hoods.reduce((s, h) => s + h.c[1], 0) / hoods.length;
@@ -78,14 +72,11 @@ export function declutterHoods(hoods: HoodReading[], sepDeg = 0.042, iters = 60)
 	return pts.map((p) => ({ ...p.h, c: [p.x / kx, p.y] as [number, number] }));
 }
 
-// Our numbers: one bold "years of life lost" figure per neighbourhood. The place
-// NAMES come from the OSM basemap (darkStyle); these are just the values. Drawn last
-// so they composite on top of the choropleth; the dark chip + halo keep them readable
-// over any cell colour.
+// One bold "years of life lost" figure per neighbourhood (place NAMES come from the OSM
+// basemap). Drawn last so they composite over the choropleth; dark chip + halo keep them readable.
 export function buildHoodLabels(deck: Deck, hoods: HoodReading[], tick: number, scale = 1) {
-	// Years of life lost (always ≥ 0 under the WHO-anchored scale), one decimal — same unit as
-	// the hero figure. The "yr" cue keeps the bare number decodable cold, for a viewer who
-	// arrives mid-cycle from across the room. (hoodMonths() reports months; /12 → years.)
+	// Years of life lost, one decimal (hoodMonths() reports months; /12 → years). "yr" cue keeps
+	// the bare number decodable from across the room.
 	const fmt = (m: number) => `${(m / 12).toFixed(1)}yr`;
 	const font = '"IBM Plex Mono", ui-monospace, SFMono-Regular, monospace';
 	const placed = declutterHoods(hoods);

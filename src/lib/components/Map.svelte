@@ -215,8 +215,9 @@
 
 		const data: GeoJSON.FeatureCollection = { type: 'FeatureCollection', features };
 
-		if (map.getSource('pick-markers-source')) {
-			(map.getSource('pick-markers-source') as maplibre.GeoJSONSource).setData(data);
+		const existing = map.getSource('pick-markers-source') as maplibre.GeoJSONSource | undefined;
+		if (existing) {
+			existing.setData(data);
 		} else {
 			map.addSource('pick-markers-source', { type: 'geojson', data });
 			map.addLayer({

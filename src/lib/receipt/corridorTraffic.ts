@@ -74,27 +74,26 @@ export function estimateCorridorTraffic(
 ): CorridorTraffic {
 	const routeCoords: LngLat[] = (segments ?? []).flatMap((s) => s.coords as LngLat[]);
 
-	let peoplePerDay: number;
-	let matchedCount = 0;
-	let isFallback: boolean;
-
+	// Junction volumes the route passes within MATCH_RADIUS_KM of (empty when the route
+	// has too few points). With matches we take their 25th percentile; with none we fall
+	// back to the city-wide 25th percentile.
+	const matched: number[] = [];
 	if (routeCoords.length >= 2) {
-		const matched: number[] = [];
 		for (const j of JUNCTIONS) {
 			const closest = findClosestPointOnPolyline([j.lng, j.lat], routeCoords);
 			if (!closest.point) continue;
 			const km = haversineKm(j.lng, j.lat, closest.point[0], closest.point[1]);
 			if (km <= MATCH_RADIUS_KM) matched.push(j.volume);
 		}
-		matchedCount = matched.length;
-		if (matched.length > 0) {
-			matched.sort((a, b) => a - b);
-			peoplePerDay = Math.round(percentile(matched, LOW_PCT));
-			isFallback = false;
-		} else {
-			peoplePerDay = Math.round(percentile(ALL_VOLUMES_ASC, LOW_PCT));
-			isFallback = true;
-		}
+	}
+	const matchedCount = matched.length;
+
+	let peoplePerDay: number;
+	let isFallback: boolean;
+	if (matched.length > 0) {
+		matched.sort((a, b) => a - b);
+		peoplePerDay = Math.round(percentile(matched, LOW_PCT));
+		isFallback = false;
 	} else {
 		peoplePerDay = Math.round(percentile(ALL_VOLUMES_ASC, LOW_PCT));
 		isFallback = true;

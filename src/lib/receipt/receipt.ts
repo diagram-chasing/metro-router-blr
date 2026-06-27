@@ -1080,7 +1080,7 @@ export function buildReceiptView(
 	const cMax = Math.max(...co2Vals);
 	const co2PerKm = MODE_CO2E_G_PER_PKM[c.trip.mode] ?? 0;
 	const nNorm = cMax > cMin ? (co2PerKm - cMin) / (cMax - cMin) : 0;
-	let figN = SEAL.modeMin + Math.round(nNorm * SEAL.modeRange); // 2..8
+	const figN = SEAL.modeMin + Math.round(nNorm * SEAL.modeRange); // 2..8
 	const mNorm = Math.min(1, Math.sqrt(c.annualCommuteKg / SEAL.annualNormKg));
 	let figM = SEAL.modeMin + Math.round(mNorm * SEAL.modeRange); // 2..8
 	if (figN === figM) figM = figM < 8 ? figM + 1 : figM - 1; // n==m → blank plate

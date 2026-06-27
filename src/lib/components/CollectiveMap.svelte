@@ -6,11 +6,18 @@
 
 	import { createClock, type Clock } from '$lib/viz/clock';
 	import { loadDeck, type Deck } from '$lib/viz/deck';
-	import { ChoroplethField, type Field, type HoodReading } from '$lib/viz/choroplethField';
+	import { ChoroplethField, type HoodReading } from '$lib/viz/choroplethField';
 	import { buildFieldLayer, buildHoodLabels } from '$lib/viz/layers';
 	import { roadsOnlyStyle, WALL_BG, easeInOutCubic, easeOutCubic } from '$lib/viz/palette';
 	import { Params } from '$lib/viz/health';
-	import EmptyState from '$lib/components/wall/EmptyState.svelte';
+	import {
+		REST,
+		numParam as num,
+		emissionsFieldUrl,
+		flattenSegments,
+		loadBaseline as loadFieldBaseline,
+		pollField as pollFieldSnapshot
+	} from '$lib/viz/wallField';
 
 	let { variant = 'wall' }: { variant?: 'home' | 'wall' } = $props();
 
@@ -41,14 +48,6 @@
 	let mapContainer: HTMLDivElement;
 	let map: maplibre.Map | undefined;
 	let overlay: InstanceType<Deck['MapboxOverlay']> | undefined;
-
-	// Resting view: the whole emissions-grid bbox centred.
-	const REST = { lng: 77.6199, lat: 12.9885, zoom: 11 };
-
-	const num = (p: URLSearchParams, k: string, d: number) => {
-		const v = Number(p.get(k));
-		return isFinite(v) && v > 0 ? v : d;
-	};
 
 	// Submit-animation phase durations (s). Paced long for a distant reader: the hold lets
 	// the lit corridor be read, and IDLE_REST lets the headline settle between routes.
@@ -111,12 +110,6 @@
 				return DUR[ph] * Math.max(0.45, 1 - 0.12 * queue.length);
 			}
 			return DUR[ph];
-		};
-
-		const routeOfLine = (l: { segments: { coords: [number, number][] }[] }) => {
-			const pts: [number, number][] = [];
-			for (const s of l.segments) for (const c of s.coords) pts.push(c);
-			return pts;
 		};
 
 		(async () => {
@@ -216,34 +209,12 @@
 			};
 			await addBakedRoads();
 
-			const fieldUrl = `/api/emissions?grid=raw&decay=1.2&cell=${cellDeg}`;
+			const fieldUrl = emissionsFieldUrl(cellDeg);
 
 			// Resting baseline: ACAG annual-mean PM2.5 (µg/m³) baked to our lattice — the
 			// air the city already breathes; the commute layer adds onto it.
-			const loadBaseline = async () => {
-				try {
-					const res = await fetch('/baseline-grid.json');
-					const b = (await res.json()) as {
-						nLat: number;
-						nLon: number;
-						bbox: [number, number, number, number];
-						values: number[];
-					};
-					field.setBaseline(b);
-				} catch (err) {
-					console.warn('CollectiveMap baseline load failed:', err);
-				}
-			};
-
-			const pollField = async () => {
-				try {
-					const res = await fetch(fieldUrl);
-					const raw = (await res.json()) as Field;
-					field.setSnapshot(raw, now);
-				} catch (err) {
-					console.warn('CollectiveMap field poll failed:', err);
-				}
-			};
+			const loadBaseline = () => loadFieldBaseline(field, 'CollectiveMap baseline');
+			const pollField = () => pollFieldSnapshot(field, fieldUrl, now, 'CollectiveMap field poll');
 
 			const pollLines = async () => {
 				try {
@@ -259,7 +230,7 @@
 					for (const l of lines) {
 						if (l.id <= lastId) continue; // forward-only; server already filters by sinceId
 						lastId = Math.max(lastId, l.id);
-						const r = routeOfLine(l);
+						const r = flattenSegments(l.segments);
 						if (r.length < 2) continue;
 						const label =
 							l.originLabel && l.destinationLabel
@@ -461,8 +432,8 @@
 			};
 
 			// Boot resilience: a wall powers on before its local server is necessarily ready.
-			// Retry the critical loads with backoff until the field is live, instead of sticking
-			// on EmptyState forever. The basemap is already visible during this, so never blank.
+			// Retry the critical loads with backoff until the field is live. The basemap is
+			// already visible during this, so never blank.
 			for (let i = 0; !field.ready && !disposed; i++) {
 				await Promise.all([loadBaseline(), pollField(), pollStats()]);
 				if (!field.ready && !disposed) {
@@ -555,8 +526,6 @@
 				{#if subtitle}<div class="fine">{subtitle}</div>{/if}
 			</div>
 		</div>
-	{:else if count !== null}
-		<EmptyState />
 	{/if}
 </div>
 

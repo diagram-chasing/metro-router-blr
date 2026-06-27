@@ -1,7 +1,5 @@
-// deck.gl touches window/document at import time, so importing it anywhere SSR
-// evaluates breaks prerender. Every deck import funnels through loadDeck(), which
-// is only ever called inside onMount (browser-only) — keeping the heavy bundle
-// out of the server shell and code-split from initial load.
+// deck.gl touches window at import time, so it's never imported at module scope — every use
+// funnels through loadDeck() (called only inside onMount), keeping it out of SSR + code-split.
 
 import { makeFieldLayer } from './fieldLayer';
 
@@ -18,8 +16,7 @@ export async function loadDeck() {
 		ScatterplotLayer: layers.ScatterplotLayer,
 		TextLayer: layers.TextLayer,
 		TripsLayer: geo.TripsLayer,
-		// Field choropleth: shaded as a single texture, no per-cell seams (see fieldLayer.ts).
-		FieldLayer: makeFieldLayer(layers.BitmapLayer)
+		FieldLayer: makeFieldLayer(layers.BitmapLayer) // single-texture choropleth (fieldLayer.ts)
 	};
 }
 

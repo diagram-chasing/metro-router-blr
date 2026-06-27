@@ -29,29 +29,6 @@ export function ledger(label: string, value: string, cols = PRINT_COLS): string 
 	return l + ' '.repeat(Math.max(1, cols - l.length - value.length)) + value;
 }
 
-/** FROM -> TO place-names as three columns: each name word-wrapped inside its own
- *  side column, an arrow gutter between them. The arrow sits on the block's middle
- *  row. Each returned line is at most `cols` wide (trailing space trimmed). */
-export function routeColumns(from: string, to: string, cols = PRINT_COLS): string[] {
-	const arrow = '->';
-	const mid = 6; // arrow gutter between the two name columns
-	const side = Math.floor((cols - mid) / 2);
-	const lhs = wrapText(from.toUpperCase(), side);
-	const rhs = wrapText(to.toUpperCase(), side);
-	const rows = Math.max(lhs.length, rhs.length);
-	const arrowRow = Math.floor((rows - 1) / 2);
-	const pad = Math.floor((mid - arrow.length) / 2);
-	const gutter = ' '.repeat(pad) + arrow + ' '.repeat(mid - pad - arrow.length);
-	const out: string[] = [];
-	for (let i = 0; i < rows; i++) {
-		const l = (lhs[i] ?? '').padEnd(side);
-		const g = i === arrowRow ? gutter : ' '.repeat(mid);
-		const r = rhs[i] ?? '';
-		out.push((l + g + r).replace(/\s+$/, ''));
-	}
-	return out;
-}
-
 /** A full-width ASCII rule, e.g. dashes between sections. */
 export function rule(ch = '-', cols = PRINT_COLS): string {
 	return ch.repeat(cols);
@@ -160,7 +137,7 @@ export function asciiSpread(values: number[], mine: number, cols = PRINT_COLS): 
  *  fused — so sections no longer need a separate full-width rule. */
 export function eyebrow(no: string, label: string, stat = '', cols = PRINT_COLS): string {
 	const left = `${no} ${label.toUpperCase()} `;
-	if (!stat) return (left);
+	if (!stat) return left;
 	const fill = Math.max(1, cols - left.length - 1 - stat.length);
 	return (left + ' '.repeat(fill) + ' ' + stat).slice(0, cols);
 }
@@ -195,50 +172,6 @@ export function panelRule(mid = '', cols = PRINT_COLS): string {
 	const total = Math.max(0, cols - t.length);
 	const l = Math.floor(total / 2);
 	return ('═'.repeat(l) + t + '═'.repeat(total - l)).slice(0, cols);
-}
-
-/** A colon-aligned key:value row: `LABEL    : value` (the "report" look). */
-export function kv(label: string, value: string, w = 9, cols = PRINT_COLS): string {
-	return (label.toUpperCase().padEnd(w) + ' : ' + value).slice(0, cols);
-}
-
-/** A drawn LPG canister, 5 lines tall (top, 3 body rows, bottom). Pair the 3 body
- *  rows with adjacent text in the caller. */
-export function canister(): string[] {
-	return ['┌──┐', '│██│', '│██│', '│██│', '└──┘'];
-}
-
-/** A titled, solid-filled footprint box (a plan-view "chunk of ground"): a centered
- *  title in the top border, `fillRows` of `█`, a bottom border. Each line `cols` wide. */
-export function footprintBox(title: string, fillRows = 3, cols = 34): string[] {
-	const inner = cols - 2;
-	const t = ` ${title.toUpperCase()} `;
-	const pad = Math.max(0, inner - t.length);
-	const l = Math.floor(pad / 2);
-	const top = '┌' + '─'.repeat(l) + t + '─'.repeat(pad - l) + '┐';
-	const fill = '│ ' + '█'.repeat(Math.max(0, cols - 4)) + ' │';
-	const bottom = '└' + '─'.repeat(inner) + '┘';
-	return [top, ...Array.from({ length: fillRows }, () => fill), bottom];
-}
-
-// Top-down car icon, 12 cols wide. Plain-ASCII glyphs only (print-safe on thermal).
-export function carFootprint(): string[] {
-	return [
-		'  00000000',
-		' 0        0',
-		'000000000000',
-		'00 000000 00',
-		'000000000000',
-		' 0        0'
-	];
-}
-
-/** A grouping rail (dispatch-form style): `┌ item / ├ item / └ item`. */
-export function treeList(items: string[]): string[] {
-	return items.map((it, i) => {
-		const lead = items.length === 1 ? '└' : i === 0 ? '┌' : i === items.length - 1 ? '└' : '├';
-		return `${lead} ${it}`;
-	});
 }
 
 /** Center text in a 24-char source field, so at width-2 magnification it spans the

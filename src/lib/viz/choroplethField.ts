@@ -1,17 +1,9 @@
-// The choropleth field: turns the server's normalised emissions grid (/api/emissions)
-// into a flat field of per-cell "months of life lost", and exposes the per-cell
-// colour + the per-neighbourhood aggregate numbers the wall draws.
-//
-// Three things move here, kept separate (cf. EmissionsField, which does the same for
-// the 3D towers):
-//   • growth — a slow eased lerp between successive poll snapshots, so cells drift
-//              to new values rather than snapping as commutes accumulate.
-//   • baseline — the diverging midpoint is the mean exposure of cells that carry any
-//                traffic, so a cell reads warm when it's worse than the typical
-//                travelled corridor and cool ("months given back") when it's better.
-//                Empty no-data cells stay transparent so the basemap shows through.
-//   • State B — a transient per-cell ignite glow (the submitted route's squares
-//               lighting up in sequence) and a recalculating sweep, layered on top.
+// The choropleth field: turns the server's normalised emissions grid (/api/emissions) into a
+// flat field of per-cell "months of life lost", and exposes the per-cell colour + the
+// per-neighbourhood aggregate numbers. Three things move, kept separate:
+//   • growth   — a slow eased lerp between poll snapshots, so cells drift to new values.
+//   • baseline — the resting ACAG ambient PM2.5 bed the commute layer adds onto.
+//   • State B  — a transient per-cell ignite glow (the route's squares) + a recalc sweep.
 
 import { easeInOutCubic } from './palette';
 import { monthsFromConcentration, Params } from './health';
@@ -31,8 +23,7 @@ export type HoodReading = { name: string; c: [number, number]; months: number };
 const GROW_S = 1.6; // snapshot cross-fade
 const EPS_MONTHS = 1e-3; // below this a cell carries no exposure (transparent base fill)
 
-// Ignite (State B): each route cell rises bright then HOLDS at full capacity until
-// the route is cleared (folded into the field on settle).
+// Ignite (State B): each route cell rises bright then HOLDS until the route is cleared.
 const IGNITE_RISE = 0.2; // s to full glow
 const IGNITE_PLATEAU = 0.92; // held brightness while the route is on screen
 
@@ -42,9 +33,8 @@ const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 export class ChoroplethField {
 	bounds: [number, number, number, number] = [0, 0, 0, 0];
 
-	// Field texture (rgba8, north row first) the FieldLayer shades on the GPU.
-	// `texVersion` bumps only when the bytes change, so deck re-uploads on real data
-	// changes — not every frame. Channels: R=hue t, G=intensity, B=ignite, A=mask.
+	// Field texture (rgba8, north row first). `texVersion` bumps only when the bytes change, so
+	// deck re-uploads on real changes, not every frame. Channels: R=hue t, G=intensity, B=ignite, A=mask.
 	private texBytes: Uint8Array = new Uint8Array(0);
 	private texImage: { width: number; height: number; data: Uint8Array } | null = null;
 	private texVersion = 0;
@@ -54,16 +44,14 @@ export class ChoroplethField {
 	private nLat = 0;
 	private nLon = 0;
 	private cellDeg = 0;
-	// Target µg/m³ our commute layer reaches at the busiest cell when calibration is
-	// frozen. After that, the layer COMPOUNDS: as more routes accumulate the absolute
-	// deposit grows past this, so corridors keep climbing over the run / the decade.
+	// Target µg/m³ our commute layer reaches at the busiest cell once calibration is frozen;
+	// after that the layer COMPOUNDS as routes accumulate, so corridors keep climbing.
 	private gain = Params.our_gain_per_year * Params.years;
 	private ourUnit = 0; // µg/m³ per unit of absolute deposit (frozen on first snapshot)
 	private ourUnitFrozen = false;
 
-	// Resting baseline concentration (µg/m³): `base` is resampled onto the CURRENT field
-	// grid, `baseRaw` keeps the baked source (with its own header) so the field can run at
-	// any cell size without re-baking baseline-grid.json.
+	// Resting baseline (µg/m³): `base` resampled onto the current grid, `baseRaw` the baked source
+	// (own header) so the field can run at any cell size without re-baking baseline-grid.json.
 	private base: number[] = [];
 	private baseRaw: {
 		nLat: number;
@@ -71,8 +59,8 @@ export class ChoroplethField {
 		bbox: [number, number, number, number];
 		values: number[];
 	} | null = null;
-	// Our accumulating commute layer — ABSOLUTE deposit (normalised × peak), lerped
-	// between snapshots so the field grows smoothly as commutes compound.
+	// Our accumulating commute layer — ABSOLUTE deposit (normalised × peak), lerped between
+	// snapshots so the field grows smoothly as commutes compound.
 	private ourPrev: number[] = [];
 	private ourTarget: number[] = [];
 	private serverAbs: number[] = []; // latest server deposit (without local extra)
@@ -81,8 +69,7 @@ export class ChoroplethField {
 	private growthStart = -1e9;
 	private has = false;
 
-	// Recalculation sweep (State B): an expanding ring of brightness from the new
-	// route, so the compounding recompute is visible.
+	// Recalc sweep (State B): an expanding ring of brightness from the new route.
 	private recStart = -1e9;
 	private recDur = 0;
 	private recOi = 0;
@@ -93,14 +80,11 @@ export class ChoroplethField {
 	private monthsNow: Float64Array = new Float64Array(0);
 	private baseMax = 0; // busiest active cell this frame — drives per-cell opacity
 	// Months attributable to the commute layer ALONE: Σ months(base+ours) − months(base).
-	// The marginal what-if over the ambient bed, for the headline figure.
 	private marginal = 0;
-	// Same marginal, but averaged over only the cells the commutes actually touch (deposit
-	// ≥ 1% of peak) — the per-affected-location figure, not diluted by the empty bbox.
+	// Same marginal, averaged over only the cells the commutes touch (deposit ≥ 1% of peak).
 	private marginalAffMonths = 0;
-	// Absolute WHO-anchored hue scale (months). Neutral (the diverging midpoint) sits at the
-	// city's cleanest ambient cell; the cool extreme is the WHO line (0 months). So no cell the
-	// city actually breathes ever renders cool — honest for a public-health wall. Computed once.
+	// Absolute WHO-anchored hue scale (months): neutral at the cleanest ambient cell, cool extreme
+	// = the WHO line (0 months), so no cell the city actually breathes renders cool. Computed once.
 	private anchorLo = 1; // months at the cleanest ambient cell → diverging neutral (t=0.5)
 	private anchorHi = 60; // months at the hottest expected cell → hottest red (t=1)
 	private nowS = 0;
@@ -127,8 +111,7 @@ export class ChoroplethField {
 		this.dimK = clamp01(k);
 	}
 
-	// The resting baseline concentration (µg/m³ per cell), from the ACAG annual-mean PM2.5
-	// grid baked to this grid. Set once; aligns to the same row-major lat(asc) order.
+	// The resting baseline (µg/m³ per cell) from the ACAG grid baked to this grid. Set once.
 	setBaseline(b: {
 		nLat: number;
 		nLon: number;
@@ -140,8 +123,8 @@ export class ChoroplethField {
 		this.texForce = true;
 	}
 
-	// Bilinearly resample the baked baseline onto the field's current grid, so it lines up
-	// at any cell size. No-op until both the baseline and a field snapshot are known.
+	// Bilinearly resample the baked baseline onto the current grid. No-op until both baseline and
+	// a field snapshot are known.
 	private resampleBaseline(): void {
 		const b = this.baseRaw;
 		if (!b || !this.has || this.nLat === 0 || this.nLon === 0) return;
@@ -173,9 +156,8 @@ export class ChoroplethField {
 		this.recomputeAnchors();
 	}
 
-	// Fix the absolute hue anchors from the baseline + commute gain (months, not µg). The
-	// neutral midpoint is the city's cleanest ambient cell; the hot end is the dirtiest
-	// ambient cell with the full commute peak on top.
+	// Fix the absolute hue anchors from the baseline + commute gain (months). Neutral = cleanest
+	// ambient cell; hot end = dirtiest ambient cell with the full commute peak on top.
 	private recomputeAnchors(): void {
 		if (this.base.length === 0) return;
 		const s = Params.base_scale;
@@ -190,10 +172,9 @@ export class ChoroplethField {
 		if (this.anchorHi <= this.anchorLo) this.anchorHi = this.anchorLo + 1;
 	}
 
-	// The most recent server snapshot of our accumulating commute field. We take the
-	// ABSOLUTE deposit (value × peak) so the layer compounds as routes pile up; the
-	// per-unit µg (`ourUnit`) is frozen on the first snapshot, so subsequent growth in
-	// the deposit reads as the corridors genuinely climbing rather than renormalising.
+	// The most recent server snapshot. Take the ABSOLUTE deposit (value × peak) so the layer
+	// compounds as routes pile up; `ourUnit` is frozen on the first snapshot so later growth reads
+	// as the corridors genuinely climbing rather than renormalising.
 	setSnapshot(raw: Field, now: number): void {
 		const abs = raw.values.map((v) => v * raw.rawMax);
 		if (!this.ourUnitFrozen && raw.rawMax > 0) {
@@ -239,10 +220,8 @@ export class ChoroplethField {
 		});
 	}
 
-	// One pass per frame: combine resting baseline + our decade-compounded commute
-	// increment into a concentration, convert to months, track the per-frame peak (for
-	// opacity) and the marginal commute months (for the headline). Hue uses fixed
-	// WHO-anchored anchors, so no live mean/span is needed.
+	// One pass per frame: combine baseline + the decade-compounded commute increment into a
+	// concentration, convert to months, and track the per-frame peak (opacity) + marginal months.
 	setFrame(now: number): void {
 		this.nowS = now;
 		if (!this.has) return;
@@ -274,9 +253,8 @@ export class ChoroplethField {
 		this.marginalAffMonths = affCount > 0 ? affMarginal / affCount : 0;
 	}
 
-	// Route cells rise to full brightness then HOLD (plateau) so the drawn line reads
-	// "full of capacity" through the hold, instead of flickering out immediately. The
-	// plateau ends when the route is cleared (the cells have folded into the field).
+	// Route cells rise to full then HOLD (plateau) so the line reads "full of capacity"; the
+	// plateau ends when the route is cleared.
 	private igniteGlow(idx: number): number {
 		const at = this.revealAt.get(idx);
 		if (at === undefined) return 0;
@@ -287,12 +265,9 @@ export class ChoroplethField {
 	}
 
 	// ── Field texture ──
-	// Bake the per-cell DATA the shader needs (hue / intensity / ignite / mask) into
-	// an rgba8 texture. Colour, opacity curve, the recalc pulse and dim all happen in
-	// the shader from uniforms — none of that is here. Cheap (one O(cells) pass), and
-	// only rebuilds when the field is actually moving, so a resting wall uploads nothing.
-	// Texture row 0 is NORTH (the FieldLayer's uv.y=0 is the top edge), while the field
-	// is row-major lat-ascending, so rows are flipped on the way in.
+	// Bake the per-cell DATA (hue/intensity/ignite/mask) into an rgba8 texture; colour, opacity,
+	// recalc and dim all happen in the shader. One O(cells) pass, rebuilt only while moving (a
+	// resting wall uploads nothing). Row 0 is NORTH, so rows are flipped on the way in.
 	fillTexture(): void {
 		if (!this.has) return;
 		const animating = this.nowS - this.growthStart < GROW_S || this.revealAt.size > 0;
@@ -337,8 +312,7 @@ export class ChoroplethField {
 		return this.texVersion;
 	}
 
-	// bbox width/height on screen (cos-lat corrected), so the shader can keep the pulse
-	// ring circular instead of stretched to the lattice's aspect.
+	// bbox width/height on screen (cos-lat corrected), so the shader keeps the pulse ring circular.
 	get aspect(): number {
 		const [lonMin, latMin, lonMax, latMax] = this.bounds;
 		const dLat = latMax - latMin || 1;
@@ -355,9 +329,8 @@ export class ChoroplethField {
 		return [this.nLon, this.nLat];
 	}
 
-	// The recalc route, resampled to `n` evenly-spaced points and projected to uv
-	// (north-flipped to match the texture), so the shader can radiate the pulse along the
-	// path's shape. Even spacing is measured in cos-lat-corrected degrees.
+	// The recalc route resampled to `n` evenly-spaced points and projected to uv (north-flipped),
+	// so the shader can radiate the pulse along the path's shape. Spacing measured in cos-lat degrees.
 	setRecalcPath(route: [number, number][], n = 8): void {
 		if (route.length < 2) {
 			this.recPath = [];
@@ -387,8 +360,8 @@ export class ChoroplethField {
 		this.recPath = out;
 	}
 
-	// Recalc as shader uniforms: origin in uv (fallback), the route as flattened uv points
-	// (the pulse radiates along it), times in the same clock as setFrame. dur=0 disables it.
+	// Recalc as shader uniforms: origin in uv (fallback), the route as flattened uv points, times
+	// in setFrame's clock. dur=0 disables it.
 	recalcUniforms(): { origin: [number, number]; start: number; dur: number; path: number[] } {
 		const u = this.nLon > 1 ? this.recOj / (this.nLon - 1) : 0.5;
 		const v = this.nLat > 1 ? (this.nLat - 1 - this.recOi) / (this.nLat - 1) : 0.5;
@@ -402,9 +375,8 @@ export class ChoroplethField {
 		return i * this.nLon + j;
 	}
 
-	// Permanently add a route's deposit to the local layer (used by the demo so a new
-	// route genuinely compounds; real submissions arrive via the server field). Re-lerps
-	// from the currently-displayed values so the corridors climb smoothly.
+	// Permanently add a route's deposit to the local layer (the demo so a new route compounds; real
+	// submissions arrive via the server field). Re-lerps from the displayed values so it climbs smoothly.
 	addRouteDeposit(cellIdxs: number[], now: number, strength = 0.9): void {
 		if (cellIdxs.length === 0 || this.extra.length === 0) return;
 		const g = easeInOutCubic(clamp01((now - this.growthStart) / GROW_S));
@@ -424,9 +396,7 @@ export class ChoroplethField {
 		this.recDur = dur;
 	}
 
-	// Per-neighbourhood number: the mean estimated months of life lost for a resident
-	// of that zone (average over its travelled cells). Always ≥ 0 in the default view;
-	// "given back" (negative) is produced by the what-if scenarios (later phase).
+	// Per-neighbourhood number: mean estimated months of life lost over its travelled cells.
 	hoodMonths(): HoodReading[] {
 		const out: HoodReading[] = [];
 		for (let k = 0; k < NEIGHBOURHOODS.length; k++) {
@@ -453,23 +423,18 @@ export class ChoroplethField {
 		return s;
 	}
 
-	// Months attributable to the submitted commutes alone (total air − ambient-only air),
-	// summed over the grid. The marginal what-if the wall headlines, not the city's full burden.
+	// Months attributable to the submitted commutes alone (total air − ambient-only air), summed.
 	marginalMonths(): number {
 		return this.marginal;
 	}
 
-	// Average added YEARS of life lost across the cells the commutes actually touch — the
-	// marginal what-if these journeys add on top of ambient air, for a typical location
-	// along the corridors rather than diluted across the empty bbox. The wall's headline.
+	// Average added YEARS of life lost across the cells the commutes touch — the wall's headline.
 	marginalYearsAdded(): number {
 		return this.marginalAffMonths / 12;
 	}
 
-	// The months this one route adds across its cells — the figure the recalc
-	// notification surfaces ("+N mo"). Synchronous and deterministic (doesn't wait on
-	// the server poll): the months gained if the route deposits its standard bump on top
-	// of the current field. Matches addRouteDeposit's `strength`, so demo and live agree.
+	// The months this one route adds across its cells (the "+N mo" the recalc card surfaces).
+	// Synchronous/deterministic; matches addRouteDeposit's `strength` so demo and live agree.
 	estimateRouteMonths(cellIdxs: number[], strength = 0.9): number {
 		if (!this.has || cellIdxs.length === 0) return 0;
 		const amt = strength * this.peakAbs;
@@ -489,20 +454,16 @@ export class ChoroplethField {
 		return sum;
 	}
 
-	// The µg/m³ this one route adds along its corridor — the figure the recalc card surfaces.
-	// The deposit bump (`strength × peakAbs`) is uniform across the route's cells, so this is a
-	// single representative concentration. Decade-compounded (gain already folds in `years`),
-	// matching how the wall frames everything; the card copy says "over 10 years".
+	// The µg/m³ this one route adds along its corridor (the recalc card figure). Uniform bump over
+	// its cells → one representative concentration; decade-compounded (gain folds in `years`).
 	estimateRouteUg(strength = 0.9): number {
 		if (!this.has) return 0;
 		return this.ourUnit * strength * this.peakAbs;
 	}
 
 	// ── State B: the submitted route's squares ──
-	// Rasterise a polyline onto the grid → ordered, de-duplicated cell indices. Bresenham per
-	// segment: one cell per step (8-connected), so the lit route is exactly ONE grid cell wide
-	// and snaps to the lattice — not the 2-cell-wide band that half-cell sampling + independent
-	// row/column rounding used to produce (which read fatter than the grid).
+	// Rasterise a polyline → ordered, de-duplicated cell indices. Bresenham per segment (one cell
+	// per step, 8-connected), so the lit route is exactly ONE grid cell wide and snaps to the lattice.
 	rasterizeRoute(coords: [number, number][]): number[] {
 		if (!this.has || coords.length < 2) return [];
 		const { nLat, nLon, cellDeg, bounds } = this;

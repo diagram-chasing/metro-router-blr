@@ -1,6 +1,5 @@
-// One requestAnimationFrame loop drives the whole scene. Animation is a function
-// of `t` (seconds), so per-frame work is just feeding uniforms — buffers only
-// rebuild when data actually changes.
+// One rAF loop drives the whole scene; animation is a function of `t` (seconds), so
+// per-frame work is just feeding uniforms — buffers rebuild only when data changes.
 
 export type Clock = {
 	start: () => void;
@@ -8,10 +7,9 @@ export type Clock = {
 };
 
 export type ClockOpts = {
-	// Wall watchdog: if the rAF loop stops advancing for longer than stallMs (GPU
-	// context loss, tab throttle, a thrown frame), onStall fires. A self-referential
-	// rAF can't detect its own stall, so an independent interval polls the last frame
-	// time. Off by default; the unattended wall sets onStall = () => location.reload().
+	// Wall watchdog: an independent interval polls the last frame time (a rAF can't detect its
+	// own stall) and fires onStall if the loop hasn't advanced in stallMs. Off by default; the
+	// unattended wall sets onStall = () => location.reload().
 	onStall?: () => void;
 	stallMs?: number;
 };

@@ -5,10 +5,19 @@
 	import 'maplibre-gl/dist/maplibre-gl.css';
 
 	import { loadDeck, type Deck } from '$lib/viz/deck';
-	import { ChoroplethField, type Field } from '$lib/viz/choroplethField';
+	import { ChoroplethField } from '$lib/viz/choroplethField';
 	import { buildFieldLayer, buildHoodLabels } from '$lib/viz/layers';
 	import { darkStyle, WALL_BG } from '$lib/viz/palette';
 	import { Params } from '$lib/viz/health';
+	import {
+		REST,
+		numParam as num,
+		flagParam as flag,
+		emissionsFieldUrl,
+		flattenSegments,
+		loadBaseline as loadFieldBaseline,
+		pollField as pollFieldSnapshot
+	} from '$lib/viz/wallField';
 	import type { HoodReading } from '$lib/viz/choroplethField';
 
 	// Static screenshot version of CollectiveMap: paints the resting field, ignites a
@@ -24,17 +33,7 @@
 	let map: maplibre.Map | undefined;
 	let overlay: InstanceType<Deck['MapboxOverlay']> | undefined;
 
-	const REST = { lng: 77.6199, lat: 12.9885, zoom: 11 };
 	const SETTLED = 100; // a `now` well past growth + ignite-rise, so the field reads fully settled
-
-	const num = (p: URLSearchParams, k: string, d: number) => {
-		const v = Number(p.get(k));
-		return isFinite(v) && v > 0 ? v : d;
-	};
-	const flag = (p: URLSearchParams, k: string, d: boolean) => {
-		const v = p.get(k);
-		return v === null ? d : v !== '0' && v !== 'false';
-	};
 
 	// A wandering commute through the centre, Catmull-Rom smoothed so the corridor curves
 	// like a real path rather than reading as a ruled diagonal. Control points are fractions
@@ -155,31 +154,10 @@
 			overlay = new deck.MapboxOverlay({ interleaved: true, layers: [] });
 			map.addControl(overlay as unknown as maplibre.IControl);
 
-			const fieldUrl = `/api/emissions?grid=raw&decay=1.2&cell=${cellDeg}`;
+			const fieldUrl = emissionsFieldUrl(cellDeg);
 
-			const loadBaseline = async () => {
-				try {
-					const res = await fetch('/baseline-grid.json');
-					const b = (await res.json()) as {
-						nLat: number;
-						nLon: number;
-						bbox: [number, number, number, number];
-						values: number[];
-					};
-					field.setBaseline(b);
-				} catch (err) {
-					console.warn('legend baseline load failed:', err);
-				}
-			};
-			const pollField = async () => {
-				try {
-					const res = await fetch(fieldUrl);
-					const raw = (await res.json()) as Field;
-					field.setSnapshot(raw, 0);
-				} catch (err) {
-					console.warn('legend field load failed:', err);
-				}
-			};
+			const loadBaseline = () => loadFieldBaseline(field, 'legend baseline');
+			const pollField = () => pollFieldSnapshot(field, fieldUrl, 0, 'legend field');
 
 			// Prefer a genuine submitted route (real road geometry reads natural); fall back to
 			// null so we draw a smoothed synthetic corridor instead.
@@ -191,8 +169,7 @@
 					};
 					let best: [number, number][] | null = null;
 					for (const l of lines) {
-						const pts: [number, number][] = [];
-						for (const s of l.segments) for (const c of s.coords) pts.push(c);
+						const pts = flattenSegments(l.segments);
 						if (pts.length >= 2 && (!best || pts.length > best.length)) best = pts;
 					}
 					return best;

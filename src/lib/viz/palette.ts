@@ -1,10 +1,6 @@
-// The aesthetic system for the wall projection: a dark MapLibre basemap, the
-// cool-clean → warm-dirty colour language shared by trails and the emissions
-// cloud, and the easing used for the counterfactual cross-fade.
-//
-// Encoding (one language everywhere): cool = clean, warm = dirty. Trail hue keys
-// off leg mode; the emissions cloud keys off normalised CO₂ intensity through the
-// same ramp, so a hot cab trail and the cloud it feeds glow the same colour.
+// Wall aesthetic: the dark MapLibre basemap, the cool-clean → warm-dirty colour ramps
+// shared by trails and the emissions cloud, and the easings. One encoding everywhere:
+// cool = clean, warm = dirty.
 
 import maplibre from 'maplibre-gl';
 
@@ -30,8 +26,7 @@ export function legColor(kind: LegKind): RGB {
 }
 
 // ── Emissions cloud ramp: normalised CO₂ (0..1) → glow colour ──
-// Deep indigo at the floor, through teal, into amber and a white-hot peak. Tuned
-// for additive blending on near-black: midtones read, overlaps bloom to white.
+// Indigo → teal → amber → white-hot peak; tuned for additive blending on near-black.
 const RAMP: { t: number; rgb: RGB }[] = [
 	{ t: 0.0, rgb: [12, 16, 48] },
 	{ t: 0.28, rgb: [26, 92, 150] },
@@ -41,12 +36,14 @@ const RAMP: { t: number; rgb: RGB }[] = [
 	{ t: 1.0, rgb: [255, 232, 228] }
 ];
 
-export function co2Ramp(t: number): RGB {
+// Sample a piecewise-linear colour ramp at t∈[0,1] (clamped). Shared by every ramp
+// below so the interpolation lives in one place.
+function sampleStops(stops: { t: number; rgb: RGB }[], t: number): RGB {
 	const x = Math.max(0, Math.min(1, t));
-	for (let i = 1; i < RAMP.length; i++) {
-		if (x <= RAMP[i].t) {
-			const a = RAMP[i - 1];
-			const b = RAMP[i];
+	for (let i = 1; i < stops.length; i++) {
+		if (x <= stops[i].t) {
+			const a = stops[i - 1];
+			const b = stops[i];
 			const f = (x - a.t) / (b.t - a.t || 1);
 			return [
 				Math.round(a.rgb[0] + (b.rgb[0] - a.rgb[0]) * f),
@@ -55,14 +52,16 @@ export function co2Ramp(t: number): RGB {
 			];
 		}
 	}
-	return RAMP[RAMP.length - 1].rgb;
+	return stops[stops.length - 1].rgb;
+}
+
+export function co2Ramp(t: number): RGB {
+	return sampleStops(RAMP, t);
 }
 
 // ── Diverging health ramp: signed months → colour ──
-// Blue = months given back (below the city average), a low-chroma neutral that
-// sits close to the dark basemap at the midpoint, warm amber→red = months lost
-// (above average). Used by the choropleth wall; semantically the opposite of the
-// sequential co2Ramp, so it gets its own stops.
+// Blue = months given back; neutral (near the basemap) at the midpoint; amber→red = months
+// lost. Used by the choropleth wall — opposite of the sequential co2Ramp, hence its own stops.
 export const DIVERGING: { t: number; rgb: RGB }[] = [
 	{ t: 0.0, rgb: [54, 150, 236] }, // strong blue — most given back
 	{ t: 0.3, rgb: [96, 172, 224] }, // soft blue
@@ -73,24 +72,9 @@ export const DIVERGING: { t: number; rgb: RGB }[] = [
 	{ t: 1.0, rgb: [255, 196, 168] } // hot, near white — worst
 ];
 
-// Sample the diverging ramp at t∈[0,1] (0.5 = neutral). Hue is driven this way by
-// the choropleth (self-scaled against the live field) so it always reads regardless
-// of the months calibration.
+// Sample the diverging ramp at t∈[0,1] (0.5 = neutral).
 export function divergingAt(t: number): RGB {
-	const x = Math.max(0, Math.min(1, t));
-	for (let i = 1; i < DIVERGING.length; i++) {
-		if (x <= DIVERGING[i].t) {
-			const a = DIVERGING[i - 1];
-			const b = DIVERGING[i];
-			const f = (x - a.t) / (b.t - a.t || 1);
-			return [
-				Math.round(a.rgb[0] + (b.rgb[0] - a.rgb[0]) * f),
-				Math.round(a.rgb[1] + (b.rgb[1] - a.rgb[1]) * f),
-				Math.round(a.rgb[2] + (b.rgb[2] - a.rgb[2]) * f)
-			];
-		}
-	}
-	return DIVERGING[DIVERGING.length - 1].rgb;
+	return sampleStops(DIVERGING, t);
 }
 
 // `months` is a signed deviation mapped across [-ceil, +ceil] (for fixed-scale uses).
@@ -98,10 +82,8 @@ export function divergingRamp(months: number, ceil = 12): RGB {
 	return divergingAt((months + ceil) / (2 * ceil));
 }
 
-// Emit `divergingAt` as a GLSL function so the field shader and the CPU agree on one
-// ramp. A chain of `mix(c, stop, linearstep(a,b,t))` reproduces piecewise-linear
-// interpolation exactly: each fully-open gate replaces the colour with the next stop,
-// the active segment's gate is the fraction. Pass any stop list to bake other ramps.
+// Emit a ramp as a GLSL function so the field shader and the CPU agree on one ramp. The
+// chained `mix(c, stop, clamp(...))` reproduces the piecewise-linear interpolation exactly.
 export function glslColorRamp(fnName: string, stops = DIVERGING): string {
 	const v3 = (rgb: RGB) =>
 		`vec3(${(rgb[0] / 255).toFixed(5)}, ${(rgb[1] / 255).toFixed(5)}, ${(rgb[2] / 255).toFixed(5)})`;
@@ -122,12 +104,8 @@ export const easeInOutCubic = (t: number): number =>
 export const easeOutCubic = (t: number): number => 1 - Math.pow(1 - t, 3);
 
 // ── Dark basemap ──
-// Same OpenFreeMap vector source as the exhibit/accumulation maps, restyled to a
-// near-black canvas with faint cool water and road context the glow sits over.
-
-// "mapscii" roads: round-capped lines with a zero-length dash → a dotted track,
-// echoing the receipt's 1-bit dot map (see receipt/viz/braille.ts). Dash gap is in
-// line-widths, so dot spacing scales with the road width across zoom.
+// "mapscii" roads: round-capped lines with a zero-length dash → a dotted track (echoing the
+// receipt's 1-bit dot map). Dash gap is in line-widths, so dot spacing scales with zoom.
 const roadLayer = (
 	id: string,
 	classes: string[],
@@ -180,11 +158,8 @@ const placeLayer = (
 	}
 });
 
-// Map-label font: IBM Plex Mono Medium, matching the receipt/legend monospace language.
-// MapLibre wants a self-hosted glyph stack — openfreemap only serves Noto — so this stack is
-// staged at static/fonts/IBM Plex Mono Medium/ (baked once with maplibre.org/font-maker); the
-// name must match that folder exactly. Needs PUBLIC_GLYPHS_URL pointed at the local /fonts
-// (dev included), else labels fall back/blank on the remote default.
+// Map-label font; the name must match static/fonts/IBM Plex Mono Medium/ exactly (a self-hosted
+// stack — openfreemap serves Noto only). Needs PUBLIC_GLYPHS_URL at the local /fonts or labels blank.
 const LABEL_FONT = 'IBM Plex Mono Medium';
 
 // Shared place-name labels: minor (suburb/neighbourhood) + major (city/town). The hood
@@ -215,8 +190,7 @@ const placeLabels = (): maplibre.LayerSpecification[] => [
 ];
 
 export function darkStyle(bg: string = WALL_BG): maplibre.StyleSpecification {
-	// Roads + place labels only — no water or greenery. The dotted street network as
-	// context under the field, with names for orientation.
+	// Roads + place labels only (no water/greenery): the dotted network as context under the field.
 	return {
 		version: 8,
 		name: 'Wall',
@@ -240,10 +214,8 @@ export function darkStyle(bg: string = WALL_BG): maplibre.StyleSpecification {
 }
 
 // ── Roads-only basemap (receipt aesthetic) ──
-// The wall basemap restyled to match the printed route-map (receipt/viz/RouteMap.svelte):
-// one uniform, evenly-dotted street network as faint ground — no water or greenery, and no
-// primary/secondary emphasis — echoing the receipt's flat 1-bit dot field. Place names are
-// kept for orientation (the hood figures sit beside them).
+// One uniform, evenly-dotted street network as faint ground — no water/greenery, no tiering —
+// matching the printed route-map's flat 1-bit dot field. Place names kept for orientation.
 export function roadsOnlyStyle(bg: string = WALL_BG): maplibre.StyleSpecification {
 	return {
 		version: 8,

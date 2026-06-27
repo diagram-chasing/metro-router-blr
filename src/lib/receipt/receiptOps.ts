@@ -14,7 +14,6 @@ import {
 	panelRow,
 	panelPair,
 	panelRule,
-	canister,
 	heroSrc,
 	asciiSpread,
 	asciiOdometer,
@@ -86,7 +85,7 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	gap();
 
 	// 02 your mode
-	eyebrowOp('Compared to today\'s audience?', view.modeRank.histogram ? `` : '');
+	eyebrowOp("Compared to today's audience?");
 	gap();
 	deck(view.modeRank.copy);
 
