@@ -29,16 +29,21 @@ export const WALL = {
 	// Dotted basemap — the road network (static/wall-roads.json) snapped to a metric grid (mapscii's
 	// trick: one dot per occupied cell → a clean dot-matrix) and drawn as live GPU dots, the receipt
 	// / mapscii 1-bit dot-field crisp at every zoom. Dots are sized in METRES so each fills its cell
-	// → adjacent cells touch → continuous dotted ROADS, not loose stipple. Two tiers give the city
-	// structure: bold arteries over a faint minor/service network. See $lib/viz/dottedBasemap.
+	// → adjacent cells touch → continuous dotted ROADS, not loose stipple. Secondary-and-above
+	// arteries only — one tier; the faint minor/service tier is off. See $lib/viz/dottedBasemap.
 	basemap: {
-		includeFaint: true, // draw the minor/service tier too — the dense network mapscii shows
+		includeFaint: false, // secondary-and-above only — no minor/service tier (faint bake is empty)
 		fillRatio: 0.12, // dot radius as a fraction of cell; ≥0.5 makes roads continuous, lower = dottier
 		minPx: 2, // floor so dots never vanish at the wide resting frame
 		maxPx: 400, // cap so deep zoom-ins don't blow the dots up into blobs
 		color: '#000000', // dot colour — black stencils the roads over the glowing heat below
 		major: { cellM: 90, restOpacity: 0.14, zoomOpacity: 0.95 }, // arteries: tighter grid, bolder
-		faint: { cellM: 70, restOpacity: 0.005, zoomOpacity: 0.1 } // minor/service: coarser, lighter
+		faint: { cellM: 70, restOpacity: 0.005, zoomOpacity: 0.1 }, // minor/service: coarser, lighter
+		// Water + greenery as dot-FIELDS (mapscii rasterises filled polygons to the same dot grid as
+		// the roads — see dottedBasemap.gridDotsFill). Coloured, sparse dots over the heat: lakes read
+		// blue, parks/woodland green. Denser grid for water so lakes fill in; greenery a touch sparser.
+		water: { cellM: 60, color: '#2f7fb0', restOpacity: 0.45, zoomOpacity: 0.85 },
+		green: { cellM: 75, color: '#3f8f5c', restOpacity: 0.3, zoomOpacity: 0.7 }
 	},
 
 	// Labels
@@ -47,7 +52,7 @@ export const WALL = {
 	// Field / technical
 	cell: 0.003, // grid resolution (deg)
 	blocky: 1, // heat super-cell size in data cells (1 = native ~330m cells; >1 chunks the field)
-	steps: 15, // posterize the heat into N discrete colour/opacity bands (0/<2 = continuous ramp)
+	steps: 25, // posterize the heat into N discrete colour/opacity bands (0/<2 = continuous ramp)
 	poll: 4000, // ms between server polls
 	decayKm: 1.2, // spatial smear radius
 

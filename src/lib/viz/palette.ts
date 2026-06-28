@@ -220,8 +220,10 @@ export function darkStyle(bg: string = WALL_BG): maplibre.StyleSpecification {
 }
 
 // ── Roads-only basemap (receipt aesthetic) ──
-// One uniform, evenly-dotted street network as faint ground — no water/greenery, no tiering —
-// matching the printed route-map's flat 1-bit dot field. Place names kept for orientation.
+// Secondary-and-above arteries as a faint dotted ground (no tertiary/minor/service), matching the
+// printed route-map's flat 1-bit field. Place names kept for orientation. (When wall-roads.json is
+// baked, CollectiveMap swaps the `roads` layer for live GPU dots and adds the water/green dot-
+// fields baked alongside it — see dottedBasemap.gridDotsFill; the labels here stay.)
 export function roadsOnlyStyle(bg: string = WALL_BG): maplibre.StyleSpecification {
 	return {
 		version: 8,
@@ -232,21 +234,10 @@ export function roadsOnlyStyle(bg: string = WALL_BG): maplibre.StyleSpecificatio
 		},
 		layers: [
 			{ id: 'background', type: 'background', paint: { 'background-color': bg } },
-			// Incidental tracks (service/path/track): kept on but very faint, so they only
-			// surface here and there without thickening the field. Drawn under the network.
-			roadLayer(
-				'roads-faint',
-				['service', 'path', 'track'],
-				[
-					[9, 0.7],
-					[16, 1.6]
-				],
-				0.18
-			),
-			// The street network at one weight/opacity → an even dotted field, not tiered.
+			// Secondary and above only — one weight/opacity → an even dotted field, not tiered.
 			roadLayer(
 				'roads',
-				['motorway', 'trunk', 'primary', 'secondary', 'tertiary', 'minor'],
+				['motorway', 'trunk', 'primary', 'secondary'],
 				[
 					[9, 0.9],
 					[16, 2.2]

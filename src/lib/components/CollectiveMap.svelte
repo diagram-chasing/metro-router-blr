@@ -9,7 +9,7 @@
 	import { ChoroplethField, type HoodReading } from '$lib/viz/choroplethField';
 	import { buildFieldLayer, buildHoodLabels, buildDotsLayer } from '$lib/viz/layers';
 	import { roadsOnlyStyle, easeInOutCubic, easeOutCubic, easeInOutSine } from '$lib/viz/palette';
-	import { loadWallRoads, gridDots, hexToRgb } from '$lib/viz/dottedBasemap';
+	import { loadWallRoads, gridDots, gridDotsFill, hexToRgb } from '$lib/viz/dottedBasemap';
 	import { WALL } from '$lib/config/wall';
 	import {
 		REST,
@@ -81,10 +81,16 @@
 		const restView = { center: [REST.lng, REST.lat] as [number, number], zoom: REST.zoom };
 
 		// Dotted basemap (the receipt / mapscii dot-field as live points). Grid-sampled once at boot
-		// into two tiers; the rAF loop rebuilds the layers each frame so opacity can bloom with zoom.
+		// into tiers; the rAF loop rebuilds the layers each frame so opacity can bloom with zoom.
+		// Roads are two tiers of black dots; water/green are coloured dot-FILLS of the baked polygons
+		// (mapscii rasterises filled polygons to the same dot grid — see dottedBasemap.gridDotsFill).
 		let majorDots: [number, number][] | null = null;
 		let faintDots: [number, number][] = [];
+		let waterDots: [number, number][] = [];
+		let greenDots: [number, number][] = [];
 		const dotColor = hexToRgb(WALL.basemap.color);
+		const waterColor = hexToRgb(WALL.basemap.water.color);
+		const greenColor = hexToRgb(WALL.basemap.green.color);
 		let dotsZ0 = REST.zoom; // zoom→opacity bloom range, fixed once the cover zoom is known
 		let dotsZ1 = REST.zoom + 1.3;
 
@@ -173,14 +179,18 @@
 				faintDots = WALL.basemap.includeFaint
 					? gridDots(wr.roadsFaint, wr.bbox, WALL.basemap.faint.cellM)
 					: [];
+				// Water + greenery: fill the baked polygons into the same dot grid (mapscii's dot-fill).
+				waterDots = wr.water ? gridDotsFill(wr.water, wr.bbox, WALL.basemap.water.cellM) : [];
+				greenDots = wr.green ? gridDotsFill(wr.green, wr.bbox, WALL.basemap.green.cellM) : [];
 				// Drop the vector tiers so the dotted points aren't doubled or zoom-dependent.
 				for (const id of ['roads', 'roads-faint']) if (map.getLayer(id)) map.removeLayer(id);
 			};
 			await addBasemap();
 
-			// The deck heat field is inserted just BELOW the place labels, so both it and the dotted
-			// points (also a deck layer, ordered after it) render under the labels; the dots composite
-			// on top of the heat and bloom in with the zoom-grade. Vector road layers are the fallback.
+			// The deck heat field is inserted just BELOW the place labels; the dotted basemap layers
+			// (water/green fills, then roads — also deck layers, ordered after it) render above the
+			// heat and under the labels, so the lakes/green belt and the roads composite on top of the
+			// heat and bloom in with the zoom-grade. Vector road layers are the fallback before a bake.
 			const fieldBeforeId = ['place-minor', 'place-major', 'roads-faint', 'roads'].find((id) =>
 				map!.getLayer(id)
 			);
@@ -630,28 +640,37 @@
 				}
 				if (heroOpacity !== hv) heroOpacity = hv; // skip 60fps no-op writes while hidden
 
-				// Dotted basemap tiers (if baked) sit above the heat, below the place labels: a faint
-				// minor/service network under bold arteries. Each dot's radius is metres (cell-filling,
-				// so roads stay continuous); opacity blooms with zoom — faint over the wide resting
-				// frame, firming up as the camera moves into a corridor.
+				// Dotted basemap tiers (if baked) sit above the heat, below the place labels. Bottom→top:
+				// the green then water dot-FILLS (coloured), then the black road dots (faint network under
+				// bold arteries). Each dot's radius is metres (cell-filling, so areas/roads stay
+				// continuous); opacity blooms with zoom — faint over the wide resting frame, firming up as
+				// the camera moves into a corridor.
 				const bm = WALL.basemap;
 				const bloom = (rest: number, zoom: number) =>
 					lerp(rest, zoom, clamp01((map!.getZoom() - dotsZ0) / (dotsZ1 - dotsZ0 || 1)));
-				const dotTier = (id: string, pts: [number, number][], cellM: number, o: { restOpacity: number; zoomOpacity: number }) =>
+				const dot = (
+					id: string,
+					pts: [number, number][],
+					cellM: number,
+					color: [number, number, number],
+					o: { restOpacity: number; zoomOpacity: number }
+				) =>
 					buildDotsLayer(deck, pts, {
 						id,
 						radiusM: cellM * bm.fillRatio,
 						minPx: bm.minPx,
 						maxPx: bm.maxPx,
-						color: dotColor,
+						color,
 						opacity: bloom(o.restOpacity, o.zoomOpacity),
-						beforeId: fieldBeforeId
+						beforeId: fieldBeforeId // above the heat, under the place labels
 					});
 				const dotLayers =
 					majorDots && fieldLayer
 						? [
-								...(faintDots.length ? [dotTier('dots-faint', faintDots, bm.faint.cellM, bm.faint)] : []),
-								dotTier('dots-major', majorDots, bm.major.cellM, bm.major)
+								...(greenDots.length ? [dot('dots-green', greenDots, bm.green.cellM, greenColor, bm.green)] : []),
+								...(waterDots.length ? [dot('dots-water', waterDots, bm.water.cellM, waterColor, bm.water)] : []),
+								...(faintDots.length ? [dot('dots-faint', faintDots, bm.faint.cellM, dotColor, bm.faint)] : []),
+								dot('dots-major', majorDots, bm.major.cellM, dotColor, bm.major)
 							]
 						: [];
 

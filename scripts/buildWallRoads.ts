@@ -7,8 +7,11 @@
 //
 //   pnpm wall-roads:build   →   static/wall-roads.json
 //
-// Two tiers: `roads` (major arteries, bold) and `roadsFaint` (minor + service, the faint
-// "appears sometimes" detail). Run once with network; commit the output.
+// Secondary and above only (motorway → secondary) baked into `roads`; tertiary/minor/service are
+// dropped so the wall shows just the arterial skeleton. `roadsFaint` is kept (empty) for the
+// consumer's shape. Also bakes the city's lakes (`water`) and greenery (`park` + select
+// `landcover`) as polygons, which CollectiveMap rasterises into dot-fields the same way as the
+// roads (mapscii draws filled polygons as dots). Run once with network; commit the output.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
@@ -19,13 +22,19 @@ import Pbf from 'pbf';
 const Z = 13; // minor (z12) + service (z13) are present here; few enough tiles to fetch
 const TILEJSON_URL = 'https://tiles.openfreemap.org/planet';
 const BBOX_PAD = 0.15; // grow the grid bbox so the resting "cover" overflow stays road-filled
-const ROAD_MAJOR = new Set(['motorway', 'trunk', 'primary', 'secondary', 'tertiary']);
-const ROAD_FAINT = new Set(['minor', 'service']); // residential + access; the faint tier
+const ROAD_MAJOR = new Set(['motorway', 'trunk', 'primary', 'secondary']); // secondary and above
+const ROAD_FAINT = new Set<string>(); // nothing below secondary — faint tier intentionally empty
+// Greenery landcover classes worth showing as a dot-field; parks come from the `park` layer (all of it).
+const GREEN_LANDCOVER = new Set(['wood', 'grass', 'scrub', 'wetland']);
 const SIMPLIFY_TOL = 0.00008; // ~9m in degrees — finer than the print extract, for the wall
+const AREA_TOL = 0.0002; // ~22m — coarser for area outlines; the dot grid is ~70–90m so fine edges are moot
+const MIN_AREA_M2 = 5000; // drop polygons smaller than ~70m² square — they'd yield ≤1 dot, just noise+bytes
 const COORD_DP = 6;
 
 type LngLat = [number, number];
 type Line = LngLat[];
+type Ring = LngLat[];
+type Poly = Ring[]; // [outer, ...holes]
 
 const lon2tile = (lon: number, z: number) => Math.floor(((lon + 180) / 360) * 2 ** z);
 const lat2tile = (lat: number, z: number) => {
@@ -131,6 +140,43 @@ function extractLines(
 	return out;
 }
 
+function extractPolys(
+	layer: VectorTile['layers'][string] | undefined,
+	x: number,
+	y: number,
+	z: number,
+	pass: (f: any) => boolean
+): Poly[] {
+	if (!layer) return [];
+	const out: Poly[] = [];
+	for (let i = 0; i < layer.length; i++) {
+		const f = layer.feature(i);
+		if (!pass(f)) continue;
+		const g = f.toGeoJSON(x, y, z).geometry;
+		if (g.type === 'Polygon') out.push(g.coordinates as Poly);
+		else if (g.type === 'MultiPolygon') for (const p of g.coordinates) out.push(p as Poly);
+	}
+	return out;
+}
+
+// Rough bbox area in m² (good enough at city scale) — used to prune sub-cell noise polygons.
+function polyAreaM2(poly: Poly): number {
+	let minX = Infinity;
+	let minY = Infinity;
+	let maxX = -Infinity;
+	let maxY = -Infinity;
+	for (const ring of poly)
+		for (const [x, y] of ring) {
+			if (x < minX) minX = x;
+			if (x > maxX) maxX = x;
+			if (y < minY) minY = y;
+			if (y > maxY) maxY = y;
+		}
+	if (!isFinite(minX)) return 0;
+	const kx = Math.cos((((minY + maxY) / 2) * Math.PI) / 180);
+	return (maxX - minX) * kx * 111320 * ((maxY - minY) * 111320);
+}
+
 async function main() {
 	const [minX, minY, maxX, maxY] = gridBbox();
 	const tx0 = lon2tile(minX, Z),
@@ -145,6 +191,8 @@ async function main() {
 	const url = await tileTemplate();
 	const roads: Line[] = [];
 	const roadsFaint: Line[] = [];
+	const water: Poly[] = [];
+	const green: Poly[] = [];
 	let done = 0;
 	for (let tx = tx0; tx <= tx1; tx++) {
 		for (let ty = ty0; ty <= ty1; ty++) {
@@ -159,6 +207,17 @@ async function main() {
 					roads.push(l);
 				for (const l of extractLines(t, tx, ty, Z, (f) => ROAD_FAINT.has(f.properties.class)))
 					roadsFaint.push(l);
+				// Lakes/reservoirs (whole `water` layer) and greenery (`park` layer + select landcover).
+				for (const p of extractPolys(tile.layers['water'], tx, ty, Z, () => true)) water.push(p);
+				for (const p of extractPolys(tile.layers['park'], tx, ty, Z, () => true)) green.push(p);
+				for (const p of extractPolys(
+					tile.layers['landcover'],
+					tx,
+					ty,
+					Z,
+					(f) => GREEN_LANDCOVER.has(f.properties.class)
+				))
+					green.push(p);
 			}
 			if (done % 10 === 0 || done === total) console.log(`  ${done}/${total} tiles`);
 		}
@@ -166,18 +225,25 @@ async function main() {
 
 	const simp = (lines: Line[]) =>
 		lines.map((l) => simplify(l, SIMPLIFY_TOL).map(round)).filter((l) => l.length >= 2);
+	// Simplify each ring, prune tiny sub-cell polygons (noise + bytes); rings need ≥4 pts to enclose area.
+	const simpPolys = (polys: Poly[]) =>
+		polys
+			.map((poly) => poly.map((ring) => simplify(ring, AREA_TOL).map(round)).filter((r) => r.length >= 4))
+			.filter((poly) => poly.length > 0 && polyAreaM2(poly) >= MIN_AREA_M2);
 	const out = {
 		z: Z,
 		bbox: [minX, minY, maxX, maxY],
 		roads: simp(roads),
-		roadsFaint: simp(roadsFaint)
+		roadsFaint: simp(roadsFaint),
+		water: simpPolys(water),
+		green: simpPolys(green)
 	};
 
 	const target = resolve('static/wall-roads.json');
 	writeFileSync(target, JSON.stringify(out), 'utf8');
 	const kb = (readFileSync(target).length / 1024).toFixed(0);
 	console.log(
-		`wall-roads: ${out.roads.length} major + ${out.roadsFaint.length} faint lines → ${target} (${kb} KB)`
+		`wall-roads: ${out.roads.length} major lines, ${out.water.length} water + ${out.green.length} green polys → ${target} (${kb} KB)`
 	);
 }
 
