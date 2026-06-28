@@ -8,7 +8,6 @@
 	import { ChoroplethField } from '$lib/viz/choroplethField';
 	import { buildFieldLayer, buildHoodLabels } from '$lib/viz/layers';
 	import { darkStyle, WALL_BG } from '$lib/viz/palette';
-	import { Params } from '$lib/viz/health';
 	import {
 		REST,
 		numParam as num,
@@ -111,9 +110,7 @@
 			const bg = p.get('bg') ?? WALL_BG;
 			const dpr = num(p, 'dpr', Math.min(2, window.devicePixelRatio || 1));
 			cellDeg = Math.min(0.02, Math.max(0.0015, num(p, 'cell', 0.003)));
-			const years = num(p, 'years', Params.years);
-			const gain = num(p, 'gain', Params.our_gain_per_year);
-			field.setGain(gain, years);
+			// gain/years/saturation are baked into the field from $lib/config/wall.ts
 			scaleW = num(p, 'scale', 1);
 
 			const showRoute = flag(p, 'route', true);

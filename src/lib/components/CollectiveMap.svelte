@@ -8,11 +8,10 @@
 	import { loadDeck, type Deck } from '$lib/viz/deck';
 	import { ChoroplethField, type HoodReading } from '$lib/viz/choroplethField';
 	import { buildFieldLayer, buildHoodLabels } from '$lib/viz/layers';
-	import { roadsOnlyStyle, WALL_BG, easeInOutCubic, easeOutCubic, easeInOutSine } from '$lib/viz/palette';
-	import { Params } from '$lib/viz/health';
+	import { roadsOnlyStyle, easeInOutCubic, easeOutCubic, easeInOutSine } from '$lib/viz/palette';
+	import { WALL } from '$lib/config/wall';
 	import {
 		REST,
-		numParam as num,
 		emissionsFieldUrl,
 		flattenSegments,
 		loadBaseline as loadFieldBaseline,
@@ -25,17 +24,16 @@
 	// Reactive overlay bits (everything else is imperative for perf).
 	let count = $state<number | null>(null);
 	let yearsLost = $state(0); // avg years of life added by commutes, over affected corridors
-	// Hero label brackets the number: top line, figure, bottom line. ?title= / ?subtitle=
-	// override on-site; pass either empty to drop that line.
-	let title = $state('YEARS OF LIFE LOST');
-	let subtitle = $state('FROM THESE COMMUTES');
-	let titleEvery = $state(40); // s between hero appearances; ?titleEvery= overrides
+	// Hero label brackets the number: top line, figure, bottom line. Empty drops that line.
+	let title = $state(WALL.title);
+	let subtitle = $state(WALL.subtitle);
+	let titleEvery = $state(WALL.titleEvery); // s between hero appearances
 	let heroOpacity = $state(0); // hero pulse opacity, driven from the rAF loop
 	let loading = $state(false); // true while the pre-reveal progress bar fills
 	let loadProgress = $state(0); // 0..1 fill of that bottom-edge bar
 	let queued = $state(0); // routes waiting their spotlight — surfaced as "+N others joined"
 	let activeTag = $state<string | undefined>(undefined); // O→D label of the route on screen
-	let scaleW = $state(1); // wall type scale (from ?scale=, derived on-site from viewing distance)
+	let scaleW = $state(WALL.scale); // wall type scale, for viewing distance
 
 	// Recalc readout — a large, minimal card in the top band (route + the grams of PM2.5 this
 	// journey deposits over a decade). Fixed position so it stays clear of the lit corridor and
@@ -50,31 +48,16 @@
 	let map: maplibre.Map | undefined;
 	let overlay: InstanceType<Deck['MapboxOverlay']> | undefined;
 
-	// Submit-animation phase durations (s). Paced long for a distant reader: the hold lets
-	// the lit corridor be read, and IDLE_REST lets the headline settle between routes.
-	const DUR: Record<string, number> = {
-		dim: 0.6,
-		reveal: 1.8,
-		hold: 4.6,
-		recalc: 2.4,
-		zoomBack: 1.4,
-		settle: 1.1
-	};
+	const DUR: Record<string, number> = WALL.dur;
 	const PHASES = ['dim', 'reveal', 'hold', 'recalc', 'zoomBack', 'settle'] as const;
-	const DIM_MIN = 0.3;
-	const IDLE_REST = 1.4; // s the resting field + headline hold before the next route fires
+	const DIM_MIN = WALL.dimMin;
+	const IDLE_REST = WALL.idleRest; // s the resting field + headline hold before the next route fires
 	const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 	const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
 
-	// "Loading" dwell (s) before a new route reveals — a thin bar fills the bottom edge while the
-	// route is "fetched", then the reveal runs. ?load= overrides.
-	const LOAD_DEFAULT = 20;
-
-	// Hero pulse window (s): a brief appearance, fixed regardless of the period (the gap), so a
-	// longer ?titleEvery= just widens the gap rather than making the title linger on screen.
-	const HERO_RISE = 0.8;
-	const HERO_HOLD = 4;
-	const HERO_FALL = 1.2;
+	const HERO_RISE = WALL.hero.rise;
+	const HERO_HOLD = WALL.hero.hold;
+	const HERO_FALL = WALL.hero.fall;
 
 	onMount(() => {
 		let disposed = false;
@@ -127,33 +110,18 @@
 		};
 
 		(async () => {
-			const p = new URLSearchParams(window.location.search);
-			const bg = p.get('bg') ?? WALL_BG;
-			const zoom = num(p, 'zoom', REST.zoom);
-			const pollMs = Math.max(1500, num(p, 'poll', 4000));
-			const dpr = num(p, 'dpr', Math.min(2, window.devicePixelRatio || 1));
-			cellDeg = Math.min(0.02, Math.max(0.0015, num(p, 'cell', 0.003)));
-			const years = num(p, 'years', Params.years);
-			// µg/m³ per year the commute layer ADDS at the peak corridor, on top of the real
-			// ACAG ambient baseline. Defaults to the calibrated Params value; ?gain= overrides.
-			const gain = num(p, 'gain', Params.our_gain_per_year);
-			field.setGain(gain, years);
-			scaleW = num(p, 'scale', 1); // wall type scale; set on-site from the viewing distance
-			title = p.get('title') ?? title; // top line; ?title=YEARS+OF+LIFE+LOST
-			subtitle = p.get('subtitle') ?? subtitle; // bottom line under the number
-			titleEvery = num(p, 'titleEvery', 40); // hero shows briefly once per this many seconds
-			const loadDur = num(p, 'load', LOAD_DEFAULT); // "loading" dwell before a route reveals
+			// All tuning lives in $lib/config/wall.ts — the field self-configures from it; nothing here
+			// reads the URL. (gain/years/saturation are read straight off WALL inside ChoroplethField.)
+			const bg = WALL.bg;
+			const zoom = REST.zoom;
+			const pollMs = WALL.poll;
+			const dpr = WALL.dpr || Math.min(2, window.devicePixelRatio || 1);
+			cellDeg = WALL.cell;
+			const loadDur = WALL.load;
 			const reduceMotion = window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false;
-			// Idle ambient-motion strength (?idle=): 1 = default, 0 = the old static look, >1 bolder.
-			// num() rejects 0 (it wants >0), so parse directly to keep 0 meaningful.
-			const idleRaw = Number(p.get('idle'));
-			const idleAmt = isFinite(idleRaw) && idleRaw >= 0 ? idleRaw : 1;
-			// Ambient camera drift strength (?drift=): 1 = default, 0 = the camera holds dead
-			// still at rest, >1 reaches deeper on the gentle zoom-ins. Parsed like ?idle= so 0
-			// stays meaningful (num() rejects 0).
-			const driftRaw = Number(p.get('drift'));
-			const driftAmt = isFinite(driftRaw) && driftRaw >= 0 ? driftRaw : 1;
-			const demo = p.get('demo') === '1';
+			const idleAmt = WALL.idle;
+			const driftAmt = WALL.drift;
+			const demo = WALL.demo;
 
 			const deck = await loadDeck();
 			if (disposed) return;
@@ -362,7 +330,7 @@
 			// any pan), so the only motion with headroom is the zoom-in — exactly the calm
 			// effect we want. Empty queue → idle persists → it wanders freely; once routes
 			// arrive, idle is brief and the spotlight takes over.
-			const AMBIENT = { glide: 22, hold: 4 }; // s per glide / s held at each framing
+			const AMBIENT = WALL.ambient; // s per glide / s held at each framing
 			let ambientNextAt = -1; // t the next glide may fire; <0 = not yet seeded
 			let ambientMove = 0; // glide counter; every 3rd breathes out to the full frame
 			const ambientEnabled = driftAmt > 0 && !reduceMotion;

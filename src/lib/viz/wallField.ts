@@ -1,4 +1,5 @@
 import type { ChoroplethField, Field } from './choroplethField';
+import { WALL } from '$lib/config/wall';
 
 // Resting camera: framed on the emissions-grid bbox once it's known.
 export const REST = { lng: 77.6199, lat: 12.9885, zoom: 11 };
@@ -18,7 +19,7 @@ export function flagParam(p: URLSearchParams, k: string, d: boolean): boolean {
 
 // The emissions-field endpoint for a given cell size (degrees).
 export function emissionsFieldUrl(cellDeg: number): string {
-	return `/api/emissions?grid=raw&decay=1.2&cell=${cellDeg}`;
+	return `/api/emissions?grid=raw&decay=${WALL.decayKm}&cell=${cellDeg}`;
 }
 
 // Flatten a line's per-segment coords into one ordered point list.

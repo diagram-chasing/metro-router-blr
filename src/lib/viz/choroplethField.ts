@@ -7,6 +7,7 @@
 
 import { easeInOutCubic } from './palette';
 import { monthsFromConcentration, Params } from './health';
+import { WALL } from '$lib/config/wall';
 import { NEIGHBOURHOODS } from '$lib/config/neighbourhoods';
 import { haversineKm, pm25GramsOverYears } from '$lib/emissions';
 
@@ -16,6 +17,7 @@ export type Field = {
 	bbox: [number, number, number, number]; // [lonMin, latMin, lonMax, latMax]
 	values: number[]; // row-major lat(asc) × lon(asc), normalised 0..1
 	rawMax: number;
+	refDeposit?: number; // deposit of one reference commute — the absolute scale unit
 };
 
 export type HoodReading = { name: string; c: [number, number]; months: number };
@@ -44,11 +46,13 @@ export class ChoroplethField {
 	private nLat = 0;
 	private nLon = 0;
 	private cellDeg = 0;
-	// Target µg/m³ our commute layer reaches at the busiest cell once calibration is frozen;
-	// after that the layer COMPOUNDS as routes accumulate, so corridors keep climbing.
-	private gain = Params.our_gain_per_year * Params.years;
-	private ourUnit = 0; // µg/m³ per unit of absolute deposit (frozen on first snapshot)
-	private ourUnitFrozen = false;
+	// µg/m³ that one reference *level* of commuting (saturationRoutes commutes) adds at a corridor —
+	// the palette's red point (gainPerYear × years). Busier corridors exceed it: the colour caps at
+	// red, the reported µg/years keep climbing.
+	private gain = WALL.gainPerYear * WALL.years;
+	private ourUnit = 0; // µg/m³ per unit of absolute deposit (set from the reference-commute scale)
+	private refDeposit = 1; // deposit units of one reference commute — the per-route + scale unit
+	private satRoutes = WALL.saturationRoutes; // overlapping commutes that saturate a corridor
 
 	// Resting baseline (µg/m³): `base` resampled onto the current grid, `baseRaw` the baked source
 	// (own header) so the field can run at any cell size without re-baking baseline-grid.json.
@@ -65,7 +69,7 @@ export class ChoroplethField {
 	private ourTarget: number[] = [];
 	private serverAbs: number[] = []; // latest server deposit (without local extra)
 	private extra: number[] = []; // persistent local deposit (demo routes) — compounds
-	private peakAbs = 1; // busiest server cell — the unit a route bump is measured in
+	private peakAbs = 1; // busiest server cell this snapshot — only the "affected cells" threshold
 	private growthStart = -1e9;
 	private has = false;
 
@@ -106,12 +110,6 @@ export class ChoroplethField {
 
 	get ready(): boolean {
 		return this.has;
-	}
-
-	// µg/m³ our commute layer adds at the busiest cell (per-year × years).
-	setGain(perYear: number, years: number): void {
-		if (perYear > 0) this.gain = perYear * years;
-		this.recomputeAnchors();
 	}
 
 	setDim(k: number): void {
@@ -189,10 +187,15 @@ export class ChoroplethField {
 			return;
 		}
 		const abs = raw.values.map((v) => v * raw.rawMax);
-		if (!this.ourUnitFrozen && raw.rawMax > 0) {
-			this.ourUnit = this.gain / raw.rawMax; // current peak → `gain` µg; future peaks exceed it
-			this.ourUnitFrozen = true;
-		}
+		// Absolute, load-independent calibration: a FIXED linear coefficient (µg/m³ per unit of
+		// deposit), pinned to a stable reference commute (refDeposit, computed server-side) — never to
+		// the live peak, which made early entries balloon then snap back on reload. One reference
+		// commute adds gain/saturation_routes µg at its corridor; concentration then scales LINEARLY
+		// with real cumulative traffic — 2× the commutes is 2× the µg, uncapped. A corridor reaches the
+		// palette's red point (`gain`) at ~saturation_routes commutes and keeps climbing honestly past
+		// it: the hue saturates at red (a colour limit), but the µg/years it reports do not.
+		this.refDeposit = raw.refDeposit && raw.refDeposit > 0 ? raw.refDeposit : Math.max(1, raw.rawMax);
+		this.ourUnit = this.gain / Math.max(this.satRoutes * this.refDeposit, 1);
 		this.serverAbs = abs;
 		this.peakAbs = Math.max(1, raw.rawMax);
 		if (this.extra.length !== abs.length) this.extra = new Array(abs.length).fill(0);
@@ -392,7 +395,7 @@ export class ChoroplethField {
 	// smoothly. `emissionScale` (0..1) scales the bump by the route's PM2.5 vs the dirtiest mode, so
 	// a metro route (scale 0) adds nothing — no spurious bright thread — and a car adds the most.
 	addRouteDeposit(cellIdxs: number[], now: number, strength = 0.9, emissionScale = 1): void {
-		const amt = strength * this.peakAbs * clamp01(emissionScale);
+		const amt = strength * this.refDeposit * clamp01(emissionScale);
 		if (amt <= 0 || cellIdxs.length === 0 || this.extra.length === 0) return;
 		const g = easeInOutCubic(clamp01((now - this.growthStart) / GROW_S));
 		this.ourPrev = this.ourTarget.map((v, i) => lerp(this.ourPrev[i] ?? 0, v, g));
@@ -452,7 +455,7 @@ export class ChoroplethField {
 	// live agree (a metro route, scale 0, adds 0 months).
 	estimateRouteMonths(cellIdxs: number[], strength = 0.9, emissionScale = 1): number {
 		if (!this.has || cellIdxs.length === 0) return 0;
-		const amt = strength * this.peakAbs * clamp01(emissionScale);
+		const amt = strength * this.refDeposit * clamp01(emissionScale);
 		const baseScale = Params.base_scale;
 		const useBase = this.base.length === this.monthsNow.length;
 		const seen = new Set<number>();
@@ -470,10 +473,10 @@ export class ChoroplethField {
 	}
 
 	// Grams of PM2.5 this one commute deposits over the decade — the recalc card's tangible figure:
-	// the route's blended per-pkm PM2.5 factor × its km × trips/year × Params.years. 0 for a
+	// the route's blended per-pkm PM2.5 factor × its km × trips/year × WALL.years. 0 for a
 	// metro/walk commute (zero tailpipe).
 	estimateRouteGrams(km: number, tripsPerYear: number, gPerPkm: number): number {
-		return pm25GramsOverYears(gPerPkm, km, tripsPerYear, Params.years);
+		return pm25GramsOverYears(gPerPkm, km, tripsPerYear, WALL.years);
 	}
 
 	// ── State B: the submitted route's squares ──

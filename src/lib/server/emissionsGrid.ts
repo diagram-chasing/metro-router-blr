@@ -52,6 +52,12 @@ const KM_PER_DEG_LAT = 111.32;
 const DEFAULT_DECAY_KM = 1.2;
 const FALLBACK_TRIPS_PER_YEAR = 288; // legacy rows with NULL trips_per_year
 
+// Reference commute the wall calibrates against: one fresh 8 km daily car commute. Its peak deposit
+// is the ABSOLUTE scale unit, so the field no longer depends on whatever happened to be loaded first
+// (which made early entries balloon then snap back on reload). Only the cell size / kernel move it.
+const REF_TRIPS_PER_YEAR = 480; // daily commuter
+const REF_LEN_KM = 8;
+
 // Slow rolling decay: a route's contribution halves every HALF_LIFE_DAYS, so the field
 // stays "live" and bounded over a long exhibition run instead of accreting to all-red.
 // Operators can still hard-reset via /api/admin purge; this just keeps it legible untouched.
@@ -79,6 +85,7 @@ export type Field = {
 	bbox: [number, number, number, number]; // [lonMin, latMin, lonMax, latMax]
 	values: number[]; // row-major lat(asc) × lon(asc), normalised 0..1
 	rawMax: number; // pre-normalisation peak of the deposit (for reference)
+	refDeposit: number; // peak deposit of ONE reference commute — the wall's absolute scale unit
 };
 
 function factorFor(kind: LineRow['segments'][number]['legKind']): number {
@@ -193,6 +200,28 @@ function robustPeak(grid: Float64Array): number {
 	return nz[Math.min(nz.length - 1, Math.floor(nz.length * SATURATION_PCTL))];
 }
 
+// Peak deposit of one fresh reference commute, stamped through the grid centre exactly as a real
+// route is (same depositLine/stamp), so it tracks any change to the kernel or spacing. The wall
+// divides by (saturation_routes × this) to fix its scale — independent of how much data exists.
+function referenceDeposit(g: Grid, decayKm: number): number {
+	const grid = new Float64Array(g.nLat * g.nLon);
+	const cLat = (g.latMin + g.latMax) / 2;
+	const cLon = (g.lonMin + g.lonMax) / 2;
+	const halfDeg = REF_LEN_KM / 2 / KM_PER_DEG_LAT;
+	const coords: [number, number][] = [
+		[cLon, cLat - halfDeg],
+		[cLon, cLat + halfDeg]
+	];
+	const line = {
+		tripsPerYear: REF_TRIPS_PER_YEAR,
+		segments: [{ legKind: 'cab', coords }]
+	} as unknown as LineRow;
+	depositLine(grid, g, line, 'raw', decayKm, DEFAULT_CF_SHIFT, 1);
+	let peak = 0;
+	for (const v of grid) if (v > peak) peak = v;
+	return peak;
+}
+
 export function buildField(opts: FieldOpts): Field {
 	const { type, decayKm = DEFAULT_DECAY_KM, shift = DEFAULT_CF_SHIFT, cell = CELL } = opts;
 	const g = makeGrid(cell);
@@ -220,6 +249,7 @@ export function buildField(opts: FieldOpts): Field {
 		nLon: g.nLon,
 		bbox: [g.lonMin, g.latMin, g.lonMax, g.latMax],
 		values,
-		rawMax: denom
+		rawMax: denom,
+		refDeposit: referenceDeposit(g, decayKm)
 	};
 }
