@@ -175,7 +175,7 @@
 						source: id,
 						layout: { 'line-cap': 'round', 'line-join': 'round' },
 						paint: {
-							'line-color': '#5a7798',
+							'line-color': '#000000',
 							'line-width': ['interpolate', ['linear'], ['zoom'], w[0], w[1], w[2], w[3]],
 							'line-dasharray': [0, 2.2],
 							'line-opacity': opacity
@@ -195,6 +195,19 @@
 				}
 			};
 			await addBakedRoads();
+
+			// The deck heat field is inserted just BELOW the bottom-most basemap context layer, so
+			// the dotted roads and place labels render on top of the heat and bloom in with the
+			// zoom-grade ramp below — rather than sitting under the field where the heat washes them
+			// out. Bottom-most existing of the baked tiers, the vector fallback, or the labels.
+			const fieldBeforeId = [
+				'wall-roads-faint',
+				'roads-faint',
+				'wall-roads',
+				'roads',
+				'place-minor',
+				'place-major'
+			].find((id) => map!.getLayer(id));
 
 			const fieldUrl = emissionsFieldUrl(cellDeg);
 
@@ -447,7 +460,7 @@
 				// Continuous `t` (not quantised) → smooth shader animation; the texture itself
 				// only re-uploads when fillTexture bumped its identity.
 				const fieldLayer = field.ready
-					? buildFieldLayer(deck, field, { time: t, idle: idleAmt })
+					? buildFieldLayer(deck, field, { time: t, idle: idleAmt, beforeId: fieldBeforeId })
 					: null;
 
 				// Route card: fades in as the camera zooms to the route, holds through the featured
@@ -548,24 +561,26 @@
 				restView.center = map.getCenter().toArray() as [number, number];
 				restView.zoom = map.getZoom();
 
-				// Reward the zoom-ins: the whole street network is baked at one flat opacity, so
-				// the residential tier reads as a faint wash and stays that way however far we
-				// move in. Grade it by zoom instead — hold the wide resting frame clean, then
-				// bloom road + neighbourhood-label presence over the next ~1.3 zoom levels so a
-				// zoom-in surfaces the side streets and place names. Keyed to the runtime cover
-				// zoom (only known now). Faint tier gains the most; arteries and the city name
-				// just firm up. easeTo's zoom interpolation drives this for free, both ways.
+				// Reward the zoom-ins. Now that roads + labels composite ON TOP of the heat (the
+				// field's beforeId puts it underneath), grade their opacity by zoom so the wide
+				// resting frame is near-pure heat and the basemap detail blooms in over it as the
+				// drift moves in — the city's streets and place names fading up out of the field
+				// in the area we approach, then fading back out as it pulls away. Keyed to the
+				// runtime cover zoom (only known now); easeTo's zoom interpolation drives the fade
+				// for free, both ways. Faint streets + neighbourhood names gain the most (a clean
+				// reveal); arteries and the city name keep a whisper at rest so the frame isn't bare.
 				const z0 = restView.zoom;
 				const z1 = restView.zoom + 1.3;
 				const ramp = (a: number, b: number) => ['interpolate', ['linear'], ['zoom'], z0, a, z1, b];
 				const grade = (id: string, prop: string, a: number, b: number) => {
 					if (map!.getLayer(id)) map!.setPaintProperty(id, prop, ramp(a, b));
 				};
-				grade('wall-roads-faint', 'line-opacity', 0.18, 0.55); // baked residential/service
-				grade('wall-roads', 'line-opacity', 0.6, 0.88); // baked arteries
-				grade('roads-faint', 'line-opacity', 0.18, 0.55); // vector fallback (no bake)
-				grade('roads', 'line-opacity', 0.6, 0.9); // vector fallback (no bake)
-				grade('place-minor', 'text-opacity', 0.85, 1); // neighbourhood names firm up
+				grade('wall-roads-faint', 'line-opacity', 0.08, 0.6); // baked residential/service
+				grade('wall-roads', 'line-opacity', 0.4, 0.9); // baked arteries
+				grade('roads-faint', 'line-opacity', 0.08, 0.6); // vector fallback (no bake)
+				grade('roads', 'line-opacity', 0.4, 0.9); // vector fallback (no bake)
+				grade('place-minor', 'text-opacity', 0.0, 1.0); // neighbourhood names reveal on zoom
+				grade('place-major', 'text-opacity', 0.5, 1.0); // city/town names firm up
 
 				// Never show beyond the grid: clamp every camera move (incl. edge-route easeTo) to the
 				// grid bbox, so framing a corridor near the border can't reveal the bare basemap around it.

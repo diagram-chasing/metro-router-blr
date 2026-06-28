@@ -123,7 +123,7 @@ const roadLayer = (
 	filter: ['in', 'class', ...classes],
 	layout: { 'line-cap': 'round', 'line-join': 'round' },
 	paint: {
-		'line-color': '#5a7798',
+		'line-color': '#000000',
 		'line-width': ['interpolate', ['linear'], ['zoom'], ...w.flat()],
 		'line-dasharray': [0, 2.2],
 		'line-opacity': opacity
@@ -155,9 +155,11 @@ const placeLayer = (
 	},
 	paint: {
 		'text-color': color,
+		// Stronger dark halo: labels now composite over the heat (incl. bright corridors), so they
+		// need a heavier outline to stay legible against it than they did beneath it.
 		'text-halo-color': '#04060c',
-		'text-halo-width': 1.4,
-		'text-halo-blur': 0.4,
+		'text-halo-width': 1.8,
+		'text-halo-blur': 0.5,
 		'text-opacity': opacity
 	}
 });

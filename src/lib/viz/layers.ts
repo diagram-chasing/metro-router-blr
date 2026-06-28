@@ -11,7 +11,7 @@ type FieldLayerInstance = InstanceType<Deck['FieldLayer']>;
 export function buildFieldLayer(
 	deck: Deck,
 	field: ChoroplethField,
-	opts: { time: number; idle?: number; smooth?: boolean }
+	opts: { time: number; idle?: number; smooth?: boolean; beforeId?: string }
 ): FieldLayerInstance | null {
 	const fieldData = field.textureImage();
 	if (!fieldData) return null;
@@ -20,6 +20,9 @@ export function buildFieldLayer(
 	const pt = (i: number): [number, number] => [path[i * 2] ?? 0, path[i * 2 + 1] ?? 0];
 	const props = {
 		id: 'field',
+		// Interleaved z-order: insert the heat BELOW the basemap roads + place labels, so they
+		// composite on top of it (and fade in with zoom) instead of being washed out beneath it.
+		beforeId: opts.beforeId,
 		fieldData, // raw rgba8 the layer uploads to its own texture (ref-stable until changed)
 		bounds: field.bounds, // [lonMin, latMin, lonMax, latMax] — drives the quad mesh
 		smooth: opts.smooth === true, // default blocky (crisp cells); opt in to bilinear
