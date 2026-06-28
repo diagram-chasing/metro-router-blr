@@ -179,7 +179,7 @@ const placeLabels = (): maplibre.LayerSpecification[] => [
 			[10, 9],
 			[14, 13]
 		],
-		'#9fb1c8',
+		'#e8e8e8', // neutral near-white (no blue tint); a touch dimmer than the major tier
 		0.85
 	),
 	placeLayer(
@@ -190,7 +190,7 @@ const placeLabels = (): maplibre.LayerSpecification[] => [
 			[9, 12],
 			[14, 18]
 		],
-		'#d7e4f5',
+		'#ffffff', // neutral white
 		0.95
 	)
 ];
