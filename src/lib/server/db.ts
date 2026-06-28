@@ -23,7 +23,7 @@ let db: Database.Database | null = null;
 
 function getDb(): Database.Database {
 	if (db) return db;
-	const dir = path.resolve('data');
+	const dir = path.resolve(process.env.EXHIBIT_DATA_DIR ?? 'data');
 	if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
 	const handle = new Database(path.join(dir, 'exhibit.db'));
 	handle.pragma('journal_mode = WAL');
