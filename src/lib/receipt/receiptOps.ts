@@ -221,10 +221,10 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	deck(
 		`The city keeps adding more everyday. The more we add, the more crowded and expensive the city gets for everyone.`
 	);
-	if (view.counter.cityCount != null) {
+	if (view.counter.carsToday > 0) {
 		gap();
 		T(`cars Bangalore has added today, as of ${view.meta.timeLabel}`, { align: 'center' });
-		asciiOdometer(view.counter.cityCount).forEach((l) => T(l, { align: 'center' }));
+		asciiOdometer(view.counter.carsToday).forEach((l) => T(l, { align: 'center' }));
 		// T('each one needs somewhere to park', { align: 'center' });
 	}
 	gap();

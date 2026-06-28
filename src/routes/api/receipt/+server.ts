@@ -10,7 +10,7 @@ import type { RequestHandler } from '@sveltejs/kit';
 import type { Answers, Mode } from '$lib/exhibit/types';
 import { routeEmissions, legKindToMode, lengthKm } from '$lib/emissions';
 import { computeReceipt, distanceBand } from '$lib/receipt/receipt';
-import { allTripStats, insertLine, stats, allPerKmStats } from '$lib/server/db';
+import { allTripStats, insertLine, allPerKmStats } from '$lib/server/db';
 import { reverseGeocodeArea } from '$lib/server/reverseGeocode';
 import { getReceipt, putReceipt, type GeoSnapshot } from '$lib/server/receiptStore';
 import { swapSuggestion } from '$lib/utils/otp';
@@ -80,6 +80,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
 			co2PerKmG: e.gPerKm,
 			greyBucket: e.bucket,
 			tripsPerYear: computed.tripsPerYear,
+			corridorPeoplePerDay: computed.corridor.peoplePerDay,
 			segments: a.route.segments
 		});
 	}
@@ -159,9 +160,6 @@ export const GET: RequestHandler = async ({ url }) => {
 		};
 	}
 
-	// Live odometer for beat 9: how many trips have been registered so far.
-	const cityCount = stats().count;
-
 	// Histogram (beat 2): per-km dirtiness of everyone who has submitted so far, and
 	// where this visitor lands on it. Per-km so distance doesn't confound the spread.
 	// The marker is the visitor's HABIT (computed.perTripKg, Q1) — matching the beat's
@@ -176,7 +174,7 @@ export const GET: RequestHandler = async ({ url }) => {
 			? { values: allPerKm, mine: Math.round(minePerKm * 10) / 10, n: allPerKm.length }
 			: undefined;
 
-	return json({ ...rec, distribution, cityCount, histogram }, 200, {
+	return json({ ...rec, distribution, histogram }, 200, {
 		'Cache-Control': 'no-store'
 	});
 };

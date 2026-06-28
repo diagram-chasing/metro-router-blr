@@ -12,7 +12,6 @@
 	type ReceiptResponse = StoredReceipt & {
 		distribution?: Distribution;
 		histogram?: Histogram;
-		cityCount?: number;
 	};
 
 	let loading = $state(true);
@@ -30,7 +29,6 @@
 					receipt.geo,
 					receipt.distribution,
 					receipt.histogram,
-					receipt.cityCount ?? null,
 					receipt.id,
 					receipt.createdAt
 				)

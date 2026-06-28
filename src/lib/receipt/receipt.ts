@@ -1,4 +1,5 @@
 import {
+	CORRIDOR_SHARE,
 	MODE_CO2E_G_PER_PKM,
 	MODE_LABEL,
 	firstLastMileKm,
@@ -11,6 +12,7 @@ import type { GeoSnapshot } from '$lib/server/receiptStore';
 import { assignArchetype, archetypeBasis } from './archetype';
 import { estimateCorridorTraffic } from './corridorTraffic';
 import { landValueAtPoint } from './landValue';
+import { carsAddedToday } from './carsAdded';
 
 export type ComputedReceipt = {
 	// Inputs echoed back in readable form
@@ -184,7 +186,8 @@ export type ReceiptView = {
 		// darkness (0..1) the overall ink — dirtier commutes print a darker seal.
 		figure: { n: number; m: number; darkness: number };
 	};
-	counter: { cityCount: number | null };
+	// Estimated cars registered across Bangalore so far today, by the receipt's time.
+	counter: { carsToday: number };
 	parking: { areaM2: number; valueLabel: string; copy: string };
 	finePrint: { psCopy: string; disclaimer: string; barcodeSeed: string };
 };
@@ -226,16 +229,8 @@ const KG_CO2_PER_LPG_CYLINDER = 42;
 // from this list, so the verdict copy reads "{tot} ways" automatically.
 const ALL_MODES: Mode[] = ['car', 'auto', 'metro', 'two_wheeler', 'bus', 'active'];
 
-// Modeled corridor mode-share for a typical Bengaluru arterial (beat 4). These
-// are an illustrative split, NOT measured counts for the visitor's exact road —
-// the receipt flags the corridor numbers as a model. Shares must sum to 1.
-const CORRIDOR_SHARE: Record<string, number> = {
-	bus: 0.38,
-	two_wheeler: 0.26,
-	car: 0.19, // car + cab merged (was 0.12 + 0.07)
-	auto: 0.12,
-	metro: 0.05
-};
+// Modeled corridor mode-share for a typical Bengaluru arterial (beat 4) now lives in $lib/emissions
+// as CORRIDOR_SHARE (single source — the wall's represented-traffic model reads the same split).
 const CORRIDOR_KEY_LABEL: Record<string, string> = {
 	bus: 'bus',
 	two_wheeler: '2wh',
@@ -1038,7 +1033,6 @@ export function buildReceiptView(
 	geo: GeoSnapshot | undefined,
 	dist: Distribution | undefined,
 	hist: Histogram | undefined,
-	cityCount: number | null,
 	id: string,
 	createdAt: number
 ): ReceiptView {
@@ -1167,7 +1161,7 @@ export function buildReceiptView(
 			basis: archetypeBasis(c, id),
 			figure: { n: figN, m: figM, darkness: dirtiness }
 		},
-		counter: { cityCount },
+		counter: { carsToday: carsAddedToday(createdAt) },
 		parking: {
 			areaM2: c.parking.areaM2,
 			valueLabel: rupeesLakh(c.parking.rupees),

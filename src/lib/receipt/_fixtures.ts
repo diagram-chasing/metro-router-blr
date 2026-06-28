@@ -163,9 +163,9 @@ function makeData(
 	state: DataState,
 	mine: number,
 	perTripKg: number
-): { hist: Histogram | undefined; dist: Distribution | undefined; cityCount: number | null } {
+): { hist: Histogram | undefined; dist: Distribution | undefined } {
 	if (state === 'empty') {
-		return { hist: undefined, dist: undefined, cityCount: null };
+		return { hist: undefined, dist: undefined };
 	}
 	const below = POP_TRIP_KG.filter((v) => v < perTripKg).length;
 	const dist: Distribution = {
@@ -174,10 +174,10 @@ function makeData(
 		values: POP_TRIP_KG
 	};
 	if (state === 'sparse') {
-		return { hist: undefined, dist, cityCount: 87 };
+		return { hist: undefined, dist };
 	}
 	const hist: Histogram = { values: POP_PER_KM, mine: Math.round(mine * 10) / 10, n: POP_PER_KM.length };
-	return { hist, dist, cityCount: 1234 };
+	return { hist, dist };
 }
 
 /** Build one case end-to-end through the real compute + view pipeline. */
@@ -186,8 +186,8 @@ export function buildCase(c: Combo): Case {
 	const computed = computeReceipt(answers);
 	const geo = makeGeo(c);
 	const mine = computed.comparison.usual.gPerKm; // histogram marker = the habit
-	const { hist, dist, cityCount } = makeData(c.dataState, mine, computed.perTripKg);
-	const view = buildReceiptView(computed, answers, geo, dist, hist, cityCount, c.seedId, CREATED_AT);
+	const { hist, dist } = makeData(c.dataState, mine, computed.perTripKg);
+	const view = buildReceiptView(computed, answers, geo, dist, hist, c.seedId, CREATED_AT);
 	const valence = subjectValence(computed.trip.mode, computed.trip.decider);
 	return { combo: c, answers, computed, view, valence };
 }
