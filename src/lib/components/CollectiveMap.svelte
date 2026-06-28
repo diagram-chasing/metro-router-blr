@@ -7,8 +7,9 @@
 	import { createClock, type Clock } from '$lib/viz/clock';
 	import { loadDeck, type Deck } from '$lib/viz/deck';
 	import { ChoroplethField, type HoodReading } from '$lib/viz/choroplethField';
-	import { buildFieldLayer, buildHoodLabels } from '$lib/viz/layers';
+	import { buildFieldLayer, buildHoodLabels, buildDotsLayer } from '$lib/viz/layers';
 	import { roadsOnlyStyle, easeInOutCubic, easeOutCubic, easeInOutSine } from '$lib/viz/palette';
+	import { loadWallRoads, gridDots, hexToRgb } from '$lib/viz/dottedBasemap';
 	import { WALL } from '$lib/config/wall';
 	import {
 		REST,
@@ -79,6 +80,14 @@
 		// Resting camera — set to frame the emissions grid bbox once it's known.
 		const restView = { center: [REST.lng, REST.lat] as [number, number], zoom: REST.zoom };
 
+		// Dotted basemap (the receipt / mapscii dot-field as live points). Grid-sampled once at boot
+		// into two tiers; the rAF loop rebuilds the layers each frame so opacity can bloom with zoom.
+		let majorDots: [number, number][] | null = null;
+		let faintDots: [number, number][] = [];
+		const dotColor = hexToRgb(WALL.basemap.color);
+		let dotsZ0 = REST.zoom; // zoom→opacity bloom range, fixed once the cover zoom is known
+		let dotsZ1 = REST.zoom + 1.3;
+
 		// State machine.
 		let phase: 'idle' | 'load' | (typeof PHASES)[number] = 'idle';
 		let phaseStart = 0;
@@ -129,6 +138,7 @@
 			const driftAmt = WALL.drift;
 			const demo = WALL.demo;
 			const blockyAmt = WALL.blocky; // heat super-cell size (chunks the smooth field)
+			const stepsW = WALL.steps; // posterize the heat into discrete bands (0/<2 = smooth ramp)
 
 			const deck = await loadDeck();
 			if (disposed) return;
@@ -151,70 +161,29 @@
 			overlay = new deck.MapboxOverlay({ interleaved: true, layers: [] });
 			map.addControl(overlay as unknown as maplibre.IControl);
 
-			// Constant dotted road network, baked over the grid bbox (static/wall-roads.json via
-			// `pnpm wall-roads:build`). Live tiles drop minor/service roads at the wide resting
-			// zoom, so they'd pop in only when zoomed into a corridor; baked, the whole network is
-			// steady at every scale and covers the full grid. Falls back to the style's vector road
-			// layers when the bake hasn't been generated yet.
-			const addBakedRoads = async () => {
-				try {
-					const res = await fetch('/wall-roads.json');
-					if (!res.ok) return; // not baked → keep the vector road layers from roadsOnlyStyle
-					const wr = (await res.json()) as {
-						roads: [number, number][][];
-						roadsFaint: [number, number][][];
-					};
-					const fc = (lines: [number, number][][]) => ({
-						type: 'FeatureCollection' as const,
-						features: lines.map((coordinates) => ({
-							type: 'Feature' as const,
-							properties: {},
-							geometry: { type: 'LineString' as const, coordinates }
-						}))
-					});
-					const dotted = (
-						id: string,
-						opacity: number,
-						w: [number, number, number, number]
-					): maplibre.LayerSpecification => ({
-						id,
-						type: 'line',
-						source: id,
-						layout: { 'line-cap': 'round', 'line-join': 'round' },
-						paint: {
-							'line-color': '#000000',
-							'line-width': ['interpolate', ['linear'], ['zoom'], w[0], w[1], w[2], w[3]],
-							'line-dasharray': [0, 2.2],
-							'line-opacity': opacity
-						}
-					});
-					const before = map!.getLayer('place-minor') ? 'place-minor' : undefined;
-					if (!map!.getSource('wall-roads')) {
-						map!.addSource('wall-roads', { type: 'geojson', data: fc(wr.roads) });
-						map!.addSource('wall-roads-faint', { type: 'geojson', data: fc(wr.roadsFaint) });
-						map!.addLayer(dotted('wall-roads-faint', 0.18, [9, 0.7, 16, 1.6]), before);
-						map!.addLayer(dotted('wall-roads', 0.6, [9, 0.9, 16, 2.2]), before);
-					}
-					// Drop the vector tiers so the baked network isn't doubled or zoom-dependent.
-					for (const id of ['roads', 'roads-faint']) if (map!.getLayer(id)) map!.removeLayer(id);
-				} catch (err) {
-					console.warn('CollectiveMap wall-roads load failed:', err);
-				}
+			// Dotted basemap: the road network (static/wall-roads.json via `pnpm wall-roads:build`)
+			// sampled into a field of points and drawn as live GPU dots (a deck ScatterplotLayer in the
+			// rAF loop) — the receipt's 1-bit dot-field (src/lib/receipt/viz/RouteMap), crisp at every
+			// zoom. A baked raster aliases into moiré stripes under maplibre's mercator warp, so we
+			// render points instead. Falls back to roadsOnlyStyle's vector road layers when not baked.
+			const addBasemap = async () => {
+				const wr = await loadWallRoads();
+				if (disposed || !map || !wr) return; // not baked → keep the vector road layers
+				majorDots = gridDots(wr.roads, wr.bbox, WALL.basemap.major.cellM);
+				faintDots = WALL.basemap.includeFaint
+					? gridDots(wr.roadsFaint, wr.bbox, WALL.basemap.faint.cellM)
+					: [];
+				// Drop the vector tiers so the dotted points aren't doubled or zoom-dependent.
+				for (const id of ['roads', 'roads-faint']) if (map.getLayer(id)) map.removeLayer(id);
 			};
-			await addBakedRoads();
+			await addBasemap();
 
-			// The deck heat field is inserted just BELOW the bottom-most basemap context layer, so
-			// the dotted roads and place labels render on top of the heat and bloom in with the
-			// zoom-grade ramp below — rather than sitting under the field where the heat washes them
-			// out. Bottom-most existing of the baked tiers, the vector fallback, or the labels.
-			const fieldBeforeId = [
-				'wall-roads-faint',
-				'roads-faint',
-				'wall-roads',
-				'roads',
-				'place-minor',
-				'place-major'
-			].find((id) => map!.getLayer(id));
+			// The deck heat field is inserted just BELOW the place labels, so both it and the dotted
+			// points (also a deck layer, ordered after it) render under the labels; the dots composite
+			// on top of the heat and bloom in with the zoom-grade. Vector road layers are the fallback.
+			const fieldBeforeId = ['place-minor', 'place-major', 'roads-faint', 'roads'].find((id) =>
+				map!.getLayer(id)
+			);
 
 			const fieldUrl = emissionsFieldUrl(cellDeg);
 
@@ -439,21 +408,40 @@
 			};
 
 			let labelTick = -1;
+			let anchorTick = -1; // slower cadence for re-querying which labels are visible
+			let lastFadeT = 0; // previous frame time, for dt-based opacity easing
 			let hoods: HoodReading[] = [];
+			// Reused render objects, one per live label, keyed the same as liveLabels. We mutate these in
+			// place and only swap the `hoods` array when the SET changes, so deck recomputes glyph layout
+			// only on membership change — opacity rides the cheap getColor `fade` trigger between.
+			const hoodObjs = new Map<string, HoodReading>();
+			let fadeKey = 0; // getColor updateTrigger; advanced only while a fade is in flight
 
 			// Number anchors ride the OSM place labels the basemap is already showing — no hand-placed
-			// list. maplibre's own symbol collision has already decluttered + zoom-gated these, so we
-			// re-query on every camera settle (moveend) and inherit that spread for free; the per-anchor
-			// figure is aggregated from the field each label tick. Suburbs/villages exist in the
-			// outskirts too, so labels now reach there as the camera drifts over them.
+			// list. maplibre's own symbol collision has already decluttered these, so we re-query the
+			// visible set and inherit that spread for free. The set is kept STABLE across refreshes
+			// (sticky selection in thinAnchors) and each label eases its opacity in/out, so the wall
+			// reads calm — labels gently fade as the view moves instead of reshuffling every refresh.
 			type PlaceAnchor = { name: string; c: [number, number]; r: number };
-			let placeAnchors: PlaceAnchor[] = [];
+			// A label currently on (or fading off) the wall: its anchor, last field reading, and an eased
+			// opacity chasing `target` (1 = shown, 0 = leaving → deleted once it has faded out).
+			type LiveLabel = {
+				name: string;
+				c: [number, number];
+				r: number;
+				months: number;
+				op: number;
+				target: number;
+			};
+			const liveLabels = new Map<string, LiveLabel>();
+			const keyOf = (a: { name: string; c: [number, number] }) =>
+				a.name || `${a.c[0].toFixed(4)},${a.c[1].toFixed(4)}`;
 
-			// Hard-cap the simultaneous figures (WALL.maxLabels): score each by its current field
-			// reading, drop those over empty field, keep the single worst, then farthest-point spread
-			// so the survivors stay spread across the view rather than clustering. Runs only on a
-			// camera settle, not per frame, so the bounded per-anchor scans stay cheap.
-			const thinAnchors = (anchors: PlaceAnchor[]): PlaceAnchor[] => {
+			// Cap the simultaneous figures (WALL.maxLabels). Score each anchor by its field reading and
+			// drop those over empty field. To stop the set thrashing as the camera moves, KEEP the labels
+			// already shown (activeKeys) as long as they're still candidates, and only farthest-point
+			// spread NEW picks into the remaining slots — so survivors stay put and just the gaps change.
+			const thinAnchors = (anchors: PlaceAnchor[], activeKeys: Set<string>): PlaceAnchor[] => {
 				const scored = anchors
 					.map((a) => ({ a, m: field.monthsAround(a.c[0], a.c[1], a.r) ?? -1 }))
 					.filter((s) => s.m >= 0);
@@ -462,27 +450,32 @@
 				const kx = Math.cos((latMid * Math.PI) / 180) || 1;
 				const d2 = (p: PlaceAnchor, q: PlaceAnchor) =>
 					((p.c[0] - q.c[0]) * kx) ** 2 + (p.c[1] - q.c[1]) ** 2;
-				const rest = scored.sort((x, y) => y.m - x.m);
-				const picked = [rest.shift()!.a]; // the single worst always shows
+				// Held-over labels keep their slots (worst-first); the rest compete for any gaps left.
+				const picked = scored.filter((s) => activeKeys.has(keyOf(s.a))).sort((x, y) => y.m - x.m);
+				const rest = scored.filter((s) => !activeKeys.has(keyOf(s.a)));
+				if (picked.length === 0 && rest.length) {
+					rest.sort((x, y) => y.m - x.m);
+					picked.push(rest.shift()!); // nothing held over yet → the single worst always shows
+				}
 				while (picked.length < WALL.maxLabels && rest.length) {
 					let bestI = 0;
 					let bestD = -1;
 					for (let i = 0; i < rest.length; i++) {
 						let dmin = Infinity;
-						for (const q of picked) dmin = Math.min(dmin, d2(rest[i].a, q));
+						for (const q of picked) dmin = Math.min(dmin, d2(rest[i].a, q.a));
 						if (dmin > bestD) {
 							bestD = dmin;
 							bestI = i;
 						}
 					}
-					picked.push(rest.splice(bestI, 1)[0].a);
+					picked.push(rest.splice(bestI, 1)[0]);
 				}
-				return picked;
+				return picked.slice(0, WALL.maxLabels).map((s) => s.a);
 			};
 
 			const refreshPlaceAnchors = () => {
 				if (!map) return;
-				const layers = ['place-minor', 'place-major'].filter((id) => map!.getLayer(id));
+				const layers = ['place-minor'].filter((id) => map!.getLayer(id)); // neighbourhood names
 				if (layers.length === 0) return;
 				const out: PlaceAnchor[] = [];
 				const seen = new Set<string>();
@@ -494,14 +487,29 @@
 						const key = name || `${c[0].toFixed(4)},${c[1].toFixed(4)}`;
 						if (seen.has(key)) continue; // a place can repeat across tile seams
 						seen.add(key);
-						// A city/town averages a wider radius than a suburb/neighbourhood.
-						const r = f.layer?.id === 'place-major' ? 2.6 : 1.6;
-						out.push({ name, c, r });
+						out.push({ name, c, r: 1.8 }); // neighbourhood averaging radius
 					}
 				} catch {
-					return; // tiles mid-load → keep the last good anchor set
+					return; // tiles mid-load → keep the last good label set
 				}
-				placeAnchors = thinAnchors(out);
+				// Sticky pick (held-over labels keep their slots), then reconcile into liveLabels: picked
+				// labels fade toward 1, everything else toward 0 (deleted once it has fully faded out).
+				const active = new Set<string>();
+				for (const [k, l] of liveLabels) if (l.target === 1) active.add(k);
+				const pickedKeys = new Set<string>();
+				for (const a of thinAnchors(out, active)) {
+					const k = keyOf(a);
+					pickedKeys.add(k);
+					const m = field.monthsAround(a.c[0], a.c[1], a.r);
+					const existing = liveLabels.get(k);
+					if (existing) {
+						existing.target = 1;
+						if (m !== null) existing.months = m;
+					} else if (m !== null) {
+						liveLabels.set(k, { name: a.name, c: a.c, r: a.r, months: m, op: 0, target: 1 });
+					}
+				}
+				for (const [k, l] of liveLabels) if (!pickedKeys.has(k)) l.target = 0;
 			};
 
 			// Watchdog only on the unattended wall: if the rAF loop stalls (GPU context loss,
@@ -515,31 +523,59 @@
 				field.setFrame(t);
 				field.fillTexture(); // rebuilds the field texture only when the data moved
 
-				const lt = Math.round(t * 8); // label refresh cadence
+				// Re-query which labels are visible: on a settle (moveend) and, while the camera moves, at
+				// a calm 3 Hz so the set doesn't thrash — the per-label fades (below) smooth each change.
+				const at = Math.round(t * 3);
+				if (at !== anchorTick) {
+					anchorTick = at;
+					if (map?.isMoving()) refreshPlaceAnchors();
+				}
+
+				const lt = Math.round(t * 8); // field-reading refresh cadence
 				if (lt !== labelTick) {
 					labelTick = lt;
-					// Aggregate the field around each visible place label; drop anchors over empty field
-					// (monthsAround → null) — the same gate that leaves the heat transparent there.
-					hoods = placeAnchors
-						.map((a): HoodReading | null => {
-							const months = field.monthsAround(a.c[0], a.c[1], a.r);
-							return months === null ? null : { name: a.name, c: a.c, months };
-						})
-						.filter((x): x is HoodReading => x !== null);
-					// Methods note: the map bed is the city's real ambient air (ACAG annual-mean PM2.5,
-					// traffic already included). Each logged commute is a SAMPLE of its corridor's real
-					// traffic, weighted by the corridor's measured daily volume (junction counts) × the
-					// corridor mode split × 365 — so the map lights the corridors people here actually
-					// travel, mode-aware (a metro commute reveals no extra heat). The headline is NOT
-					// added on top of ambient (that would double-count traffic already in the bed): it is
-					// the aggregate LIFE-YEARS lost across the city's residents the logged corridors reveal — φ(road-transport
-					// apportionment of ambient PM2.5) × AQLI(ambient − WHO clean) × city population ×
-					// coverage, where coverage = the logged corridors' represented vehicular PM2.5 ÷ the
-					// city's measured inventory (CSTEP), deduped per cell so the same corridor logged many
-					// times counts once. A share of an EXISTING citywide burden, revealed as more of the
-					// city's travel is mapped — not harm the journeys add. See emissionsGrid + health.ts.
+					// Keep each live label's figure current; if the field has gone empty under one (the
+					// same gate that leaves the heat transparent there), retire it — it then fades out.
+					for (const l of liveLabels.values()) {
+						const months = field.monthsAround(l.c[0], l.c[1], l.r);
+						if (months === null) l.target = 0;
+						else l.months = months;
+					}
 					personYears = field.headlinePersonYears();
 				}
+
+				// Ease every label's opacity toward its target this frame, drop the fully-faded, and keep
+				// the render objects in sync. dt-based so a full fade takes ~FADE_S at any frame rate
+				// (clamped against the long gap when the tab was backgrounded). The `hoods` array swaps
+				// only when membership changes; `fadeKey` advances only while a fade is in flight, so
+				// fully-settled idle frames cost deck nothing.
+				const dt = Math.min(0.05, Math.max(0, t - lastFadeT));
+				lastFadeT = t;
+				const FADE_S = 0.5;
+				let membershipChanged = false;
+				let transitioning = false;
+				for (const [k, l] of liveLabels) {
+					if (l.op !== l.target) {
+						const d = dt / FADE_S;
+						l.op = l.target > l.op ? Math.min(l.target, l.op + d) : Math.max(l.target, l.op - d);
+						transitioning = true;
+					}
+					if (l.target === 0 && l.op <= 0.001) {
+						liveLabels.delete(k);
+						if (hoodObjs.delete(k)) membershipChanged = true;
+						continue;
+					}
+					const h = hoodObjs.get(k);
+					if (h) {
+						h.opacity = l.op;
+						h.months = l.months;
+					} else {
+						hoodObjs.set(k, { name: l.name, c: l.c, months: l.months, opacity: l.op });
+						membershipChanged = true;
+					}
+				}
+				if (membershipChanged) hoods = [...hoodObjs.values()];
+				if (transitioning) fadeKey++;
 
 				// Continuous `t` (not quantised) → smooth shader animation; the texture itself
 				// only re-uploads when fillTexture bumped its identity.
@@ -548,7 +584,8 @@
 							time: t,
 							idle: idleAmt,
 							beforeId: fieldBeforeId,
-							blocky: blockyAmt
+							blocky: blockyAmt,
+							steps: stepsW
 						})
 					: null;
 
@@ -593,7 +630,34 @@
 				}
 				if (heroOpacity !== hv) heroOpacity = hv; // skip 60fps no-op writes while hidden
 
-				const layers = fieldLayer ? [fieldLayer, ...buildHoodLabels(deck, hoods, lt, scaleW)] : [];
+				// Dotted basemap tiers (if baked) sit above the heat, below the place labels: a faint
+				// minor/service network under bold arteries. Each dot's radius is metres (cell-filling,
+				// so roads stay continuous); opacity blooms with zoom — faint over the wide resting
+				// frame, firming up as the camera moves into a corridor.
+				const bm = WALL.basemap;
+				const bloom = (rest: number, zoom: number) =>
+					lerp(rest, zoom, clamp01((map!.getZoom() - dotsZ0) / (dotsZ1 - dotsZ0 || 1)));
+				const dotTier = (id: string, pts: [number, number][], cellM: number, o: { restOpacity: number; zoomOpacity: number }) =>
+					buildDotsLayer(deck, pts, {
+						id,
+						radiusM: cellM * bm.fillRatio,
+						minPx: bm.minPx,
+						maxPx: bm.maxPx,
+						color: dotColor,
+						opacity: bloom(o.restOpacity, o.zoomOpacity),
+						beforeId: fieldBeforeId
+					});
+				const dotLayers =
+					majorDots && fieldLayer
+						? [
+								...(faintDots.length ? [dotTier('dots-faint', faintDots, bm.faint.cellM, bm.faint)] : []),
+								dotTier('dots-major', majorDots, bm.major.cellM, bm.major)
+							]
+						: [];
+
+				const layers = fieldLayer
+					? [fieldLayer, ...dotLayers, ...buildHoodLabels(deck, hoods, lt, scaleW, fadeKey)]
+					: [];
 				overlay?.setProps({ layers });
 			}, watchdog);
 
@@ -650,26 +714,38 @@
 				restView.center = map.getCenter().toArray() as [number, number];
 				restView.zoom = map.getZoom();
 
-				// Reward the zoom-ins. Now that roads + labels composite ON TOP of the heat (the
-				// field's beforeId puts it underneath), grade their opacity by zoom so the wide
-				// resting frame is near-pure heat and the basemap detail blooms in over it as the
-				// drift moves in — the city's streets and place names fading up out of the field
-				// in the area we approach, then fading back out as it pulls away. Keyed to the
-				// runtime cover zoom (only known now); easeTo's zoom interpolation drives the fade
-				// for free, both ways. Faint streets + neighbourhood names gain the most (a clean
-				// reveal); arteries and the city name keep a whisper at rest so the frame isn't bare.
+				// Reward the zoom-ins. Now that the dotted basemap composites ON TOP of the heat (the
+				// field's beforeId puts it underneath), grade its opacity by zoom so the wide resting
+				// frame is near-pure heat and the streets bloom in over it as the drift moves in — fading
+				// up out of the field in the area we approach, then back out as it pulls away. Keyed to the
+				// runtime cover zoom (only known now); easeTo's zoom interpolation drives the fade for free,
+				// both ways. The dotted roads keep a whisper at rest so the frame isn't bare. (The receipt-
+				// slip neighbourhood labels are a deck layer drawn at full strength, not graded here.)
 				const z0 = restView.zoom;
 				const z1 = restView.zoom + 1.3;
 				const ramp = (a: number, b: number) => ['interpolate', ['linear'], ['zoom'], z0, a, z1, b];
 				const grade = (id: string, prop: string, a: number, b: number) => {
 					if (map!.getLayer(id)) map!.setPaintProperty(id, prop, ramp(a, b));
 				};
-				grade('wall-roads-faint', 'line-opacity', 0.08, 0.6); // baked residential/service
-				grade('wall-roads', 'line-opacity', 0.4, 0.9); // baked arteries
+				// The dotted points are a deck layer, not a maplibre paint property — bloom them in the
+				// rAF loop instead. Stash the runtime cover-zoom range it interpolates over.
+				dotsZ0 = z0;
+				dotsZ1 = z1;
 				grade('roads-faint', 'line-opacity', 0.08, 0.6); // vector fallback (no bake)
 				grade('roads', 'line-opacity', 0.4, 0.9); // vector fallback (no bake)
-				grade('place-minor', 'text-opacity', 0.0, 1.0); // neighbourhood names reveal on zoom
-				grade('place-major', 'text-opacity', 0.5, 1.0); // city/town names firm up
+				// Label the larger neighbourhood areas, not the city; hide the city/town tier.
+				if (map.getLayer('place-major')) map.setLayoutProperty('place-major', 'visibility', 'none');
+				if (map.getLayer('place-minor')) {
+					// The names are now drawn by the deck receipt-slip labels (buildHoodLabels). Keep
+					// place-minor only as the collision-spread, queryRenderedFeatures ANCHOR source — its
+					// own glyphs stay invisible (opacity 0; collision still runs, so query still returns them).
+					map.setPaintProperty('place-minor', 'text-opacity', 0);
+					map.setLayoutProperty('place-minor', 'text-size', ramp(26, 36)); // sets the collision box
+					// Inflate each label's collision box well beyond its glyphs so maplibre keeps only a
+					// sparse spread — the higher-rank (larger) areas survive, the rest collide out. This
+					// is what actually thins them; raise it to show fewer, lower to show more.
+					map.setLayoutProperty('place-minor', 'text-padding', 150);
+				}
 
 				// Never show beyond the grid: clamp every camera move (incl. edge-route easeTo) to the
 				// grid bbox, so framing a corridor near the border can't reveal the bare basemap around it.
@@ -678,8 +754,9 @@
 					[lonMax, latMax]
 				]);
 
-				// Re-read which place labels maplibre is showing whenever the camera settles (drift,
-				// route reveal, zoom-back all end in moveend) so the number anchors track the view.
+				// Re-read which place labels maplibre is showing when the camera settles — the final,
+				// authoritative pass (the rAF loop already re-queries at 8 Hz *during* a move so labels
+				// track the view live; this catches the resting frame exactly).
 				map.on('moveend', refreshPlaceAnchors);
 				refreshPlaceAnchors(); // seed at the resting frame, before the first move
 			}

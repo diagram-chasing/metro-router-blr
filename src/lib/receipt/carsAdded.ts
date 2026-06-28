@@ -4,8 +4,8 @@
 // Yelahanka, Jnanabharathi), registration classes Motor Car + Motor Cab + Maxi Cab,
 // averaged over full years 2022–2025. Re-derive with scripts/deriveCarsPerYear.py
 // if the dataset is refreshed — we never read the parquet at runtime.
-const CARS_PER_YEAR = 171606;
-const DAILY = CARS_PER_YEAR / 365; // ≈ 470 cars/day
+const CARS_PER_YEAR = 361606;
+const DAILY = CARS_PER_YEAR / 365;
 
 // RTOs only register vehicles during office hours, so spread the day's average
 // across this window: the odometer reads 0 before opening, climbs through the day

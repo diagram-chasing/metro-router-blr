@@ -23,6 +23,7 @@ layout(std140) uniform fieldFxUniforms {
   vec4  pathD;
   float pathCount;     // valid points (2..8); <2 → circle fallback
   float blocky;        // heat super-cell size in grid cells (1 = native; >1 chunks the field)
+  float steps;         // posterize the heat into N discrete bands (<2 = continuous ramp)
 } fieldFx;
 `;
 
@@ -46,7 +47,8 @@ export const fieldFxUniforms = {
 		pathC: 'vec4<f32>',
 		pathD: 'vec4<f32>',
 		pathCount: 'f32',
-		blocky: 'f32'
+		blocky: 'f32',
+		steps: 'f32'
 	}
 } as const;
 
@@ -69,6 +71,7 @@ export type FieldFxProps = {
 	pathD: V4;
 	pathCount: number;
 	blocky: number;
+	steps: number;
 };
 
 const FIELDFX_DEFAULTS: FieldFxProps = {
@@ -87,7 +90,8 @@ const FIELDFX_DEFAULTS: FieldFxProps = {
 	pathC: [0, 0, 0, 0],
 	pathD: [0, 0, 0, 0],
 	pathCount: 0,
-	blocky: 1
+	blocky: 1,
+	steps: 0
 };
 
 
@@ -280,11 +284,20 @@ float fieldHaze(vec2 uv) {
 const FIELD_COMPOSE = /* glsl */ `
   // The heat reads as chunky blocks via fieldBlockTexel (the field re-sampled at the super-cell
   // centre, stashed in main()). Ignite stays at native res (color.b) so the route thread keeps its
-  // 1-cell crispness; the wavy ambience below keeps using the continuous geometry.uv so it stays smooth.
+  // 1-cell crispness; the idle ambience below is sampled per super-cell too (see ambUV) so it
+  // steps with the blocks rather than smearing a continuous wave over them.
   float fHue = fieldBlockTexel.r;
   float fInt = fieldBlockTexel.g;
   float fIgnite = color.b;
   float fMask = fieldBlockTexel.a;
+
+  // Posterize the heat into discrete bands so it reads as stepped choropleth gradations rather
+  // than a continuous wash — the dense centre otherwise blends many near-equal cells into fluid
+  // colour. Banding hue AND intensity steps the colour and the opacity together. steps<2 = smooth.
+  if (fieldFx.steps >= 2.0) {
+    fHue = floor(fHue * fieldFx.steps + 0.5) / fieldFx.steps;
+    fInt = floor(fInt * fieldFx.steps + 0.5) / fieldFx.steps;
+  }
 
   vec3 rgb = fieldRamp(fHue);
   float a = fieldOpacity(fInt);
@@ -301,14 +314,19 @@ const FIELD_COMPOSE = /* glsl */ `
   // ── Idle ambience (luminance/alpha only) — folds in dim, so strongest at rest ──
   float idleK = fieldFx.idle * fieldFx.dim;
 
+  // Sample the ambience at the super-cell CENTRE (like the heat) so the motion steps per block
+  // instead of flowing as a continuous wave across the cells — this is what kept the dense centre
+  // looking fluid. With blocky>1 the veins/haze now light whole cells, preserving the discrete read.
+  vec2 ambUV = fieldBlockUV(geometry.uv);
+
   // Caustic "living air": cool veins drifting through the empty / low cells.
   float emptyW = 1.0 - smoothstep(0.0, 0.18, fInt);
-  float caustic = fieldCaustic(geometry.uv) * idleK * emptyW;
+  float caustic = fieldCaustic(ambUV) * idleK * emptyW;
   rgb = mix(rgb, vec3(70.0, 150.0, 236.0) / 255.0, clamp(caustic * 0.6, 0.0, 1.0));
   a += caustic * IDLE_CAUSTIC_AMP;
 
   // Corridor heat-haze: a slow warm wave so hot corridors smolder.
-  float haze = (fieldHaze(geometry.uv) - 0.5) * pow(clamp(fInt, 0.0, 1.0), 0.8) * idleK;
+  float haze = (fieldHaze(ambUV) - 0.5) * pow(clamp(fInt, 0.0, 1.0), 0.8) * idleK;
   rgb = mix(rgb, fieldRamp(clamp(fHue + 0.06, 0.0, 1.0)), clamp(haze * 0.4, 0.0, 1.0));
   a += max(haze, 0.0) * IDLE_HAZE_AMP;
 
@@ -477,7 +495,8 @@ export function makeFieldLayer(Base: typeof BitmapLayer) {
 					pathC: p.pathC,
 					pathD: p.pathD,
 					pathCount: p.pathCount,
-					blocky: p.blocky
+					blocky: p.blocky,
+					steps: p.steps
 				}
 			});
 			model.draw((this.context as { renderPass: unknown }).renderPass);

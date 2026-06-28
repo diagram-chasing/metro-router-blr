@@ -24,7 +24,7 @@ export type Field = {
 // A label anchor + its aggregated number. `name` is informational only (the figure, not the
 // name, is rendered — place names come from the OSM basemap on the wall); it's absent for
 // field-derived anchors.
-export type HoodReading = { c: [number, number]; months: number; name?: string };
+export type HoodReading = { c: [number, number]; months: number; name?: string; opacity?: number };
 
 const GROW_S = 1.6; // snapshot cross-fade
 const EPS_MONTHS = 1e-3; // below this a cell carries no exposure (transparent base fill)
