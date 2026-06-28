@@ -17,7 +17,6 @@
 		loadBaseline as loadFieldBaseline,
 		pollField as pollFieldSnapshot
 	} from '$lib/viz/wallField';
-	import type { HoodReading } from '$lib/viz/choroplethField';
 
 	// Static screenshot version of CollectiveMap: paints the resting field, ignites a
 	// single route held at full glow, and scatters a few neighbourhood labels — no clock,
@@ -75,29 +74,6 @@
 		}
 		out.push(ctrl[ctrl.length - 1]);
 		return out;
-	}
-
-	// Thin the neighbourhood figures to `n`, seeded by the worst (highest months) then
-	// farthest-point sampled so the survivors stay spread across the frame, not clustered.
-	function scatter(hoods: HoodReading[], n: number): HoodReading[] {
-		if (hoods.length <= n) return hoods;
-		const rest = hoods.slice();
-		const seedI = rest.reduce((bi, h, i) => (h.months > rest[bi].months ? i : bi), 0);
-		const picked = [rest.splice(seedI, 1)[0]];
-		while (picked.length < n && rest.length) {
-			let bestI = 0;
-			let bestD = -1;
-			for (let i = 0; i < rest.length; i++) {
-				let d = Infinity;
-				for (const q of picked) d = Math.min(d, Math.hypot(rest[i].c[0] - q.c[0], rest[i].c[1] - q.c[1]));
-				if (d > bestD) {
-					bestD = d;
-					bestI = i;
-				}
-			}
-			picked.push(rest.splice(bestI, 1)[0]);
-		}
-		return picked;
 	}
 
 	onMount(() => {
@@ -206,7 +182,9 @@
 			}
 			field.fillTexture(); // bake the settled state (growth + ignite) into the texture
 
-			const hoods = labelCount > 0 ? scatter(field.hoodMonths(), labelCount) : [];
+			// No OSM basemap here, so anchors come from the field itself (lattice sample + farthest-
+			// point spread), capped to the requested count.
+			const hoods = labelCount > 0 ? field.autoHoods(labelCount) : [];
 			const fieldLayer = buildFieldLayer(deck, field, { time: SETTLED });
 			overlay.setProps({
 				layers: [

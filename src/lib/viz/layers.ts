@@ -47,51 +47,25 @@ export function buildFieldLayer(
 	return new Ctor(props);
 }
 
-// Spread clustered labels apart: a few iterations of pairwise repulsion (only between labels
-// closer than `sepDeg`) nudge crowded ones outward, deterministic so they don't jitter. Works
-// in a cos-lat plane. `sepDeg` is the target minimum spacing in degrees.
-export function declutterHoods(hoods: HoodReading[], sepDeg = 0.042, iters = 60): HoodReading[] {
-	if (hoods.length < 2) return hoods;
-	const latMid = hoods.reduce((s, h) => s + h.c[1], 0) / hoods.length;
-	const kx = Math.cos((latMid * Math.PI) / 180) || 1;
-	const pts = hoods.map((h) => ({ x: h.c[0] * kx, y: h.c[1], h }));
-	for (let it = 0; it < iters; it++) {
-		for (let i = 0; i < pts.length; i++) {
-			for (let j = i + 1; j < pts.length; j++) {
-				let dx = pts[i].x - pts[j].x;
-				let dy = pts[i].y - pts[j].y;
-				const d = Math.hypot(dx, dy) || 1e-6;
-				if (d < sepDeg) {
-					const push = ((sepDeg - d) / d) * 0.5;
-					dx *= push;
-					dy *= push;
-					pts[i].x += dx;
-					pts[i].y += dy;
-					pts[j].x -= dx;
-					pts[j].y -= dy;
-				}
-			}
-		}
-	}
-	return pts.map((p) => ({ ...p.h, c: [p.x / kx, p.y] as [number, number] }));
-}
-
-// One bold "years of life lost" figure per neighbourhood (place NAMES come from the OSM
-// basemap). Drawn last so they composite over the choropleth; dark chip + halo keep them readable.
+// One bold "years of life lost" figure per anchor. Anchors are pre-spread by the caller —
+// on the wall they ride the OSM place labels (maplibre's collision already declutters them), on
+// the bare legend they come from field.autoHoods (farthest-point spread) — so no declutter here.
+// Drawn last so they composite over the choropleth; a dark chip + halo keep them readable, and
+// the figure is nudged just below its anchor so it sits under the basemap's place name, not on it.
 export function buildHoodLabels(deck: Deck, hoods: HoodReading[], tick: number, scale = 1) {
-	// Years of life lost, one decimal (hoodMonths() reports months; /12 → years). "yr" cue keeps
-	// the bare number decodable from across the room.
+	// Years of life lost, one decimal (months / 12 → years). "yr" cue keeps the bare number
+	// decodable from across the room.
 	const fmt = (m: number) => `${(m / 12).toFixed(1)}yr`;
 	const font = '"IBM Plex Mono", ui-monospace, SFMono-Regular, monospace';
-	const placed = declutterHoods(hoods);
 	return [
 		new deck.TextLayer({
 			id: 'hood-numbers',
-			data: placed,
+			data: hoods,
 			getPosition: (d: HoodReading) => d.c,
 			getText: (d: HoodReading) => fmt(d.months),
 			getSize: 22 * scale,
 			sizeUnits: 'pixels',
+			getPixelOffset: [0, Math.round(15 * scale)], // drop under the OSM place name (y is screen-down)
 			getColor: () => [255, 226, 214, 244],
 			fontFamily: font,
 			fontWeight: 700,

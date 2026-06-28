@@ -23,7 +23,7 @@
 
 	// Reactive overlay bits (everything else is imperative for perf).
 	let count = $state<number | null>(null);
-	let yearsLost = $state(0); // avg years of life added by commutes, over affected corridors
+	let personYears = $state(0); // aggregate person-years of life lost the logged corridors reveal
 	// Hero label brackets the number: top line, figure, bottom line. Empty drops that line.
 	let title = $state(WALL.title);
 	let subtitle = $state(WALL.subtitle);
@@ -54,6 +54,12 @@
 	const IDLE_REST = WALL.idleRest; // s the resting field + headline hold before the next route fires
 	const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 	const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+	// Citywide life-years in Indian units, split so the hero shows a big numeral + a small LAKH/CRORE.
+	const fmtLakhCrore = (v: number): { num: string; suffix: string } => {
+		if (v >= 1e7) return { num: (v / 1e7).toFixed(v >= 1e8 ? 0 : 1), suffix: 'cr YEARS' };
+		if (v >= 1e5) return { num: String(Math.round(v / 1e5)), suffix: 'L YEARS' };
+		return { num: Math.round(v).toLocaleString('en-IN'), suffix: ' YEARS' };
+	};
 
 	const HERO_RISE = WALL.hero.rise;
 	const HERO_HOLD = WALL.hero.hold;
@@ -434,6 +440,70 @@
 
 			let labelTick = -1;
 			let hoods: HoodReading[] = [];
+
+			// Number anchors ride the OSM place labels the basemap is already showing — no hand-placed
+			// list. maplibre's own symbol collision has already decluttered + zoom-gated these, so we
+			// re-query on every camera settle (moveend) and inherit that spread for free; the per-anchor
+			// figure is aggregated from the field each label tick. Suburbs/villages exist in the
+			// outskirts too, so labels now reach there as the camera drifts over them.
+			type PlaceAnchor = { name: string; c: [number, number]; r: number };
+			let placeAnchors: PlaceAnchor[] = [];
+
+			// Hard-cap the simultaneous figures (WALL.maxLabels): score each by its current field
+			// reading, drop those over empty field, keep the single worst, then farthest-point spread
+			// so the survivors stay spread across the view rather than clustering. Runs only on a
+			// camera settle, not per frame, so the bounded per-anchor scans stay cheap.
+			const thinAnchors = (anchors: PlaceAnchor[]): PlaceAnchor[] => {
+				const scored = anchors
+					.map((a) => ({ a, m: field.monthsAround(a.c[0], a.c[1], a.r) ?? -1 }))
+					.filter((s) => s.m >= 0);
+				if (scored.length <= WALL.maxLabels) return scored.map((s) => s.a);
+				const latMid = scored.reduce((s, x) => s + x.a.c[1], 0) / scored.length;
+				const kx = Math.cos((latMid * Math.PI) / 180) || 1;
+				const d2 = (p: PlaceAnchor, q: PlaceAnchor) =>
+					((p.c[0] - q.c[0]) * kx) ** 2 + (p.c[1] - q.c[1]) ** 2;
+				const rest = scored.sort((x, y) => y.m - x.m);
+				const picked = [rest.shift()!.a]; // the single worst always shows
+				while (picked.length < WALL.maxLabels && rest.length) {
+					let bestI = 0;
+					let bestD = -1;
+					for (let i = 0; i < rest.length; i++) {
+						let dmin = Infinity;
+						for (const q of picked) dmin = Math.min(dmin, d2(rest[i].a, q));
+						if (dmin > bestD) {
+							bestD = dmin;
+							bestI = i;
+						}
+					}
+					picked.push(rest.splice(bestI, 1)[0].a);
+				}
+				return picked;
+			};
+
+			const refreshPlaceAnchors = () => {
+				if (!map) return;
+				const layers = ['place-minor', 'place-major'].filter((id) => map!.getLayer(id));
+				if (layers.length === 0) return;
+				const out: PlaceAnchor[] = [];
+				const seen = new Set<string>();
+				try {
+					for (const f of map.queryRenderedFeatures({ layers })) {
+						if (f.geometry.type !== 'Point') continue;
+						const c = f.geometry.coordinates as [number, number];
+						const name = String(f.properties?.['name:latin'] ?? f.properties?.name ?? '');
+						const key = name || `${c[0].toFixed(4)},${c[1].toFixed(4)}`;
+						if (seen.has(key)) continue; // a place can repeat across tile seams
+						seen.add(key);
+						// A city/town averages a wider radius than a suburb/neighbourhood.
+						const r = f.layer?.id === 'place-major' ? 2.6 : 1.6;
+						out.push({ name, c, r });
+					}
+				} catch {
+					return; // tiles mid-load → keep the last good anchor set
+				}
+				placeAnchors = thinAnchors(out);
+			};
+
 			// Watchdog only on the unattended wall: if the rAF loop stalls (GPU context loss,
 			// throttle), reload to last-good rather than freezing a dead frame on the wall.
 			const watchdog =
@@ -448,14 +518,27 @@
 				const lt = Math.round(t * 8); // label refresh cadence
 				if (lt !== labelTick) {
 					labelTick = lt;
-					hoods = field.hoodMonths();
-					// Methods note: the map bed is TOTAL air = real ACAG ambient PM2.5 (the city's
-					// existing burden, traffic included) + the commute increment. The headline,
-					// though, reports only the MARGINAL years the submitted commutes add on top of
-					// that ambient bed — a what-if attributable to these journeys, not the city's
-					// full burden (which is dominated by ambient air the commutes didn't cause) —
-					// averaged over the corridors they actually touch, not the empty bbox.
-					yearsLost = field.marginalYearsAdded();
+					// Aggregate the field around each visible place label; drop anchors over empty field
+					// (monthsAround → null) — the same gate that leaves the heat transparent there.
+					hoods = placeAnchors
+						.map((a): HoodReading | null => {
+							const months = field.monthsAround(a.c[0], a.c[1], a.r);
+							return months === null ? null : { name: a.name, c: a.c, months };
+						})
+						.filter((x): x is HoodReading => x !== null);
+					// Methods note: the map bed is the city's real ambient air (ACAG annual-mean PM2.5,
+					// traffic already included). Each logged commute is a SAMPLE of its corridor's real
+					// traffic, weighted by the corridor's measured daily volume (junction counts) × the
+					// corridor mode split × 365 — so the map lights the corridors people here actually
+					// travel, mode-aware (a metro commute reveals no extra heat). The headline is NOT
+					// added on top of ambient (that would double-count traffic already in the bed): it is
+					// the aggregate LIFE-YEARS lost across the city's residents the logged corridors reveal — φ(road-transport
+					// apportionment of ambient PM2.5) × AQLI(ambient − WHO clean) × city population ×
+					// coverage, where coverage = the logged corridors' represented vehicular PM2.5 ÷ the
+					// city's measured inventory (CSTEP), deduped per cell so the same corridor logged many
+					// times counts once. A share of an EXISTING citywide burden, revealed as more of the
+					// city's travel is mapped — not harm the journeys add. See emissionsGrid + health.ts.
+					personYears = field.headlinePersonYears();
 				}
 
 				// Continuous `t` (not quantised) → smooth shader animation; the texture itself
@@ -594,6 +677,11 @@
 					[lonMin, latMin],
 					[lonMax, latMax]
 				]);
+
+				// Re-read which place labels maplibre is showing whenever the camera settles (drift,
+				// route reveal, zoom-back all end in moveend) so the number anchors track the view.
+				map.on('moveend', refreshPlaceAnchors);
+				refreshPlaceAnchors(); // seed at the resting frame, before the first move
 			}
 
 			// From here on the field only changes at a route's reflect beat: background polls are
@@ -640,7 +728,9 @@
 			<div class="route">{card.route ?? 'New journey'}</div>
 			<div class="rule"></div>
 			{#if card.grams >= 1000}
-				<div class="emis">+{(card.grams / 1000).toFixed(1)}<span class="unit"> kg PM2.5 / 10yr</span></div>
+				<div class="emis">
+					+{(card.grams / 1000).toFixed(1)}<span class="unit"> kg PM2.5 / 10yr</span>
+				</div>
 			{:else}
 				<div class="emis">+{Math.round(card.grams)}<span class="unit"> g PM2.5 / 10yr</span></div>
 			{/if}
@@ -648,6 +738,7 @@
 	{/if}
 
 	{#if count !== null && count > 0}
+		{@const py = fmtLakhCrore(personYears)}
 		<!-- The title as a receipt slip — same language as src/lib/receipt/ReceiptDoc: white paper,
 		     mono, a dashed rule, the number in a reverse (white-on-black) hero bar. Top-left, inset
 		     off the keystoned/vignetted projector edge. ?title= / ?subtitle= set the lines; either
@@ -658,7 +749,7 @@
 					<div class="line">{title}</div>
 					<div class="rule"></div>
 				{/if}
-				<div class="total">{yearsLost.toFixed(1)}</div>
+				<div class="total">{py.num}{py.suffix}</div>
 				{#if subtitle}<div class="fine">{subtitle}</div>{/if}
 			</div>
 		</div>
@@ -748,7 +839,7 @@
 	.hero .total {
 		background: #000;
 		color: #fff;
-		font-size: calc(var(--wall-scale) * clamp(46px, 5.8vw, 106px));
+		font-size: calc(var(--wall-scale) * clamp(46px, 5.8vw, 66px));
 		font-weight: 700;
 		line-height: 1;
 		letter-spacing: -0.01em;

@@ -136,6 +136,24 @@ export const MODE_PM25_G_PER_PKM: Record<Mode, number> = (() => {
 // scaling its on-screen field bump (so metro → 0, car → full).
 export const PM25_MAX_G_PER_PKM = Math.max(...Object.values(MODE_PM25_G_PER_PKM));
 
+// Modeled mode-share of a typical Bengaluru arterial (illustrative CTTP blend, flagged as a model
+// on the receipt). Single source of truth — the receipt's corridor beat and the wall's
+// represented-traffic model both read it, so they cannot diverge. Shares sum to 1.
+export const CORRIDOR_SHARE: Record<string, number> = {
+	bus: 0.38,
+	two_wheeler: 0.26,
+	car: 0.19, // car + cab merged
+	auto: 0.12,
+	metro: 0.05
+};
+
+// Length-weighted PM2.5 intensity of the corridor mode mix (g/passenger-km ≈ 0.0568) — used to turn
+// a corridor's people/day into its represented annual PM2.5 for the wall's coverage figure.
+export const CORRIDOR_BLEND_PM25_G_PER_PKM = Object.entries(CORRIDOR_SHARE).reduce(
+	(sum, [mode, w]) => sum + w * (MODE_PM25_G_PER_PKM[mode as Mode] ?? 0),
+	0
+);
+
 export const MODE_LABEL: Record<Mode, string> = {
 	auto: 'Auto',
 	car: 'Car / cab',

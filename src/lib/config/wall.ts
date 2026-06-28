@@ -2,9 +2,12 @@ import { WALL_BG } from '$lib/viz/palette';
 
 // The wall's one control panel. Everything tunable lives here — nothing is read from the URL.
 export const WALL = {
-	// Display
-	title: 'YEARS OF LIFE LOST',
-	subtitle: 'FROM THESE COMMUTES',
+	// Display — title + number + subtitle read as one sentence: "BENGALURU LOSES <9L YEARS> TO TRAFFIC LIKE THESE".
+	// ("9L YEARS" is the hero figure; the L/cr + YEARS are rendered as a small suffix.) The figure is the
+	// aggregate life-years across the city's ~12M residents the logged commutes' corridors reveal (a
+	// share of an existing burden, not harm they add); see health.ts / emissionsGrid.ts.
+	title: 'BANGALORE LOSES',
+	subtitle: 'TO TRAFFIC LIKE THIS',
 	scale: 1, // type size for viewing distance
 	bg: WALL_BG,
 	dpr: 0, // 0 = auto-detect
@@ -16,10 +19,15 @@ export const WALL = {
 	titleEvery: 40, // s between hero appearances
 	load: 20, // s pre-reveal dwell
 
-	// Model (PM2.5 → health)
-	gainPerYear: 1.5, // µg/m³ a saturated corridor adds per year
-	years: 10, // decade window
-	saturationRoutes: 60, // commutes that bring a corridor to the red point
+	// Colour scale (PM2.5 → hue only). The HEADLINE no longer uses these — it's the attribution model
+	// in $lib/viz/health.ts (transport share φ × ambient AQLI × coverage). These three set where the
+	// heat hits its red point on the map; the reported years are independent of them.
+	gainPerYear: 1.5, // µg/m³ a saturated corridor adds per year (colour ramp top)
+	years: 10, // decade window (also the per-route card's g PM2.5 / 10yr figure)
+	saturationRoutes: 60, // represented-corridor overlap that brings a corridor to the red point
+
+	// Labels
+	maxLabels: 15, // hard cap on simultaneous neighbourhood figures (thinned worst-first + spread)
 
 	// Field / technical
 	cell: 0.003, // grid resolution (deg)

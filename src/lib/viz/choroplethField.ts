@@ -8,7 +8,6 @@
 import { easeInOutCubic } from './palette';
 import { monthsFromConcentration, Params } from './health';
 import { WALL } from '$lib/config/wall';
-import { NEIGHBOURHOODS } from '$lib/config/neighbourhoods';
 import { haversineKm, pm25GramsOverYears } from '$lib/emissions';
 
 export type Field = {
@@ -17,10 +16,15 @@ export type Field = {
 	bbox: [number, number, number, number]; // [lonMin, latMin, lonMax, latMax]
 	values: number[]; // row-major lat(asc) × lon(asc), normalised 0..1
 	rawMax: number;
-	refDeposit?: number; // deposit of one reference commute — the absolute scale unit
+	refDeposit?: number; // deposit of the reference corridor — the absolute scale unit
+	coverage?: number; // 0..1 — fraction of the city's vehicular PM2.5 the logged corridors reveal
+	personYears?: number; // aggregate person-years of life lost the logged corridors reveal (headline)
 };
 
-export type HoodReading = { name: string; c: [number, number]; months: number };
+// A label anchor + its aggregated number. `name` is informational only (the figure, not the
+// name, is rendered — place names come from the OSM basemap on the wall); it's absent for
+// field-derived anchors.
+export type HoodReading = { c: [number, number]; months: number; name?: string };
 
 const GROW_S = 1.6; // snapshot cross-fade
 const EPS_MONTHS = 1e-3; // below this a cell carries no exposure (transparent base fill)
@@ -94,6 +98,12 @@ export class ChoroplethField {
 	private marginal = 0;
 	// Same marginal, averaged over only the cells the commutes touch (deposit ≥ 1% of peak).
 	private marginalAffMonths = 0;
+	// The wall headline: aggregate PERSON-YEARS of life lost the logged corridors reveal, computed
+	// server-side (coverage × per-capita transport AQLI burden × city population) and lerped between
+	// snapshots so it climbs smoothly. See emissionsGrid.buildField / health.personYearsLost.
+	private headlinePrev = 0;
+	private headlineTarget = 0;
+	private headlineNow = 0;
 	// Absolute WHO-anchored hue scale (months): neutral at the cleanest ambient cell, cool extreme
 	// = the WHO line (0 months), so no cell the city actually breathes renders cool. Computed once.
 	private anchorLo = 1; // months at the cleanest ambient cell → diverging neutral (t=0.5)
@@ -104,8 +114,7 @@ export class ChoroplethField {
 	// Route ignite state.
 	private revealAt = new Map<number, number>();
 
-	// Neighbourhood → member cell indices (rebuilt only when the grid header changes).
-	private hoodCells: number[][] = [];
+	// Tracks the grid header so the baked baseline is re-fit only when the grid changes.
 	private headerKey = '';
 
 	get ready(): boolean {
@@ -202,6 +211,9 @@ export class ChoroplethField {
 		const combined = abs.map((v, i) => v + this.extra[i]);
 		this.ourPrev = this.has ? this.ourTarget : combined;
 		this.ourTarget = combined;
+		// Headline: cross-fade from the currently-displayed figure to the new snapshot's.
+		this.headlinePrev = this.has ? this.headlineNow : (raw.personYears ?? 0);
+		this.headlineTarget = raw.personYears ?? 0;
 		this.nLat = raw.nLat;
 		this.nLon = raw.nLon;
 		this.bounds = raw.bbox;
@@ -212,27 +224,11 @@ export class ChoroplethField {
 		const key = `${raw.nLat}x${raw.nLon}@${raw.bbox.join(',')}`;
 		if (key !== this.headerKey) {
 			this.headerKey = key;
-			this.rebuildHoods();
 			this.resampleBaseline(); // re-fit the baked baseline to the new grid
 		}
 		if (this.monthsNow.length !== raw.values.length)
 			this.monthsNow = new Float64Array(raw.values.length);
 		this.texForce = true; // new snapshot → field bytes need a rebuild
-	}
-
-	private rebuildHoods(): void {
-		const { nLat, nLon, cellDeg, bounds } = this;
-		this.hoodCells = NEIGHBOURHOODS.map((h) => {
-			const members: number[] = [];
-			for (let i = 0; i < nLat; i++) {
-				const lat = bounds[1] + i * cellDeg;
-				for (let j = 0; j < nLon; j++) {
-					const lon = bounds[0] + j * cellDeg;
-					if (haversineKm(h.c[0], h.c[1], lon, lat) <= h.r) members.push(i * nLon + j);
-				}
-			}
-			return members;
-		});
 	}
 
 	// One pass per frame: combine baseline + the decade-compounded commute increment into a
@@ -241,6 +237,7 @@ export class ChoroplethField {
 		this.nowS = now;
 		if (!this.has) return;
 		const g = easeInOutCubic(clamp01((now - this.growthStart) / GROW_S));
+		this.headlineNow = lerp(this.headlinePrev, this.headlineTarget, g); // headline cross-fade
 		const m = this.monthsNow;
 		const baseScale = Params.base_scale;
 		const useBase = this.base.length === m.length; // ignore baseline if grid size differs
@@ -413,24 +410,74 @@ export class ChoroplethField {
 		this.recDur = dur;
 	}
 
-	// Per-neighbourhood number: mean estimated months of life lost over its travelled cells.
-	hoodMonths(): HoodReading[] {
-		const out: HoodReading[] = [];
-		for (let k = 0; k < NEIGHBOURHOODS.length; k++) {
-			const cells = this.hoodCells[k] ?? [];
-			let sum = 0;
-			let n = 0;
-			for (const idx of cells) {
-				const mo = this.monthsNow[idx] ?? 0;
+	// Mean estimated months of life lost over the ACTIVE cells within `radiusKm` of a point —
+	// the number that rides a label anchor. `null` when no cell there carries exposure, so the
+	// caller drops the label (the same gate that leaves the field transparent). Bounded scan: only
+	// the cells inside the radius's bbox are visited, so this is cheap to call per anchor per frame.
+	monthsAround(lng: number, lat: number, radiusKm: number): number | null {
+		if (!this.has || this.nLon === 0 || this.cellDeg === 0) return null;
+		const { nLat, nLon, cellDeg, bounds } = this;
+		const kx = Math.cos((lat * Math.PI) / 180) || 1;
+		const dLat = radiusKm / 111; // ° per km of latitude
+		const dLon = radiusKm / (111 * kx); // ° per km of longitude at this latitude
+		const iMin = Math.max(0, Math.floor((lat - dLat - bounds[1]) / cellDeg));
+		const iMax = Math.min(nLat - 1, Math.ceil((lat + dLat - bounds[1]) / cellDeg));
+		const jMin = Math.max(0, Math.floor((lng - dLon - bounds[0]) / cellDeg));
+		const jMax = Math.min(nLon - 1, Math.ceil((lng + dLon - bounds[0]) / cellDeg));
+		let sum = 0;
+		let n = 0;
+		for (let i = iMin; i <= iMax; i++) {
+			const clat = bounds[1] + i * cellDeg;
+			for (let j = jMin; j <= jMax; j++) {
+				const clng = bounds[0] + j * cellDeg;
+				if (haversineKm(lng, lat, clng, clat) > radiusKm) continue;
+				const mo = this.monthsNow[i * nLon + j] ?? 0;
 				if (mo > EPS_MONTHS) {
 					sum += mo;
 					n++;
 				}
 			}
-			if (n === 0) continue;
-			out.push({ name: NEIGHBOURHOODS[k].name, c: NEIGHBOURHOODS[k].c, months: sum / n });
 		}
-		return out;
+		return n > 0 ? sum / n : null;
+	}
+
+	// Field-derived label anchors for the bare (no-basemap) legend, where there are no OSM place
+	// labels to ride: sample a coarse, grid-aligned lattice (stable positions, so figures never
+	// jitter), aggregate months around each, keep the active ones, then farthest-point-spread down
+	// to `maxN` — seeded by the worst — so the survivors stay spread across the frame.
+	autoHoods(maxN: number, radiusKm = 1.8, stepKm = 2.4): HoodReading[] {
+		if (!this.has || maxN <= 0) return [];
+		const [lonMin, latMin, lonMax, latMax] = this.bounds;
+		const kx = Math.cos((((latMin + latMax) / 2) * Math.PI) / 180) || 1;
+		const dLat = stepKm / 111;
+		const dLon = stepKm / (111 * kx);
+		const cand: HoodReading[] = [];
+		for (let lat = latMin + dLat / 2; lat < latMax; lat += dLat) {
+			for (let lng = lonMin + dLon / 2; lng < lonMax; lng += dLon) {
+				const mo = this.monthsAround(lng, lat, radiusKm);
+				if (mo !== null) cand.push({ c: [lng, lat], months: mo });
+			}
+		}
+		if (cand.length <= maxN) return cand;
+		const dist = (a: HoodReading, b: HoodReading) =>
+			Math.hypot((a.c[0] - b.c[0]) * kx, a.c[1] - b.c[1]);
+		const rest = cand.slice();
+		const seed = rest.reduce((bi, h, i) => (h.months > rest[bi].months ? i : bi), 0);
+		const picked = [rest.splice(seed, 1)[0]];
+		while (picked.length < maxN && rest.length) {
+			let bestI = 0;
+			let bestD = -1;
+			for (let i = 0; i < rest.length; i++) {
+				let d = Infinity;
+				for (const q of picked) d = Math.min(d, dist(rest[i], q));
+				if (d > bestD) {
+					bestD = d;
+					bestI = i;
+				}
+			}
+			picked.push(rest.splice(bestI, 1)[0]);
+		}
+		return picked;
 	}
 
 	// City-wide headline: total estimated months of life lost across all cells.
@@ -445,9 +492,11 @@ export class ChoroplethField {
 		return this.marginal;
 	}
 
-	// Average added YEARS of life lost across the cells the commutes touch — the wall's headline.
-	marginalYearsAdded(): number {
-		return this.marginalAffMonths / 12;
+	// The wall's headline: aggregate PERSON-YEARS of life lost the logged corridors reveal
+	// (server-computed coverage × per-capita transport AQLI burden × city population), lerped per frame.
+	// NOT added on top of ambient — it apportions a share of the existing burden, so it can't double-count.
+	headlinePersonYears(): number {
+		return this.headlineNow;
 	}
 
 	// The months this one route adds across its cells (the "+N mo" the recalc card surfaces).

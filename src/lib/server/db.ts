@@ -55,6 +55,13 @@ function getDb(): Database.Database {
 	} catch {
 		// column already exists
 	}
+	// corridor_people_per_day: the route's real corridor traffic volume (junction counts), stored so
+	// the wall's represented-traffic field need not recompute it per request. Added idempotently.
+	try {
+		handle.exec('ALTER TABLE lines ADD COLUMN corridor_people_per_day INTEGER');
+	} catch {
+		// column already exists
+	}
 	db = handle;
 	return handle;
 }
@@ -129,6 +136,7 @@ export type LineInput = {
 	co2PerKmG: number;
 	greyBucket: number;
 	tripsPerYear: number;
+	corridorPeoplePerDay: number | null;
 	segments: LineSegment[];
 };
 
@@ -141,6 +149,7 @@ export type LineRow = {
 	co2PerKmG: number;
 	greyBucket: number;
 	tripsPerYear: number | null;
+	corridorPeoplePerDay: number | null;
 	segments: LineSegment[];
 	// Best-effort O→D station labels (joined from the submission) for the wall's
 	// "your route" callout. Optional — undefined when the route didn't snap to stations.
@@ -152,9 +161,9 @@ export function insertLine(line: LineInput): number {
 	const info = getDb()
 		.prepare(
 			`INSERT INTO lines (submission_id, created_at, chosen_mode, distance_km,
-				co2_per_trip_kg, co2_per_km_g, grey_bucket, trips_per_year, segments)
+				co2_per_trip_kg, co2_per_km_g, grey_bucket, trips_per_year, corridor_people_per_day, segments)
 			 VALUES (@submissionId, @createdAt, @chosenMode, @distanceKm,
-				@co2PerTripKg, @co2PerKmG, @greyBucket, @tripsPerYear, @segments)`
+				@co2PerTripKg, @co2PerKmG, @greyBucket, @tripsPerYear, @corridorPeoplePerDay, @segments)`
 		)
 		.run({
 			submissionId: line.submissionId,
@@ -165,6 +174,7 @@ export function insertLine(line: LineInput): number {
 			co2PerKmG: line.co2PerKmG,
 			greyBucket: line.greyBucket,
 			tripsPerYear: line.tripsPerYear,
+			corridorPeoplePerDay: line.corridorPeoplePerDay ?? null,
 			segments: JSON.stringify(line.segments)
 		});
 	return Number(info.lastInsertRowid);
@@ -179,6 +189,7 @@ type RawLine = {
 	co2_per_km_g: number;
 	grey_bucket: number;
 	trips_per_year: number | null;
+	corridor_people_per_day: number | null;
 	segments: string;
 	origin_label?: string | null;
 	dest_label?: string | null;
@@ -194,6 +205,7 @@ function parseLine(r: RawLine): LineRow {
 		co2PerKmG: r.co2_per_km_g,
 		greyBucket: r.grey_bucket,
 		tripsPerYear: r.trips_per_year,
+		corridorPeoplePerDay: r.corridor_people_per_day ?? null,
 		segments: JSON.parse(r.segments) as LineSegment[],
 		originLabel: r.origin_label ?? undefined,
 		destinationLabel: r.dest_label ?? undefined

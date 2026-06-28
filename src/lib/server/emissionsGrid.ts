@@ -11,7 +11,15 @@
 //          is 0 this equals raw (any tailpipe PM above zero-emission transit is excess).
 //   cf   — counterfactual "more public transport" (see GridType below).
 
-import { MODE_PM25_G_PER_PKM, legKindToMode, haversineKm } from '$lib/emissions';
+import {
+	CORRIDOR_BLEND_PM25_G_PER_PKM,
+	CORRIDOR_SHARE,
+	MODE_PM25_G_PER_PKM,
+	legKindToMode,
+	haversineKm
+} from '$lib/emissions';
+import { Attribution, personYearsLost } from '$lib/viz/health';
+import { estimateCorridorTraffic } from '$lib/receipt/corridorTraffic';
 import { listLines, type LineRow } from './db';
 
 // ── Grid: cell centres on a uniform lattice over Bengaluru ──
@@ -50,13 +58,13 @@ function makeGrid(cell: number): Grid {
 const STEP_KM = 0.25; // polyline sample spacing
 const KM_PER_DEG_LAT = 111.32;
 const DEFAULT_DECAY_KM = 1.2;
-const FALLBACK_TRIPS_PER_YEAR = 288; // legacy rows with NULL trips_per_year
 
-// Reference commute the wall calibrates against: one fresh 8 km daily car commute. Its peak deposit
-// is the ABSOLUTE scale unit, so the field no longer depends on whatever happened to be loaded first
-// (which made early entries balloon then snap back on reload). Only the cell size / kernel move it.
-const REF_TRIPS_PER_YEAR = 480; // daily commuter
+// Reference corridor the colour scale calibrates against: an 8 km stretch carrying the city's
+// lower-quartile junction volume (the same fallback the receipt uses). Its peak deposit is the
+// ABSOLUTE scale unit, so the field tracks the represented-traffic weighting rather than depending
+// on whatever happened to load first. Only the cell size / kernel move it.
 const REF_LEN_KM = 8;
+const DAYS_PER_YEAR = 365; // annualise a corridor's daily volume
 
 // Slow rolling decay: a route's contribution halves every HALF_LIFE_DAYS, so the field
 // stays "live" and bounded over a long exhibition run instead of accreting to all-red.
@@ -85,7 +93,9 @@ export type Field = {
 	bbox: [number, number, number, number]; // [lonMin, latMin, lonMax, latMax]
 	values: number[]; // row-major lat(asc) × lon(asc), normalised 0..1
 	rawMax: number; // pre-normalisation peak of the deposit (for reference)
-	refDeposit: number; // peak deposit of ONE reference commute — the wall's absolute scale unit
+	refDeposit: number; // peak deposit of the reference corridor — the wall's absolute scale unit
+	coverage: number; // 0..1 — represented vehicular PM2.5 of logged corridors ÷ the city inventory
+	personYears: number; // aggregate person-years of life lost the logged corridors reveal (headline)
 };
 
 function factorFor(kind: LineRow['segments'][number]['legKind']): number {
@@ -142,8 +152,11 @@ function stamp(
 	}
 }
 
-// Deposit one route: walk each segment, drop a sample every STEP_KM, each carrying
-// (factor or excess) × tripsPerYear × stepKm of that mode's emissions.
+// Deposit one route as the REPRESENTED traffic it stands in for: each leg carries the corridor's
+// same-mode annual flow (peoplePerDay × that mode's corridor share × 365), not a single visitor's
+// trips. Walk each segment, drop a sample every STEP_KM, each carrying (factor or excess) ×
+// represented person-km. Metro/walk legs (share·factor → 0) deposit nothing, so the map stays
+// mode-aware — a metro commute reveals no extra heat even though its corridor carries cars.
 function depositLine(
 	grid: Float64Array,
 	g: Grid,
@@ -151,11 +164,13 @@ function depositLine(
 	type: GridType,
 	decayKm: number,
 	shift: number,
-	timeWeight: number // 0..1 temporal decay for this route's age
+	timeWeight: number, // 0..1 temporal decay for this route's age
+	peoplePerDay: number // the corridor's real daily volume this route represents
 ): void {
-	const trips = line.tripsPerYear ?? FALLBACK_TRIPS_PER_YEAR;
 	const clean = cleanFactor();
 	for (const seg of line.segments) {
+		const share = CORRIDOR_SHARE[legKindToMode(seg.legKind)] ?? 0; // same-mode share of the corridor
+		if (share <= 0) continue;
 		const factor = factorFor(seg.legKind);
 		const perKm =
 			type === 'cf'
@@ -164,6 +179,7 @@ function depositLine(
 					? Math.max(0, factor - clean)
 					: factor;
 		if (perKm <= 0) continue;
+		const annualFlow = peoplePerDay * share * DAYS_PER_YEAR; // represented same-mode person-trips/yr
 		const coords = seg.coords;
 		for (let k = 1; k < coords.length; k++) {
 			const [lng1, lat1] = coords[k - 1];
@@ -172,10 +188,38 @@ function depositLine(
 			if (legKm <= 0) continue;
 			const nSub = Math.max(1, Math.ceil(legKm / STEP_KM));
 			const stepKm = legKm / nSub;
-			const weight = perKm * trips * stepKm * timeWeight;
+			const weight = perKm * annualFlow * stepKm * timeWeight;
 			for (let s = 0; s < nSub; s++) {
 				const t = (s + 0.5) / nSub;
 				stamp(grid, g, lng1 + (lng2 - lng1) * t, lat1 + (lat2 - lat1) * t, weight, decayKm);
+			}
+		}
+	}
+}
+
+// Coverage stamp: mark each cell the route passes with the MAX represented PM2.5 (g/km/yr) of any
+// route through it. Per-cell max (not sum) means the same corridor logged many times counts once —
+// coverage measures distinct corridors revealed, never double-counts overlap. Mode-independent
+// (whole-corridor blend), since the corridor carries its full traffic regardless of the visitor's mode.
+function coverLine(cover: Float64Array, g: Grid, line: LineRow, massPerKm: number): void {
+	if (massPerKm <= 0) return;
+	for (const seg of line.segments) {
+		const coords = seg.coords;
+		for (let k = 1; k < coords.length; k++) {
+			const [lng1, lat1] = coords[k - 1];
+			const [lng2, lat2] = coords[k];
+			const legKm = haversineKm(lng1, lat1, lng2, lat2);
+			if (legKm <= 0) continue;
+			const nSub = Math.max(1, Math.ceil(legKm / STEP_KM));
+			for (let s = 0; s < nSub; s++) {
+				const t = (s + 0.5) / nSub;
+				const lng = lng1 + (lng2 - lng1) * t;
+				const lat = lat1 + (lat2 - lat1) * t;
+				const i = Math.round((lat - g.latMin) / g.cell);
+				const j = Math.round((lng - g.lonMin) / g.cell);
+				if (i < 0 || i >= g.nLat || j < 0 || j >= g.nLon) continue;
+				const idx = i * g.nLon + j;
+				if (massPerKm > cover[idx]) cover[idx] = massPerKm;
 			}
 		}
 	}
@@ -212,11 +256,11 @@ function referenceDeposit(g: Grid, decayKm: number): number {
 		[cLon, cLat - halfDeg],
 		[cLon, cLat + halfDeg]
 	];
-	const line = {
-		tripsPerYear: REF_TRIPS_PER_YEAR,
-		segments: [{ legKind: 'cab', coords }]
-	} as unknown as LineRow;
-	depositLine(grid, g, line, 'raw', decayKm, DEFAULT_CF_SHIFT, 1);
+	const line = { segments: [{ legKind: 'cab', coords }] } as unknown as LineRow;
+	// City lower-quartile junction volume — the same fallback estimateCorridorTraffic returns when a
+	// route touches no junction — so the reference tracks the represented-traffic weighting.
+	const pRef = estimateCorridorTraffic(undefined, REF_LEN_KM).peoplePerDay;
+	depositLine(grid, g, line, 'raw', decayKm, DEFAULT_CF_SHIFT, 1, pRef);
 	let peak = 0;
 	for (const v of grid) if (v > peak) peak = v;
 	return peak;
@@ -227,14 +271,34 @@ export function buildField(opts: FieldOpts): Field {
 	const g = makeGrid(cell);
 
 	const grid = new Float64Array(g.nLat * g.nLon);
+	const cover = new Float64Array(g.nLat * g.nLon); // per-cell MAX represented PM2.5 (g/km/yr), deduped
 	const now = opts.nowMs ?? Date.now();
 	const halfLifeDays = opts.halfLifeDays ?? DEFAULT_HALF_LIFE_DAYS;
 	const lambda = halfLifeDays > 0 ? Math.LN2 / (halfLifeDays * 86_400_000) : 0;
 	for (const line of listLines({})) {
 		const tw = lambda > 0 ? Math.exp(-lambda * Math.max(0, now - line.createdAt)) : 1;
 		if (tw < 1e-3) continue; // faded out — negligible contribution, skip
-		depositLine(grid, g, line, type, decayKm, shift, tw);
+		// Each route represents its corridor's real traffic. Use the stored junction volume, or
+		// estimate it on the fly for legacy/seeded rows that predate the column.
+		const peoplePerDay =
+			line.corridorPeoplePerDay && line.corridorPeoplePerDay > 0
+				? line.corridorPeoplePerDay
+				: estimateCorridorTraffic(
+						line.segments as unknown as Parameters<typeof estimateCorridorTraffic>[0],
+						line.distanceKm
+					).peoplePerDay;
+		depositLine(grid, g, line, type, decayKm, shift, tw, peoplePerDay);
+		coverLine(cover, g, line, peoplePerDay * CORRIDOR_BLEND_PM25_G_PER_PKM * DAYS_PER_YEAR * tw);
 	}
+
+	// Coverage = the logged corridors' represented vehicular PM2.5 (deduped per cell) ÷ the city's
+	// measured vehicular PM2.5 inventory. The headline is the transport-attributable life-years that
+	// share reveals — a slice of the EXISTING ambient burden, never added on top of it.
+	const cellKm = KM_PER_DEG_LAT * cell;
+	let representedGramsPerYear = 0;
+	for (const v of cover) representedGramsPerYear += v * cellKm;
+	const coverage = Math.min(1, representedGramsPerYear / 1e6 / Attribution.city_vehicular_pm25_tpa);
+	const personYears = personYearsLost(coverage);
 
 	// Soft saturation ceiling: normalise to the robust peak (and report it as rawMax) so the
 	// absolute deposit the wall reconstructs (value × rawMax) is capped there too.
@@ -250,6 +314,8 @@ export function buildField(opts: FieldOpts): Field {
 		bbox: [g.lonMin, g.latMin, g.lonMax, g.latMax],
 		values,
 		rawMax: denom,
-		refDeposit: referenceDeposit(g, decayKm)
+		refDeposit: referenceDeposit(g, decayKm),
+		coverage,
+		personYears
 	};
 }
