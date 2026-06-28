@@ -40,10 +40,13 @@ export const WALL = {
 		major: { cellM: 90, restOpacity: 0.14, zoomOpacity: 0.95 }, // arteries: tighter grid, bolder
 		faint: { cellM: 70, restOpacity: 0.005, zoomOpacity: 0.1 }, // minor/service: coarser, lighter
 		// Water + greenery as dot-FIELDS (mapscii rasterises filled polygons to the same dot grid as
-		// the roads — see dottedBasemap.gridDotsFill). Coloured, sparse dots over the heat: lakes read
-		// blue, parks/woodland green. Denser grid for water so lakes fill in; greenery a touch sparser.
-		water: { cellM: 60, color: '#2f7fb0', restOpacity: 0.45, zoomOpacity: 0.85 },
-		green: { cellM: 75, color: '#3f8f5c', restOpacity: 0.3, zoomOpacity: 0.7 }
+		// the roads — see dottedBasemap.gridDotsFill). Colours are pulled from the heat ramp's COOL
+		// side so they harmonise with the warm field instead of fighting it: water = the diverging
+		// ramp's blue end (#3696EC) muted toward the neutral midpoint; green = a teal-leaning spruce,
+		// the same "clean/cool" note as the co2 teal and the metro leg. Denser grid for water so lakes
+		// fill in; greenery a touch sparser.
+		water: { cellM: 60, color: '#3d6f93', restOpacity: 0.45, zoomOpacity: 0.85 },
+		green: { cellM: 75, color: '#367a5e', restOpacity: 0.3, zoomOpacity: 0.7 }
 	},
 
 	// Labels
