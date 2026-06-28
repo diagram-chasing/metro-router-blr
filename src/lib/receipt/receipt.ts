@@ -10,6 +10,7 @@ import type { Answers, Decider, Frequency, FunQuestionId, Lifestyle, Mode } from
 import type { GeoSnapshot } from '$lib/server/receiptStore';
 import { assignArchetype, archetypeBasis } from './archetype';
 import { estimateCorridorTraffic } from './corridorTraffic';
+import { landValueAtPoint } from './landValue';
 
 export type ComputedReceipt = {
 	// Inputs echoed back in readable form
@@ -251,9 +252,10 @@ const CORRIDOR_KEY_MODE: Record<string, Mode> = {
 	auto: 'auto',
 	metro: 'metro'
 };
-// Real-estate beat (10): a parked car occupies ~13 m² of street. ratePerM2 is an
-// illustrative Bengaluru land value (~₹20k/sqft → ~₹2.15 lakh/m²), flagged in the
-// fine print as a convention, not an appraisal.
+// Real-estate beat (10): a parked car occupies ~13 m² of street. ratePerM2 is the
+// state guidance value (₹/m²) for the zone the destination sits in (guidance_value.json),
+// a conservative stand-in for market land value. PARKING_RATE_PER_M2 is the fallback
+// when the destination is unknown or falls outside the dataset (~₹2.15 lakh/m²).
 const PARKING_AREA_M2 = 13;
 const PARKING_RATE_PER_M2 = 215000;
 
@@ -935,8 +937,11 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 	const halfAnnualKg = 0.5 * annualCommuteKg + 0.5 * annualSwitchedKg;
 	const halfSavedKg = Math.max(0, annualCommuteKg - halfAnnualKg);
 
-	// Beat 10 — parking footprint as real estate
-	const parkingRupees = PARKING_AREA_M2 * PARKING_RATE_PER_M2;
+	// Beat 10 — parking footprint as real estate, priced at the destination's
+	// guidance value when we have a drop pin; the city-wide constant otherwise.
+	const destRate = a.destination ? landValueAtPoint(a.destination) : null;
+	const parkingRatePerM2 = destRate && destRate > 0 ? destRate : PARKING_RATE_PER_M2;
+	const parkingRupees = PARKING_AREA_M2 * parkingRatePerM2;
 	const parkingAreaLabel = a.destinationStation ?? a.originStation ?? 'this part of the city';
 
 	const isClean = tripMode === 'bus' || tripMode === 'metro' || tripMode === 'active';
@@ -997,7 +1002,7 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 		},
 		parking: {
 			areaM2: PARKING_AREA_M2,
-			ratePerM2: PARKING_RATE_PER_M2,
+			ratePerM2: parkingRatePerM2,
 			rupees: parkingRupees,
 			areaLabel: parkingAreaLabel
 		},
