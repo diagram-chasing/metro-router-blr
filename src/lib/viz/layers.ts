@@ -11,7 +11,7 @@ type FieldLayerInstance = InstanceType<Deck['FieldLayer']>;
 export function buildFieldLayer(
 	deck: Deck,
 	field: ChoroplethField,
-	opts: { time: number; idle?: number; smooth?: boolean; beforeId?: string }
+	opts: { time: number; idle?: number; smooth?: boolean; beforeId?: string; blocky?: number }
 ): FieldLayerInstance | null {
 	const fieldData = field.textureImage();
 	if (!fieldData) return null;
@@ -40,7 +40,8 @@ export function buildFieldLayer(
 		pathB: [...pt(2), ...pt(3)],
 		pathC: [...pt(4), ...pt(5)],
 		pathD: [...pt(6), ...pt(7)],
-		pathCount: path.length / 2
+		pathCount: path.length / 2,
+		blocky: opts.blocky ?? 1 // heat super-cell size in grid cells (1 = native; >1 chunks it)
 	};
 	const Ctor = deck.FieldLayer as unknown as new (p: Record<string, unknown>) => FieldLayerInstance;
 	return new Ctor(props);

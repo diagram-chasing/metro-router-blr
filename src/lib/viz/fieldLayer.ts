@@ -22,6 +22,7 @@ layout(std140) uniform fieldFxUniforms {
   vec4  pathC;
   vec4  pathD;
   float pathCount;     // valid points (2..8); <2 → circle fallback
+  float blocky;        // heat super-cell size in grid cells (1 = native; >1 chunks the field)
 } fieldFx;
 `;
 
@@ -44,7 +45,8 @@ export const fieldFxUniforms = {
 		pathB: 'vec4<f32>',
 		pathC: 'vec4<f32>',
 		pathD: 'vec4<f32>',
-		pathCount: 'f32'
+		pathCount: 'f32',
+		blocky: 'f32'
 	}
 } as const;
 
@@ -66,6 +68,7 @@ export type FieldFxProps = {
 	pathC: V4;
 	pathD: V4;
 	pathCount: number;
+	blocky: number;
 };
 
 const FIELDFX_DEFAULTS: FieldFxProps = {
@@ -83,7 +86,8 @@ const FIELDFX_DEFAULTS: FieldFxProps = {
 	pathB: [0, 0, 0, 0],
 	pathC: [0, 0, 0, 0],
 	pathD: [0, 0, 0, 0],
-	pathCount: 0
+	pathCount: 0,
+	blocky: 1
 };
 
 
@@ -109,9 +113,29 @@ float fieldBayer(vec2 px) {
   return m[i] / 16.0;
 }
 
-// Grid-line mask: 1 on cell borders, 0 inside, AA'd to a crisp 1px lattice at any zoom.
+// Render-cell count: the native grid coarsened by the blocky factor so the heat reads as chunky
+// super-cells (the data grid is fine — ~330m — so at native res the blocks are tiny and look
+// like a smooth gradient). blocky=1 → native grid. Floored so cells stay whole and aligned.
+vec2 fieldCells() {
+  return max(floor(fieldFx.gridSize / max(fieldFx.blocky, 1.0)), vec2(1.0));
+}
+
+// Snap a uv to the centre of its super-cell, so re-sampling the (nearest-filtered) field texture
+// there picks one representative value for the whole block — chunking the heat without touching data.
+vec2 fieldBlockUV(vec2 uv) {
+  vec2 cells = fieldCells();
+  return (floor(uv * cells) + 0.5) / cells;
+}
+
+// The super-cell texel, sampled once in main() (where bitmapTexture is in scope) and read back in
+// the colour hook — that hook is a separate function assembled before the texture's declaration, so
+// it can't sample the texture itself.
+vec4 fieldBlockTexel;
+
+// Grid-line mask: 1 on cell borders, 0 inside, AA'd to a crisp 1px lattice at any zoom. Drawn on
+// the super-cell grid so the lattice frames the chunky blocks rather than the fine data cells.
 float fieldGrid(vec2 uv) {
-  vec2 c = uv * fieldFx.gridSize;
+  vec2 c = uv * fieldCells();
   vec2 g = abs(fract(c) - 0.5);
   vec2 w = fwidth(c);
   vec2 line = smoothstep(vec2(0.5), 0.5 - w, g);
@@ -165,8 +189,8 @@ vec2 fieldRecalc(vec2 uv) {
   if (dur <= 0.0) return vec2(0.0);
   float p = (fieldFx.time - fieldFx.recalcStart) / dur;
   if (p < 0.0 || p > 1.6) return vec2(0.0);                 // lingers a beat past the sweep
-  // Evaluate at the CELL CENTRE so the effect is gridded, not smooth.
-  vec2 cuv = (floor(uv * fieldFx.gridSize) + 0.5) / fieldFx.gridSize;
+  // Evaluate at the super-cell CENTRE so the sweep is gridded to match the chunky heat blocks.
+  vec2 cuv = fieldBlockUV(uv);
   float d = fieldDistToPath(cuv);
   float R = fieldPathRadius();
   float env = smoothstep(0.0, 0.22, p) * (1.0 - smoothstep(0.82, 1.6, p)); // eased in/out
@@ -254,10 +278,13 @@ float fieldHaze(vec2 uv) {
 // ── GLSL composition (injected at fs:DECKGL_FILTER_COLOR) ──
 // `color` arrives as the raw field texel; decode the channels and rebuild the pixel.
 const FIELD_COMPOSE = /* glsl */ `
-  float fHue = color.r;
-  float fInt = color.g;
+  // The heat reads as chunky blocks via fieldBlockTexel (the field re-sampled at the super-cell
+  // centre, stashed in main()). Ignite stays at native res (color.b) so the route thread keeps its
+  // 1-cell crispness; the wavy ambience below keeps using the continuous geometry.uv so it stays smooth.
+  float fHue = fieldBlockTexel.r;
+  float fInt = fieldBlockTexel.g;
   float fIgnite = color.b;
-  float fMask = color.a;
+  float fMask = fieldBlockTexel.a;
 
   vec3 rgb = fieldRamp(fHue);
   float a = fieldOpacity(fInt);
@@ -298,7 +325,7 @@ const FIELD_COMPOSE = /* glsl */ `
   // enough to read across the room — empty cells churn too, so the whole area around the route works.
   vec2 rc = fieldRecalc(geometry.uv);
   if (rc.y > 0.0) {
-    vec2 cell = floor(geometry.uv * fieldFx.gridSize);
+    vec2 cell = floor(geometry.uv * fieldCells());
     float step = mod(floor(fieldFx.time * 11.0), 131.0);
     float jitter = (fieldHash(cell + step) - 0.5) * 0.55;
     float churnHue = fMask > 0.5 ? fHue : 0.5; // hot cells churn hot; empty churn around neutral
@@ -321,6 +348,14 @@ const FIELD_COMPOSE = /* glsl */ `
   rgb *= 1.0 - 0.38 * fieldGrid(geometry.uv);
 
   color = vec4(rgb, clamp(a, 0.0, 1.0));
+`;
+
+// Injected at the START of main(), where bitmapTexture + vTexCoord are in scope (the colour hook
+// is a separate function assembled before the texture's declaration, so it can't sample there).
+// Stash the super-cell texel for FIELD_COMPOSE. vTexCoord is the field uv (linear bounds → no
+// coordinate conversion), matching the geometry.uv the colour hook uses.
+const FIELD_SAMPLE = /* glsl */ `
+  fieldBlockTexel = texture(bitmapTexture, fieldBlockUV(vTexCoord));
 `;
 
 // Field data the layer turns into its texture. A new object ref signals a change (deck diffs
@@ -363,6 +398,7 @@ export function makeFieldLayer(Base: typeof BitmapLayer) {
 				inject: {
 					...inject,
 					'fs:#decl': (inject['fs:#decl'] ?? '') + FIELD_LIB,
+					'fs:#main-start': (inject['fs:#main-start'] ?? '') + FIELD_SAMPLE,
 					'fs:DECKGL_FILTER_COLOR': (inject['fs:DECKGL_FILTER_COLOR'] ?? '') + FIELD_COMPOSE
 				}
 			};
@@ -440,7 +476,8 @@ export function makeFieldLayer(Base: typeof BitmapLayer) {
 					pathB: p.pathB,
 					pathC: p.pathC,
 					pathD: p.pathD,
-					pathCount: p.pathCount
+					pathCount: p.pathCount,
+					blocky: p.blocky
 				}
 			});
 			model.draw((this.context as { renderPass: unknown }).renderPass);

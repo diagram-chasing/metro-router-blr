@@ -122,6 +122,7 @@
 			const idleAmt = WALL.idle;
 			const driftAmt = WALL.drift;
 			const demo = WALL.demo;
+			const blockyAmt = WALL.blocky; // heat super-cell size (chunks the smooth field)
 
 			const deck = await loadDeck();
 			if (disposed) return;
@@ -460,7 +461,12 @@
 				// Continuous `t` (not quantised) → smooth shader animation; the texture itself
 				// only re-uploads when fillTexture bumped its identity.
 				const fieldLayer = field.ready
-					? buildFieldLayer(deck, field, { time: t, idle: idleAmt, beforeId: fieldBeforeId })
+					? buildFieldLayer(deck, field, {
+							time: t,
+							idle: idleAmt,
+							beforeId: fieldBeforeId,
+							blocky: blockyAmt
+						})
 					: null;
 
 				// Route card: fades in as the camera zooms to the route, holds through the featured

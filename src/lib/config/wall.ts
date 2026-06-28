@@ -23,6 +23,7 @@ export const WALL = {
 
 	// Field / technical
 	cell: 0.003, // grid resolution (deg)
+	blocky: 3, // heat super-cell size in data cells (1 = native ~330m cells; >1 chunks the field)
 	poll: 4000, // ms between server polls
 	decayKm: 1.2, // spatial smear radius
 
