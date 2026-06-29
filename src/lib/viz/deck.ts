@@ -14,6 +14,7 @@ export async function loadDeck() {
 		GridCellLayer: layers.GridCellLayer,
 		PathLayer: layers.PathLayer,
 		ScatterplotLayer: layers.ScatterplotLayer,
+		SolidPolygonLayer: layers.SolidPolygonLayer,
 		TextLayer: layers.TextLayer,
 		TripsLayer: geo.TripsLayer,
 		FieldLayer: makeFieldLayer(layers.BitmapLayer) // single-texture choropleth (fieldLayer.ts)

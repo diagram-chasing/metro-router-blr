@@ -43,6 +43,10 @@ export const WALL = {
 	poll: 4000, // ms between server polls
 	decayKm: 1.2, // spatial smear radius
 
+	// Route spotlight camera: fit the route to the screen with some padding, zooming in further for
+	// small routes so they fill the frame (maxZoom only caps very tiny trips from over-zooming).
+	focus: { padding: 200, maxZoom: 13 },
+
 	// Show pacing (s)
 	dur: { dim: 0.6, reveal: 1.8, hold: 4.6, recalc: 2.4, zoomBack: 1.4, settle: 1.1 },
 	dimMin: 0.3,

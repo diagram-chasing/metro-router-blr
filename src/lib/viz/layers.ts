@@ -92,6 +92,192 @@ export function buildDotsLayer(
 	});
 }
 
+const clamp01 = (x: number) => (x < 0 ? 0 : x > 1 ? 1 : x);
+const M_PER_DEG = 111320;
+
+// Sample the route into an ordered run of grid-snapped square cells — the same dot/cell language as
+// the heat field and the receipt's mapscii route, instead of a smooth vector line. Each road point
+// is snapped to a fixed metric grid (`blockM`) and we keep one cell per occupied square, in path
+// order (origin → destination), so the run can be revealed cell-by-cell as the route draws.
+function routeBlocks(route: [number, number][], blockM: number) {
+	const refLat = route[0][1];
+	const kx = Math.cos((refLat * Math.PI) / 180) || 1; // lng→metric squash at this latitude
+	const dLat = blockM / M_PER_DEG; // degrees lat per block
+	const dLng = dLat / kx; // degrees lng per block → a square in metres
+	const colOf = (lng: number) => Math.round(lng / dLng);
+	const rowOf = (lat: number) => Math.round(lat / dLat);
+	const cells: [number, number][] = []; // ordered cell centres
+	const seen = new Set<number>();
+	const add = (lng: number, lat: number) => {
+		const c = colOf(lng);
+		const r = rowOf(lat);
+		const key = r * 100003 + c;
+		if (seen.has(key)) return;
+		seen.add(key);
+		cells.push([c * dLng, r * dLat]);
+	};
+	const stepDeg = dLat / 2; // ≤½-cell steps → no skipped cells on a fast diagonal
+	for (let i = 1; i < route.length; i++) {
+		const [x0, y0] = route[i - 1];
+		const [x1, y1] = route[i];
+		const segDeg = Math.hypot((x1 - x0) * kx, y1 - y0);
+		const n = Math.max(1, Math.ceil(segDeg / stepDeg));
+		for (let k = 0; k <= n; k++) {
+			const t = k / n;
+			add(x0 + (x1 - x0) * t, y0 + (y1 - y0) * t);
+		}
+	}
+	return { cells, dLat, dLng };
+}
+
+// The featured route drawn the receipt way (src/lib/receipt/viz/RouteMap): a blocky run of square
+// cells (matching the heat field's blocky look) with a hollow-ring origin marker, a filled-disc
+// destination marker, and the origin/destination names on white "paper" chips — all in the same
+// 1-bit language as the printed slip. `opacity` fades the whole set with the highlight envelope;
+// `progress` (0..1) reveals the blocks origin→destination in lockstep with the heat cells igniting;
+// `scale` sizes the markers/labels for viewing distance; `bg` is the wall background (disc rim);
+// `names` are the endpoint labels (omitted → no chip, e.g. demo routes).
+export function buildRouteLayers(
+	deck: Deck,
+	route: [number, number][],
+	opts: {
+		opacity: number;
+		bg: [number, number, number];
+		beforeId?: string;
+		scale?: number;
+		progress?: number;
+		blockM?: number;
+		names?: { origin?: string; dest?: string };
+	}
+) {
+	if (route.length < 2) return [];
+	const s = opts.scale ?? 1;
+	const op = clamp01(opts.opacity);
+	const progress = clamp01(opts.progress ?? 1);
+	const origin = route[0];
+	const dest = route[route.length - 1];
+
+	// Blocky route: reveal the leading `progress` fraction of the cell run, snapped to the grid.
+	const { cells, dLat, dLng } = routeBlocks(route, opts.blockM ?? 150);
+	const shown = progress >= 1 ? cells : cells.slice(0, Math.ceil(cells.length * progress));
+	const cov = 0.82; // cell coverage (<1 leaves a hairline gap → reads as discrete blocks)
+	const hx = (dLng * cov) / 2;
+	const hy = (dLat * cov) / 2;
+	const squares = shown.map(([lng, lat]) => [
+		[lng - hx, lat - hy],
+		[lng + hx, lat - hy],
+		[lng + hx, lat + hy],
+		[lng - hx, lat + hy]
+	]);
+	const destReveal = clamp01((progress - 0.85) / 0.15); // disc + dest chip arrive with the line
+
+	const common = { beforeId: opts.beforeId, parameters: { depthTest: false } };
+	const marker = {
+		...common,
+		getPosition: (d: [number, number]) => d,
+		radiusUnits: 'pixels' as const,
+		getRadius: 0,
+		lineWidthUnits: 'pixels' as const
+	};
+
+	// Name chips — white paper, black mono, like the receipt's endpoint chips. Each name is pushed OFF
+	// THE END of the route (origin behind the start, destination beyond the end) along the
+	// origin↔destination axis, so the chips never sit over the drawn blocks. The map holds bearing and
+	// pitch at 0, so screen space is geo with the y-axis flipped (+lat = up); the text anchor grows the
+	// label further outward. Per-chip alpha so the destination chip fades in as the line reaches it.
+	const kxr = Math.cos((origin[1] * Math.PI) / 180) || 1; // lng→metric squash at this latitude
+	let ax = (dest[0] - origin[0]) * kxr;
+	let ay = -(dest[1] - origin[1]); // flip lat → screen-y (down)
+	const al = Math.hypot(ax, ay) || 1;
+	ax /= al;
+	ay /= al;
+	const anchorOf = (dx: number): 'start' | 'middle' | 'end' => (dx > 0.3 ? 'start' : dx < -0.3 ? 'end' : 'middle');
+	const chips: { pos: [number, number]; text: string; anchor: 'start' | 'middle' | 'end'; off: [number, number]; a: number }[] = [];
+	const trim = (t: string) => (t.length > 18 ? t.slice(0, 17) + '…' : t).toUpperCase();
+	if (opts.names?.origin) {
+		const d = 9 * s + 22; // clear the origin ring (and the chip's own height when stacked vertically)
+		chips.push({ pos: origin, text: trim(opts.names.origin), anchor: anchorOf(-ax), off: [Math.round(-ax * d), Math.round(-ay * d)], a: op });
+	}
+	if (opts.names?.dest && destReveal > 0.001) {
+		const d = 8 * s + 22; // clear the destination disc
+		chips.push({ pos: dest, text: trim(opts.names.dest), anchor: anchorOf(ax), off: [Math.round(ax * d), Math.round(ay * d)], a: op * destReveal });
+	}
+
+	return [
+		// Blocky route cells (drawn under the markers/labels).
+		...(squares.length
+			? [
+					new deck.SolidPolygonLayer({
+						...common,
+						opacity: op,
+						id: 'route-blocks',
+						data: squares,
+						getPolygon: (d: number[][]) => d,
+						getFillColor: [255, 255, 255],
+						filled: true
+					})
+				]
+			: []),
+		// Origin: hollow white ring, present for the whole overlay.
+		new deck.ScatterplotLayer({
+			...marker,
+			opacity: op,
+			id: 'route-origin',
+			data: [origin],
+			stroked: true,
+			filled: false,
+			getLineColor: [255, 255, 255],
+			lineWidthMinPixels: 3 * s,
+			radiusMinPixels: 9 * s,
+			radiusMaxPixels: 9 * s
+		}),
+		// Destination: filled white disc with a thin bg rim — fades in as the blocks reach it.
+		...(destReveal > 0.001
+			? [
+					new deck.ScatterplotLayer({
+						...marker,
+						opacity: op * destReveal,
+						id: 'route-dest',
+						data: [dest],
+						stroked: true,
+						filled: true,
+						getFillColor: [255, 255, 255],
+						getLineColor: opts.bg,
+						lineWidthMinPixels: 2 * s,
+						radiusMinPixels: 8 * s,
+						radiusMaxPixels: 8 * s
+					})
+				]
+			: []),
+		// Endpoint name chips.
+		...(chips.length
+			? [
+					new deck.TextLayer({
+						...common,
+						id: 'route-names',
+						data: chips,
+						getPosition: (d: (typeof chips)[number]) => d.pos,
+						getText: (d: (typeof chips)[number]) => d.text,
+						getSize: 24 * s, // same as the neighbourhood name labels (buildHoodLabels)
+						sizeUnits: 'pixels' as const,
+						fontFamily: '"IBM Plex Mono", ui-monospace, SFMono-Regular, monospace',
+						fontWeight: 700,
+						fontSettings: { sdf: true },
+						characterSet: 'auto' as const,
+						getTextAnchor: (d: (typeof chips)[number]) => d.anchor,
+						getAlignmentBaseline: 'center' as const,
+						getPixelOffset: (d: (typeof chips)[number]) => d.off,
+						background: true,
+						getColor: (d: (typeof chips)[number]) => [0, 0, 0, Math.round(255 * d.a)],
+						getBackgroundColor: (d: (typeof chips)[number]) => [255, 255, 255, Math.round(255 * d.a)],
+						backgroundPadding: [10, 6, 10, 5],
+						updateTriggers: { getText: chips.map((c) => c.text).join('|') }
+					})
+				]
+			: [])
+	];
+}
+
 // One receipt slip per anchor: the place name on white "paper" (black mono) with the years-of-life-
 // lost figure as a reverse (white-on-black) bar directly below — the .paper + .rev motif from
 // src/lib/receipt/ReceiptDoc (and the wall's routecard/hero). Anchors are pre-spread by the caller —
@@ -106,7 +292,8 @@ export function buildHoodLabels(
 	hoods: HoodReading[],
 	tick: number,
 	scale = 1,
-	fade: number = tick
+	fade: number = tick,
+	mul = 1 // global opacity factor — fades all labels out while a route is featured
 ) {
 	// Years of life lost, one decimal (months / 12 → years), with a leading minus so it reads as a
 	// deficit — "-1.5yr". "yr" cue keeps the bare number decodable from across the room.
@@ -139,8 +326,8 @@ export function buildHoodLabels(
 			getSize: 24 * scale,
 			getAlignmentBaseline: 'bottom',
 			getPixelOffset: [0, -Math.round(4 * scale)],
-			getColor: (d: HoodReading) => [0, 0, 0, a(d.opacity)],
-			getBackgroundColor: (d: HoodReading) => [255, 255, 255, a(d.opacity)],
+			getColor: (d: HoodReading) => [0, 0, 0, a(d.opacity * mul)],
+			getBackgroundColor: (d: HoodReading) => [255, 255, 255, a(d.opacity * mul)],
 			backgroundPadding: [10, 6, 10, 5]
 		}),
 		// Years lost — the reverse (white-on-black) hero bar (ReceiptDoc .rev), below the anchor point.
@@ -151,8 +338,8 @@ export function buildHoodLabels(
 			getSize: 46 * scale,
 			getAlignmentBaseline: 'top',
 			getPixelOffset: [0, Math.round(4 * scale)],
-			getColor: (d: HoodReading) => [255, 255, 255, a(d.opacity)],
-			getBackgroundColor: (d: HoodReading) => [0, 0, 0, a(d.opacity)],
+			getColor: (d: HoodReading) => [255, 255, 255, a(d.opacity * mul)],
+			getBackgroundColor: (d: HoodReading) => [0, 0, 0, a(d.opacity * mul)],
 			backgroundPadding: [12, 8, 12, 6]
 		})
 	];

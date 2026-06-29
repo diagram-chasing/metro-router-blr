@@ -7,7 +7,7 @@
 	import { createClock, type Clock } from '$lib/viz/clock';
 	import { loadDeck, type Deck } from '$lib/viz/deck';
 	import { ChoroplethField, type HoodReading } from '$lib/viz/choroplethField';
-	import { buildFieldLayer, buildHoodLabels, buildDotsLayer } from '$lib/viz/layers';
+	import { buildFieldLayer, buildHoodLabels, buildDotsLayer, buildRouteLayers } from '$lib/viz/layers';
 	import { roadsOnlyStyle, easeInOutCubic, easeOutCubic, easeInOutSine } from '$lib/viz/palette';
 	import { loadWallRoads, gridDots, gridDotsFill, hexToRgb } from '$lib/viz/dottedBasemap';
 	import { WALL } from '$lib/config/wall';
@@ -103,6 +103,8 @@
 		let dimLevel = 1;
 		let activeRoute: [number, number][] = [];
 		let activeIsDemo = false;
+		let activeOrigin: string | undefined; // featured route's origin/destination names (receipt chips)
+		let activeDest: string | undefined;
 		let activeKm = 0; // featured route's trip length (km)
 		let activePm25 = 0; // featured route's blended PM2.5 (g/passenger-km)
 		let activeTrips = 0; // featured route's trips/year
@@ -118,6 +120,8 @@
 			route: [number, number][];
 			isDemo: boolean;
 			label?: string;
+			originLabel?: string;
+			destLabel?: string;
 			km: number;
 			pm25PerPkm: number;
 			tripsPerYear: number;
@@ -240,6 +244,8 @@
 							route: r,
 							isDemo: false,
 							label,
+							originLabel: l.originLabel,
+							destLabel: l.destinationLabel,
 							km: pm.km,
 							pm25PerPkm: pm.gPerKm,
 							tripsPerYear: l.tripsPerYear ?? 288,
@@ -278,11 +284,15 @@
 					loading = true;
 					loadProgress = 0;
 				} else if (p2 === 'dim') {
+					// The blocky route overlay (buildRouteLayers) now carries the reveal, so the field no
+					// longer ignites the corridor. We still rasterize for the zoomBack deposit (demo routes).
 					routeCells = field.rasterizeRoute(activeRoute);
-					field.igniteRoute(routeCells, t + DUR.dim, DUR.reveal);
 					const b = new maplibre.LngLatBounds();
 					for (const c of activeRoute) b.extend(c);
-					const cam = map!.cameraForBounds(b, { padding: 140, maxZoom: 12 });
+					const cam = map!.cameraForBounds(b, {
+						padding: WALL.focus.padding,
+						maxZoom: WALL.focus.maxZoom
+					});
 					if (cam)
 						map!.easeTo({
 							...cam,
@@ -296,28 +306,17 @@
 						grams: field.estimateRouteGrams(activeKm, activeTrips, activePm25)
 					};
 				} else if (p2 === 'recalc') {
-					// Recalculation sweep AROUND the route while we're still zoomed in — the field
-					// does NOT climb yet. Folding the route in is deferred to zoomBack so the order
-					// reads recalc → zoom out → reflect (the climb used to race ahead of the sweep).
-					// Keep the buffered snapshot fresh so it's current at that reflect beat.
+					// Recalc sweep removed. Hold the zoomed-in route a beat while the field stays put;
+					// just keep the buffered server snapshot fresh so it's current when the field climbs
+					// at the zoomBack reflect.
 					void pollField();
-					let cx = 0;
-					let cy = 0;
-					for (const c of activeRoute) {
-						cx += c[0];
-						cy += c[1];
-					}
-					cx /= activeRoute.length || 1;
-					cy /= activeRoute.length || 1;
-					field.setRecalc(field.cellIndexAt(cx, cy), t, DUR.recalc);
-					field.setRecalcPath(activeRoute); // pulse radiates along the route shape
 				} else if (p2 === 'zoomBack') {
 					// Reflect: now fold the route in so the corridor climbs (our commutes compounding
 					// over the decade) as the camera pulls back to the full field. Apply any buffered
 					// server snapshot first, then the demo's local deposit on top of it.
 					field.releaseSnapshots(t);
 					if (activeIsDemo) field.addRouteDeposit(routeCells, t, 0.9, activeScale);
-					field.clearRoute(); // ignite folds away, leaving the compounded corridor
+					field.clearRoute(); // force the texture to refresh to the compounded corridor
 					map!.easeTo({
 						center: restView.center,
 						zoom: restView.zoom,
@@ -397,6 +396,8 @@
 						queued = queue.length;
 						activeRoute = next.route;
 						activeIsDemo = next.isDemo;
+						activeOrigin = next.originLabel;
+						activeDest = next.destLabel;
 						activeTag = next.label;
 						activeKm = next.km;
 						activePm25 = next.pm25PerPkm;
@@ -615,22 +616,25 @@
 						})
 					: null;
 
-				// Route card: fades in as the camera zooms to the route, holds through the featured
-				// window, fades out as it zooms back. Tied to the phase, so it's on for exactly the
-				// zoomed-in span. Fixed position, so only opacity animates — no jitter at distance.
+				// Highlight envelope: 0 at rest → 1 across the featured window → 0 again as the camera
+				// zooms back. One curve drives the receipt-style route overlay (fades in), the route
+				// card (fades in), and the ambient neighbourhood labels (fade out) so they move together.
+				const phaseEl = t - phaseStart;
+				const highlight =
+					phase === 'dim'
+						? easeOutCubic(clamp01(phaseEl / DUR.dim))
+						: phase === 'reveal' || phase === 'hold' || phase === 'recalc'
+							? 1
+							: phase === 'zoomBack'
+								? 1 - easeInOutCubic(clamp01(phaseEl / DUR.zoomBack))
+								: 0;
+
+				// Route card rides the curve — on screen for exactly the zoomed-in span. Fixed position,
+				// so only opacity animates — no jitter at distance.
 				if (cardData) {
-					const ce = t - phaseStart;
-					const co =
-						phase === 'dim'
-							? easeOutCubic(clamp01(ce / DUR.dim))
-							: phase === 'reveal' || phase === 'hold' || phase === 'recalc'
-								? 1
-								: phase === 'zoomBack'
-									? 1 - easeInOutCubic(clamp01(ce / DUR.zoomBack))
-									: 0;
 					card = {
-						show: co > 0.001,
-						opacity: clamp01(co),
+						show: highlight > 0.001,
+						opacity: clamp01(highlight),
 						route: cardData.route,
 						grams: cardData.grams
 					};
@@ -703,8 +707,40 @@
 							]
 						: [];
 
+				// Featured route, drawn the receipt way (blocky cells + origin ring + destination disc +
+				// endpoint name chips), on top of the dimmed field. The blocks reveal across the `reveal`
+				// phase, in lockstep with the heat cells igniting (igniteRoute starts at dim-end and spans
+				// DUR.reveal); fully drawn through hold/recalc, then they fade out as the camera zooms back.
+				const drawProgress =
+					phase === 'reveal'
+						? clamp01(phaseEl / DUR.reveal)
+						: phase === 'hold' || phase === 'recalc' || phase === 'zoomBack'
+							? 1
+							: 0;
+				const routeLayers =
+					fieldLayer && highlight > 0.001 && activeRoute.length >= 2
+						? buildRouteLayers(deck, activeRoute, {
+								opacity: highlight,
+								bg: hexToRgb(WALL.bg),
+								beforeId: fieldBeforeId,
+								scale: scaleW,
+								progress: drawProgress,
+								names: { origin: activeOrigin, dest: activeDest }
+							})
+						: [];
+
+				// The ambient neighbourhood labels fade out as the route comes up (and back in after),
+				// so the corridor reads clean. Advance their getColor trigger as the factor moves.
+				const labelMul = clamp01(1 - highlight);
+				const labelFade = fadeKey + Math.round(labelMul * 255);
+
 				const layers = fieldLayer
-					? [fieldLayer, ...dotLayers, ...buildHoodLabels(deck, hoods, lt, scaleW, fadeKey)]
+					? [
+							fieldLayer,
+							...dotLayers,
+							...routeLayers,
+							...buildHoodLabels(deck, hoods, lt, scaleW, labelFade, labelMul)
+						]
 					: [];
 				overlay?.setProps({ layers });
 			}, watchdog);
