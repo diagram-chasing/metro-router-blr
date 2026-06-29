@@ -293,13 +293,23 @@ export function buildHoodLabels(
 	tick: number,
 	scale = 1,
 	fade: number = tick,
-	mul = 1 // global opacity factor — fades all labels out while a route is featured
+	mul = 1, // global opacity factor — fades all labels out while a route is featured
+	deltaMul = 1 // zoom gate for the delta caption only: 0 at the wide resting frame, 1 zoomed in
 ) {
 	// Years of life lost, one decimal (months / 12 → years), with a leading minus so it reads as a
 	// deficit — "-1.5yr". "yr" cue keeps the bare number decodable from across the room.
 	const fmt = (m: number) => `-${(m / 12).toFixed(1)}yr`;
+	// Commute-attributable delta vs the ACAG satellite baseline, same unit (years) as the hero, with a
+	// leading ▲+ so it reads as burden the logged commutes ADDED on top of the ambient air. Shown only
+	// where it rounds to ≥0.1yr ("for those that have it") — below that we render nothing for the label.
+	const DELTA_MIN_YR = 0.05; // 0.05yr → "+0.1yr"; under this the label carries no delta line
+	const deltaYr = (d: HoodReading) => (d.delta ?? 0) / 12;
+	const fmtDelta = (d: HoodReading) =>
+		deltaYr(d) >= DELTA_MIN_YR ? `▲ +${deltaYr(d).toFixed(1)}yr` : '';
 	const font = '"IBM Plex Mono", ui-monospace, SFMono-Regular, monospace';
 	const a = (op?: number) => Math.round(255 * (op ?? 1)); // per-label fade → alpha
+	const deltaAlpha = (d: HoodReading) =>
+		deltaYr(d) >= DELTA_MIN_YR ? a((d.opacity ?? 1) * mul * deltaMul) : 0;
 	// Legend hoods carry no name; wall hoods all do. Reuse the same array reference when nothing is
 	// filtered out so deck doesn't see the name layer's `data` change (and re-layout) every frame.
 	const allNamed = hoods.every((h) => h.name && h.name.trim());
@@ -341,6 +351,29 @@ export function buildHoodLabels(
 			getColor: (d: HoodReading) => [255, 255, 255, a(d.opacity * mul)],
 			getBackgroundColor: (d: HoodReading) => [0, 0, 0, a(d.opacity * mul)],
 			backgroundPadding: [12, 8, 12, 6]
+		}),
+		// Commute-attributable delta — a smaller reverse caption tucked under the years hero. A zoom-in
+		// detail: `deltaMul` is 0 at the wide resting frame so nothing shows, and fades it in only as the
+		// camera moves in on a sub-region (annotating just the labels in that closer view). Even then it's
+		// present only on hoods whose logged-commute share rounds to ≥0.1yr. Empty text + zero alpha
+		// elsewhere keeps the data array the stable `named` reference (no per-frame re-layout); the `tick`
+		// trigger re-reads as a hood crosses the threshold, `fade`/`deltaMul` as its opacity eases.
+		new deck.TextLayer({
+			...common,
+			id: 'hood-delta',
+			data: named,
+			getText: fmtDelta,
+			getSize: 26 * scale,
+			getAlignmentBaseline: 'top',
+			getPixelOffset: [0, Math.round(62 * scale)],
+			getColor: (d: HoodReading) => [255, 255, 255, deltaAlpha(d)],
+			getBackgroundColor: (d: HoodReading) => [0, 0, 0, deltaAlpha(d)],
+			backgroundPadding: [10, 5, 10, 5],
+			updateTriggers: {
+				getText: tick,
+				getColor: `${fade}|${tick}|${Math.round(deltaMul * 255)}`,
+				getBackgroundColor: `${fade}|${tick}|${Math.round(deltaMul * 255)}`
+			}
 		})
 	];
 }

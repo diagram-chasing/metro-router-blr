@@ -458,6 +458,7 @@
 				c: [number, number];
 				r: number;
 				months: number;
+				delta: number; // commute-attributable years (months) over the satellite baseline
 				op: number;
 				target: number;
 			};
@@ -528,13 +529,24 @@
 				for (const a of thinAnchors(out, active)) {
 					const k = keyOf(a);
 					pickedKeys.add(k);
-					const m = field.monthsAround(a.c[0], a.c[1], a.r);
+					const rd = field.readingAround(a.c[0], a.c[1], a.r);
 					const existing = liveLabels.get(k);
 					if (existing) {
 						existing.target = 1;
-						if (m !== null) existing.months = m;
-					} else if (m !== null) {
-						liveLabels.set(k, { name: a.name, c: a.c, r: a.r, months: m, op: 0, target: 1 });
+						if (rd) {
+							existing.months = rd.months;
+							existing.delta = rd.delta;
+						}
+					} else if (rd) {
+						liveLabels.set(k, {
+							name: a.name,
+							c: a.c,
+							r: a.r,
+							months: rd.months,
+							delta: rd.delta,
+							op: 0,
+							target: 1
+						});
 					}
 				}
 				for (const [k, l] of liveLabels) if (!pickedKeys.has(k)) l.target = 0;
@@ -565,9 +577,12 @@
 					// Keep each live label's figure current; if the field has gone empty under one (the
 					// same gate that leaves the heat transparent there), retire it — it then fades out.
 					for (const l of liveLabels.values()) {
-						const months = field.monthsAround(l.c[0], l.c[1], l.r);
-						if (months === null) l.target = 0;
-						else l.months = months;
+						const rd = field.readingAround(l.c[0], l.c[1], l.r);
+						if (!rd) l.target = 0;
+						else {
+							l.months = rd.months;
+							l.delta = rd.delta;
+						}
 					}
 				}
 
@@ -596,8 +611,15 @@
 					if (h) {
 						h.opacity = l.op;
 						h.months = l.months;
+						h.delta = l.delta;
 					} else {
-						hoodObjs.set(k, { name: l.name, c: l.c, months: l.months, opacity: l.op });
+						hoodObjs.set(k, {
+							name: l.name,
+							c: l.c,
+							months: l.months,
+							delta: l.delta,
+							opacity: l.op
+						});
 						membershipChanged = true;
 					}
 				}
@@ -734,12 +756,20 @@
 				const labelMul = clamp01(1 - highlight);
 				const labelFade = fadeKey + Math.round(labelMul * 255);
 
+				// The commute-vs-baseline delta is a zoom-in detail: hidden at the wide resting frame
+				// (where it'd just be tiny clutter across every label), it fades in only as the ambient
+				// drift moves in on a sub-region, annotating the handful of labels in that closer view.
+				// Keyed to the runtime cover zoom (dotsZ0 = resting zoom): off at rest, fully opaque just
+				// 0.4 levels in — well inside the ambient zoom range (~0.5–1.3 above rest) so a closer
+				// framing always reads at full strength, not half-faded.
+				const deltaMul = clamp01((map!.getZoom() - (dotsZ0 + 0.1)) / 0.3);
+
 				const layers = fieldLayer
 					? [
 							fieldLayer,
 							...dotLayers,
 							...routeLayers,
-							...buildHoodLabels(deck, hoods, lt, scaleW, labelFade, labelMul)
+							...buildHoodLabels(deck, hoods, lt, scaleW, labelFade, labelMul, deltaMul)
 						]
 					: [];
 				overlay?.setProps({ layers });

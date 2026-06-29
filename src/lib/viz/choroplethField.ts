@@ -24,7 +24,13 @@ export type Field = {
 // A label anchor + its aggregated number. `name` is informational only (the figure, not the
 // name, is rendered — place names come from the OSM basemap on the wall); it's absent for
 // field-derived anchors.
-export type HoodReading = { c: [number, number]; months: number; name?: string; opacity?: number };
+export type HoodReading = {
+	c: [number, number];
+	months: number;
+	delta?: number; // commute-attributable months vs the ACAG satellite baseline (0 = none)
+	name?: string;
+	opacity?: number;
+};
 
 const GROW_S = 1.6; // snapshot cross-fade
 const EPS_MONTHS = 1e-3; // below this a cell carries no exposure (transparent base fill)
@@ -93,6 +99,9 @@ export class ChoroplethField {
 
 	// Per-frame caches (one O(n) pass in setFrame).
 	private monthsNow: Float64Array = new Float64Array(0);
+	// Per-cell commute-attributable months — months(base+ours) − months(base). The neighbourhood
+	// delta the wall labels surface; 0 where there's no commute deposit (or no baseline to delta against).
+	private marginalNow: Float64Array = new Float64Array(0);
 	private baseMax = 0; // busiest active cell this frame — drives per-cell opacity
 	// Months attributable to the commute layer ALONE: Σ months(base+ours) − months(base).
 	private marginal = 0;
@@ -119,6 +128,12 @@ export class ChoroplethField {
 
 	get ready(): boolean {
 		return this.has;
+	}
+
+	// True once the ACAG baseline is loaded and fitted to the current grid — the precondition for a
+	// meaningful commute delta (without it, "delta" would just equal the total).
+	get hasBaseline(): boolean {
+		return this.base.length > 0 && this.base.length === this.monthsNow.length;
 	}
 
 	setDim(k: number): void {
@@ -226,8 +241,10 @@ export class ChoroplethField {
 			this.headerKey = key;
 			this.resampleBaseline(); // re-fit the baked baseline to the new grid
 		}
-		if (this.monthsNow.length !== raw.values.length)
+		if (this.monthsNow.length !== raw.values.length) {
 			this.monthsNow = new Float64Array(raw.values.length);
+			this.marginalNow = new Float64Array(raw.values.length);
+		}
 		this.texForce = true; // new snapshot → field bytes need a rebuild
 	}
 
@@ -253,6 +270,7 @@ export class ChoroplethField {
 			const mo = monthsFromConcentration(ug);
 			m[i] = mo;
 			const add = mo - monthsFromConcentration(baseUg); // months the commutes add here
+			this.marginalNow[i] = add;
 			marginal += add;
 			if (our > affEps) {
 				affMarginal += add;
@@ -410,13 +428,19 @@ export class ChoroplethField {
 		this.recDur = dur;
 	}
 
-	// Mean estimated months of life lost over the ACTIVE cells within `radiusKm` of a point —
-	// the number that rides a label anchor. `null` when no cell there carries exposure, so the
-	// caller drops the label (the same gate that leaves the field transparent). Bounded scan: only
-	// the cells inside the radius's bbox are visited, so this is cheap to call per anchor per frame.
-	monthsAround(lng: number, lat: number, radiusKm: number): number | null {
+	// Mean total months of life lost AND the commute-attributable delta (months over the ACAG
+	// satellite baseline) over the ACTIVE cells within `radiusKm` of a point — the figures that ride a
+	// label anchor, from a single bounded bbox scan. `null` when no cell there carries exposure, so the
+	// caller drops the label (the same gate that leaves the field transparent). `delta` is 0 when no
+	// baseline is loaded to delta against. Cheap enough to call per anchor per frame.
+	readingAround(
+		lng: number,
+		lat: number,
+		radiusKm: number
+	): { months: number; delta: number } | null {
 		if (!this.has || this.nLon === 0 || this.cellDeg === 0) return null;
 		const { nLat, nLon, cellDeg, bounds } = this;
+		const useDelta = this.hasBaseline;
 		const kx = Math.cos((lat * Math.PI) / 180) || 1;
 		const dLat = radiusKm / 111; // ° per km of latitude
 		const dLon = radiusKm / (111 * kx); // ° per km of longitude at this latitude
@@ -425,20 +449,29 @@ export class ChoroplethField {
 		const jMin = Math.max(0, Math.floor((lng - dLon - bounds[0]) / cellDeg));
 		const jMax = Math.min(nLon - 1, Math.ceil((lng + dLon - bounds[0]) / cellDeg));
 		let sum = 0;
+		let dsum = 0;
 		let n = 0;
 		for (let i = iMin; i <= iMax; i++) {
 			const clat = bounds[1] + i * cellDeg;
 			for (let j = jMin; j <= jMax; j++) {
 				const clng = bounds[0] + j * cellDeg;
 				if (haversineKm(lng, lat, clng, clat) > radiusKm) continue;
-				const mo = this.monthsNow[i * nLon + j] ?? 0;
+				const idx = i * nLon + j;
+				const mo = this.monthsNow[idx] ?? 0;
 				if (mo > EPS_MONTHS) {
 					sum += mo;
+					if (useDelta) dsum += this.marginalNow[idx] ?? 0;
 					n++;
 				}
 			}
 		}
-		return n > 0 ? sum / n : null;
+		return n > 0 ? { months: sum / n, delta: useDelta ? dsum / n : 0 } : null;
+	}
+
+	// Mean estimated months of life lost over the active cells within `radiusKm` (the total burden,
+	// no delta) — the scoring path for thinning/spreading anchors. `null` when no cell carries exposure.
+	monthsAround(lng: number, lat: number, radiusKm: number): number | null {
+		return this.readingAround(lng, lat, radiusKm)?.months ?? null;
 	}
 
 	// Field-derived label anchors for the bare (no-basemap) legend, where there are no OSM place
