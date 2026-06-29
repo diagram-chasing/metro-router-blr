@@ -3,8 +3,6 @@ import { WALL_BG, divergingAt, legColor, muteToNeutral, rgbToHex } from '$lib/vi
 // The wall's one control panel. Everything tunable lives here — nothing is read from the URL.
 export const WALL = {
 
-	title: 'BANGALORE LOSES',
-	subtitle: 'TO TRAFFIC LIKE THIS',
 	scale: 1, // type size for viewing distance
 	bg: WALL_BG,
 	dpr: 0, // 0 = auto-detect

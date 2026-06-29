@@ -35,7 +35,7 @@
 	let crowdPrev = $state<Record<string, number>>({});
 	let crowdShow = $state(0);
 	let titleEvery = $state(WALL.titleEvery); // s between banner appearances
-	let heroOpacity = $state(0); // hero pulse opacity, driven from the rAF loop
+	let heroOpacity = $state(0); // banner pulse opacity, driven from the rAF loop
 	let loading = $state(false); // true while the pre-reveal progress bar fills
 	let loadProgress = $state(0); // 0..1 fill of that bottom-edge bar
 	let queued = $state(0); // routes waiting their spotlight — surfaced as "+N others joined"
@@ -857,7 +857,7 @@
 		<ChoiceCrowdBanner
 			counts={modeSplit}
 			prevCounts={crowdPrev}
-			total={count}
+			total={count ?? 0}
 			actualG={pm25ActualG}
 			avoidableG={pm25AvoidableG}
 			opacity={heroOpacity}
@@ -903,19 +903,8 @@
 		background: #ffe2d6;
 		will-change: transform;
 	}
-	/* Generous safe inset — critical content stays clear of projector edges. */
-	.safe {
-		position: absolute;
-		inset: 0;
-		z-index: 15;
-		padding: clamp(20px, 4.5%, 84px);
-		display: flex;
-		flex-direction: column;
-		justify-content: space-between;
-		pointer-events: none;
-	}
 	/* Shared receipt-slip surface — white paper, mono, crisp 1-bit, same language as
-	   src/lib/receipt/ReceiptDoc (.paper). Both the hero title and the route card use it. */
+	   src/lib/receipt/ReceiptDoc (.paper). The route card uses it; the banner carries its own. */
 	.slip {
 		background: #fff;
 		color: #000;
@@ -924,44 +913,6 @@
 		-webkit-font-smoothing: none;
 		font-smooth: never;
 		box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
-	}
-	.hero {
-		display: flex;
-		flex-direction: column;
-		gap: calc(var(--wall-scale) * 8px);
-		width: fit-content;
-		max-width: 60%;
-		padding: calc(var(--wall-scale) * 12px) calc(var(--wall-scale) * 15px);
-		text-align: center;
-		/* Opacity is driven from the rAF loop (pulse once per ?titleEvery=s). */
-		will-change: opacity;
-	}
-	.hero .line {
-		font-size: calc(var(--wall-scale) * clamp(14px, 1.4vw, 26px));
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.08em;
-		line-height: 1.15;
-	}
-	.hero .rule {
-		border-top: 2px dashed #000;
-	}
-	/* The reverse hero bar (white-on-black), after ReceiptDoc's .rev inverted total. */
-	.hero .total {
-		background: #000;
-		color: #fff;
-		font-size: calc(var(--wall-scale) * clamp(46px, 5.8vw, 66px));
-		font-weight: 700;
-		line-height: 1;
-		letter-spacing: -0.01em;
-		padding: calc(var(--wall-scale) * 7px) calc(var(--wall-scale) * 14px);
-		font-variant-numeric: tabular-nums;
-	}
-	.hero .fine {
-		font-size: calc(var(--wall-scale) * clamp(12px, 1.2vw, 19px));
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
 	}
 	/* Recalc readout styled as a receipt slip: white paper, monospace, a dashed rule, and the
 	   emissions in a reverse (black-on-white) hero — same language as src/lib/receipt/ReceiptDoc.

@@ -100,7 +100,7 @@
 						{#each dirty as g (g.mode)}
 							<div class="group">
 								<div class="blocks">
-									{#each range(g.blocks) as _, i (i)}
+									{#each range(g.blocks) as i (i)}
 										<span
 											class="block"
 											class:fresh={i >= g.blocks - g.fresh}
@@ -123,7 +123,7 @@
 							{#each clean as g (g.mode)}
 								<div class="group">
 									<div class="blocks">
-										{#each range(g.blocks) as _, i (i)}
+										{#each range(g.blocks) as i (i)}
 											<span class="block hollow" class:fresh={i >= g.blocks - g.fresh}></span>
 										{/each}
 									</div>
