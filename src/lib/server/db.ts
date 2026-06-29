@@ -15,6 +15,13 @@ import path from 'node:path';
 
 import Database from 'better-sqlite3';
 
+import {
+	routePM25,
+	pm25GramsOverYears,
+	firstLastMileKm,
+	MODE_PM25_G_PER_PKM,
+	type Leg
+} from '$lib/emissions';
 import type { Answers } from '$lib/exhibit/types';
 import type { ComputedReceipt } from '$lib/receipt/receipt';
 import type { GeoSnapshot } from './receiptStore';
@@ -244,7 +251,14 @@ export type Stats = {
 	avgCo2PerTripKg: number;
 	avgCo2PerKmG: number;
 	modeSplit: Record<string, number>;
+	pm25ActualG10yr: number; // Σ grams of PM2.5 the logged commutes deposit over a decade
+	pm25AvoidableG10yr: number; // …of which this much had a cleaner option (metro + short auto access)
 };
+
+// The decade window the wall's "choice crowd" banner and per-route card both report over.
+// Mirrors WALL.years (a client config the server can't import) — keep the two in sync.
+const SOOT_YEARS = 10;
+const DEFAULT_TRIPS_PER_YEAR = 288; // matches the wall's fallback when frequency is unknown
 
 export function stats(): Stats {
 	const d = getDb();
@@ -259,11 +273,40 @@ export function stats(): Stats {
 		.all() as { mode: string; n: number }[];
 	const modeSplit: Record<string, number> = {};
 	for (const m of modeRows) modeSplit[m.mode ?? 'unknown'] = m.n;
+
+	// Soot the logged commutes leave over a decade, and the avoidable share. Per journey this is
+	// the same figure the route card shows (routePM25 × pm25GramsOverYears); the counterfactual is
+	// the receipt's own basis — the same trip on a metro trunk (0 PM2.5) with short auto access.
+	let pm25ActualG10yr = 0;
+	let pm25AvoidableG10yr = 0;
+	const sootRows = d
+		.prepare('SELECT segments, trips_per_year AS trips FROM lines')
+		.all() as { segments: string; trips: number | null }[];
+	for (const r of sootRows) {
+		const trips = r.trips ?? DEFAULT_TRIPS_PER_YEAR;
+		let legs: Leg[];
+		try {
+			legs = JSON.parse(r.segments) as Leg[];
+		} catch {
+			continue;
+		}
+		const { km, gPerKm } = routePM25(legs);
+		if (km <= 0) continue;
+		const actual = pm25GramsOverYears(gPerKm, km, trips, SOOT_YEARS);
+		const { firstMile, lastMile } = firstLastMileKm(km);
+		const cleanGPerKm = ((firstMile + lastMile) * MODE_PM25_G_PER_PKM.auto) / km;
+		const clean = pm25GramsOverYears(cleanGPerKm, km, trips, SOOT_YEARS);
+		pm25ActualG10yr += actual;
+		pm25AvoidableG10yr += Math.max(0, actual - clean);
+	}
+
 	return {
 		count: agg.n,
 		avgCo2PerTripKg: agg.avgTrip ? Math.round(agg.avgTrip * 100) / 100 : 0,
 		avgCo2PerKmG: agg.avgKm ? Math.round(agg.avgKm) : 0,
-		modeSplit
+		modeSplit,
+		pm25ActualG10yr,
+		pm25AvoidableG10yr
 	};
 }
 

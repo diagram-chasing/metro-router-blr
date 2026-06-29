@@ -19,16 +19,22 @@
 		pollField as pollFieldSnapshot
 	} from '$lib/viz/wallField';
 	import { routePM25, PM25_MAX_G_PER_PKM, type Leg } from '$lib/emissions';
+	import ChoiceCrowdBanner from './ChoiceCrowdBanner.svelte';
 
 	let { variant = 'wall' }: { variant?: 'home' | 'wall' } = $props();
 
 	// Reactive overlay bits (everything else is imperative for perf).
 	let count = $state<number | null>(null);
-	let personYears = $state(0); // aggregate person-years of life lost the logged corridors reveal
-	// Hero label brackets the number: top line, figure, bottom line. Empty drops that line.
-	let title = $state(WALL.title);
-	let subtitle = $state(WALL.subtitle);
-	let titleEvery = $state(WALL.titleEvery); // s between hero appearances
+	// "Choice crowd" banner — how everyone moved today, accumulating. modeSplit drives the block
+	// crowd; the two PM2.5 sums (over a decade) drive the avoidable-soot footer. crowdPrev is the
+	// snapshot from the banner's previous appearance, so blocks that joined since then flash;
+	// crowdShow bumps each appearance to replay that flash.
+	let modeSplit = $state<Record<string, number>>({});
+	let pm25ActualG = $state(0);
+	let pm25AvoidableG = $state(0);
+	let crowdPrev = $state<Record<string, number>>({});
+	let crowdShow = $state(0);
+	let titleEvery = $state(WALL.titleEvery); // s between banner appearances
 	let heroOpacity = $state(0); // hero pulse opacity, driven from the rAF loop
 	let loading = $state(false); // true while the pre-reveal progress bar fills
 	let loadProgress = $state(0); // 0..1 fill of that bottom-edge bar
@@ -55,12 +61,6 @@
 	const IDLE_REST = WALL.idleRest; // s the resting field + headline hold before the next route fires
 	const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
 	const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
-	// Citywide life-years in Indian units, split so the hero shows a big numeral + a small LAKH/CRORE.
-	const fmtLakhCrore = (v: number): { num: string; suffix: string } => {
-		if (v >= 1e7) return { num: (v / 1e7).toFixed(v >= 1e8 ? 0 : 1), suffix: 'cr YEARS' };
-		if (v >= 1e5) return { num: String(Math.round(v / 1e5)), suffix: 'L YEARS' };
-		return { num: Math.round(v).toLocaleString('en-IN'), suffix: ' YEARS' };
-	};
 
 	const HERO_RISE = WALL.hero.rise;
 	const HERO_HOLD = WALL.hero.hold;
@@ -251,8 +251,16 @@
 			const pollStats = async () => {
 				try {
 					const res = await fetch('/api/stats');
-					const s = (await res.json()) as { count: number };
+					const s = (await res.json()) as {
+						count: number;
+						modeSplit?: Record<string, number>;
+						pm25ActualG10yr?: number;
+						pm25AvoidableG10yr?: number;
+					};
 					count = s.count;
+					modeSplit = s.modeSplit ?? {};
+					pm25ActualG = s.pm25ActualG10yr ?? 0;
+					pm25AvoidableG = s.pm25AvoidableG10yr ?? 0;
 				} catch {
 					/* ignore */
 				}
@@ -420,6 +428,8 @@
 			let labelTick = -1;
 			let anchorTick = -1; // slower cadence for re-querying which labels are visible
 			let lastFadeT = 0; // previous frame time, for dt-based opacity easing
+			let bannerVisible = false; // banner shown last frame — detect the rise to flash new blocks
+			let crowdBaseline: Record<string, number> = {}; // mode counts as of the current appearance
 			let hoods: HoodReading[] = [];
 			// Reused render objects, one per live label, keyed the same as liveLabels. We mutate these in
 			// place and only swap the `hoods` array when the SET changes, so deck recomputes glyph layout
@@ -551,7 +561,6 @@
 						if (months === null) l.target = 0;
 						else l.months = months;
 					}
-					personYears = field.headlinePersonYears();
 				}
 
 				// Ease every label's opacity toward its target this frame, drop the fully-faded, and keep
@@ -622,7 +631,7 @@
 					card = { show: false, opacity: 0, grams: 0 };
 				}
 
-				// Hero pulse: fade in, hold, fade out, then stay hidden until the next cycle. Keyed
+				// Banner pulse: fade in, hold, fade out, then stay hidden until the next cycle. Keyed
 				// to `now % titleEvery` so the window is fixed and the period sets only the gap.
 				let hv: number;
 				if (reduceMotion) {
@@ -638,6 +647,14 @@
 									? 1 - Math.pow(clamp01((hc - HERO_RISE - HERO_HOLD) / HERO_FALL), 3)
 									: 0;
 				}
+				// On each rise, snapshot what was already on the wall so the just-joined blocks flash.
+				const showing = hv > 0.02;
+				if (showing && !bannerVisible) {
+					crowdPrev = crowdBaseline; // the crowd as of the previous appearance
+					crowdBaseline = { ...modeSplit }; // baseline for the next appearance
+					crowdShow++; // re-key the band so the flash replays
+				}
+				bannerVisible = showing;
 				if (heroOpacity !== hv) heroOpacity = hv; // skip 60fps no-op writes while hidden
 
 				// Dotted basemap tiers (if baked) sit above the heat, below the place labels. Bottom→top:
@@ -834,21 +851,19 @@
 	{/if}
 
 	{#if count !== null && count > 0}
-		{@const py = fmtLakhCrore(personYears)}
-		<!-- The title as a receipt slip — same language as src/lib/receipt/ReceiptDoc: white paper,
-		     mono, a dashed rule, the number in a reverse (white-on-black) hero bar. Top-left, inset
-		     off the keystoned/vignetted projector edge. ?title= / ?subtitle= set the lines; either
-		     empty drops that line. -->
-		<div class="safe">
-			<div class="hero slip" style="opacity:{heroOpacity}">
-				{#if title}
-					<div class="line">{title}</div>
-					<div class="rule"></div>
-				{/if}
-				<div class="total">{py.num}{py.suffix}</div>
-				{#if subtitle}<div class="fine">{subtitle}</div>{/if}
-			</div>
-		</div>
+		<!-- The "choice crowd" banner — how everyone moved today as one block per commute, the dark
+		     mass bracketed as the avoidable soot. Pulses across the top on the titleEvery cadence
+		     (driven by heroOpacity); same receipt-slip language as the route card and src/lib/receipt. -->
+		<ChoiceCrowdBanner
+			counts={modeSplit}
+			prevCounts={crowdPrev}
+			total={count}
+			actualG={pm25ActualG}
+			avoidableG={pm25AvoidableG}
+			opacity={heroOpacity}
+			scale={scaleW}
+			appearance={crowdShow}
+		/>
 	{/if}
 </div>
 
