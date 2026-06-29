@@ -10,6 +10,7 @@ import type { RequestHandler } from '@sveltejs/kit';
 import type { Answers, Mode } from '$lib/exhibit/types';
 import { routeEmissions, legKindToMode, lengthKm } from '$lib/emissions';
 import { computeReceipt, distanceBand } from '$lib/receipt/receipt';
+import { lookupConnectivity } from '$lib/server/connectivity';
 import { allTripStats, insertLine, allPerKmStats } from '$lib/server/db';
 import { reverseGeocodeArea } from '$lib/server/reverseGeocode';
 import { getReceipt, putReceipt, type GeoSnapshot } from '$lib/server/receiptStore';
@@ -60,6 +61,9 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
 
 	const a = answers as Answers;
 	const computed = computeReceipt(a);
+	// Real area-to-area transit for the drawn trip — read server-side from the 22 MB
+	// connectivity dataset and stored on the receipt so the client never loads it.
+	computed.connectivity = await lookupConnectivity(a.origin, a.destination);
 	const geo = await buildGeoSnapshot(a, fetch);
 	const id = makeId();
 	const createdAt = Date.now();

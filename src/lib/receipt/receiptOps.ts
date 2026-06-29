@@ -186,10 +186,17 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 		eyebrowOp('What if...', view.swap.show ? `-${inr(view.swap.savedKg)} kg/yr` : '');
 		deck(view.swap.copy);
 		if (view.swap.show) {
-			if (view.swap.ideas.length) {
+			if (view.connectivity && view.connectivity.modes.length) {
+				const conn = view.connectivity;
 				gap();
 				T('A cleaner way to make this trip:');
-				view.swap.ideas.forEach((line) => T(line));
+				deck(`Any of the ${inr(conn.total)} daily transit trips on this route`);
+				conn.modes.forEach((m) => {
+					const routes = m.routes.length
+						? ' on ' + m.routes.map((r) => `[${r}]`).join(', ')
+						: '';
+					deck(`${inr(m.trips)} ${m.label} trips${routes}`);
+				});
 			}
 			gap();
 
@@ -213,7 +220,7 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	deck(view.parking.copy);
 	gap();
 	ops.push({ t: 'img', id: 'car' });
-	T(`one car = ${view.parking.areaM2} m² of road`, { align: 'center' });
+	T(`one car = ${view.parking.areaM2} m² wasted public space`, { align: 'center' });
 	gap();
 	T(panelRow(`Land ~${view.parking.valueLabel} · rent paid ₹0`));
 	// T(panelRule('Paid for by everyone else!'));

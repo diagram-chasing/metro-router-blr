@@ -1,3 +1,7 @@
+allowBuilds:
+  '@vaadin/vaadin-usage-statistics': true
+  better-sqlite3: true
+  esbuild: true
 # Allow better-sqlite3 to run its native build script on install.
 # (Newer pnpm reads this here, not from the "pnpm" field in package.json.)
 onlyBuiltDependencies:

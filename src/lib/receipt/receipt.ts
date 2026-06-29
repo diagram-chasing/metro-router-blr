@@ -14,6 +14,22 @@ import { estimateCorridorTraffic } from './corridorTraffic';
 import { landValueAtPoint } from './landValue';
 import { carsAddedToday } from './carsAdded';
 
+// Transit connectivity between the trip's origin and destination areas (H3 res-8
+// hexagons), read from connectivity.json server-side. `modes` lists each public-
+// transport mode with at least one trip on the pair, busiest-route short names first.
+export type ConnectivityMode = {
+	key: 'metro' | 'ac_bus' | 'bus';
+	label: string;
+	trips: number;
+	routes: string[];
+};
+export type Connectivity = {
+	originH3: string;
+	destH3: string;
+	total: number; // daily transit trips across all modes on this area pair
+	modes: ConnectivityMode[];
+};
+
 export type ComputedReceipt = {
 	// Inputs echoed back in readable form
 	trip: {
@@ -75,6 +91,11 @@ export type ComputedReceipt = {
 		isFallback: boolean; // route touched no junction → city-wide percentile used
 		rows: { key: string; label: string; countPerDay: number; gPerKm: number; isYou: boolean }[];
 	};
+
+	// Daily transit trips between the trip's origin and destination areas, from
+	// connectivity.json. Filled in server-side (see lookupConnectivity); null at pure
+	// compute time and when the area pair has no recorded transit.
+	connectivity: Connectivity | null;
 
 	// Beat 7 — equivalences for the YEAR-TOTAL commute (not the saving)
 	cylindersYear: number; // annualCommuteKg / 42
@@ -162,6 +183,13 @@ export type ReceiptView = {
 		rows: ComputedReceipt['corridor']['rows'];
 		copy: string;
 	};
+	// Real transit between the two areas: the daily trip total and a per-mode list
+	// (busiest route short-names first). null when the area pair has no recorded
+	// transit or the origin/destination weren't dropped on the map.
+	connectivity: {
+		total: number;
+		modes: ConnectivityMode[];
+	} | null;
 	oneTrip: { co2G: number };
 	year: { co2Kg: number; kgPerBlock: number; copy: string; isClean: boolean };
 	units: { cylinders: number; trees: number; copy: string; isClean: boolean };
@@ -251,8 +279,8 @@ const CORRIDOR_KEY_MODE: Record<string, Mode> = {
 // state guidance value (₹/m²) for the zone the destination sits in (guidance_value.json),
 // a conservative stand-in for market land value. PARKING_RATE_PER_M2 is the fallback
 // when the destination is unknown or falls outside the dataset (~₹2.15 lakh/m²).
-const PARKING_AREA_M2 = 13;
-const PARKING_RATE_PER_M2 = 215000;
+const PARKING_AREA_M2 = 18;
+const PARKING_RATE_PER_M2 = 200000;
 
 // Below this annual figure (kg CO2e) the "year" and "units" beats switch to their
 // empty-grid / no-unit clean branch — walk/cycle and the lightest trips.
@@ -936,7 +964,7 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 	// guidance value when we have a drop pin; the city-wide constant otherwise.
 	const destRate = a.destination ? landValueAtPoint(a.destination) : null;
 	const parkingRatePerM2 = destRate && destRate > 0 ? destRate : PARKING_RATE_PER_M2;
-	const parkingRupees = PARKING_AREA_M2 * parkingRatePerM2;
+	const parkingRupees = PARKING_AREA_M2 * parkingRatePerM2 * 2;
 	const parkingAreaLabel = a.destinationStation ?? a.originStation ?? 'this part of the city';
 
 	const isClean = tripMode === 'bus' || tripMode === 'metro' || tripMode === 'active';
@@ -988,6 +1016,9 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 			isFallback: corridorTraffic.isFallback,
 			rows: corridorRows
 		},
+		// Pure compute has no filesystem access; the server endpoint fills this from
+		// connectivity.json before the receipt is stored.
+		connectivity: null,
 		cylindersYear: round(cylindersYear, 0),
 		treesYear: round(treesYear, 0),
 		halfSwap: {
@@ -1131,6 +1162,7 @@ export function buildReceiptView(
 			rows: c.corridor.rows,
 			copy: corridorCopy(c, id)
 		},
+		connectivity: c.connectivity ? { total: c.connectivity.total, modes: c.connectivity.modes } : null,
 		oneTrip: { co2G: Math.round(c.perTripKg * 1000) },
 		year: {
 			co2Kg: c.annualCommuteKg,
