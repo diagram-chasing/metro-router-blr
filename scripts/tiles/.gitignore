@@ -1,0 +1,2 @@
+# The OSM extract is large + reproducible — downloaded by build-tiles.sh, never committed.
+*.osm.pbf

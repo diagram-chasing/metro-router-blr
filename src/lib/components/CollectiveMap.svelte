@@ -876,7 +876,7 @@
 		left: 0;
 		right: 0;
 		bottom: 0;
-		height: calc(var(--wall-scale) * 4px);
+		height: calc(var(--wall-scale) * 10px);
 		background: rgba(255, 255, 255, 0.08);
 		z-index: 18;
 		pointer-events: none;

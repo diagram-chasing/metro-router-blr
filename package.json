@@ -6,17 +6,18 @@
 	"scripts": {
 		"dev": "vite dev",
 		"build": "vite build",
-		"start": "node build",
+		"start": "node --env-file-if-exists=.env build",
 		"preview": "vite preview",
 		"prepare": "svelte-kit sync || echo ''",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
 		"check:watch": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json --watch",
 		"format": "prettier --write .",
 		"lint": "prettier --check . && eslint .",
-		"serve": "pnpm build && node build",
+		"serve": "pnpm build && node --env-file-if-exists=.env build",
 		"receipts:matrix": "vite-node scripts/receiptMatrix.ts",
 		"basemap:build": "vite-node scripts/buildBasemap.ts",
 		"wall-roads:build": "vite-node scripts/buildWallRoads.ts",
+		"tiles:build": "bash scripts/tiles/build-tiles.sh",
 		"viz:matrix": "vite-node scripts/vizMatrix.ts"
 	},
 	"devDependencies": {

@@ -31,3 +31,10 @@ vite.config.ts.timestamp-*
 
 # Generated receipt permutation report (pnpm receipts:matrix)
 scripts/out/
+
+# OTP heavy artifacts — generated street graph + downloaded server binary (exceed GitHub's 100MB limit; rebuilt/redownloaded locally)
+otp/data/graph.obj
+otp/otp-shaded-2.9.0.jar
+
+# Vendored reference dumps (downloaded libraries/shaders, kept locally only — not app code)
+docs/

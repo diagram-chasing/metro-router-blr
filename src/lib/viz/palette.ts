@@ -82,6 +82,27 @@ export function divergingRamp(months: number, ceil = 12): RGB {
 	return divergingAt((months + ceil) / (2 * ceil));
 }
 
+// The heat ramp's neutral midpoint (divergingAt(0.5)) — what the resting field fades toward.
+export const NEUTRAL: RGB = [32, 40, 56];
+
+// Mute an RGB toward NEUTRAL by `amount` (0 = untouched, 1 = fully neutral). Lets the basemap
+// tints be SAMPLED from the same ramps as the heat, then desaturated into the field's value
+// family — so water/greenery harmonise with the warm field instead of reading as loud primaries.
+export function muteToNeutral(rgb: RGB, amount: number): RGB {
+	const k = Math.max(0, Math.min(1, amount));
+	return [
+		Math.round(rgb[0] + (NEUTRAL[0] - rgb[0]) * k),
+		Math.round(rgb[1] + (NEUTRAL[1] - rgb[1]) * k),
+		Math.round(rgb[2] + (NEUTRAL[2] - rgb[2]) * k)
+	];
+}
+
+// RGB → '#rrggbb'.
+export function rgbToHex([r, g, b]: RGB): string {
+	const h = (v: number) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0');
+	return `#${h(r)}${h(g)}${h(b)}`;
+}
+
 // Emit a ramp as a GLSL function so the field shader and the CPU agree on one ramp. The
 // chained `mix(c, stop, clamp(...))` reproduces the piecewise-linear interpolation exactly.
 export function glslColorRamp(fnName: string, stops = DIVERGING): string {

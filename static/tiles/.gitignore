@@ -1,0 +1,3 @@
+# Drop the OpenMapTiles-schema bengaluru.pmtiles here (INSTALL.md §2a). It's large
+# and box-specific — staged on-site, never committed. This .gitignore keeps the dir.
+*.pmtiles

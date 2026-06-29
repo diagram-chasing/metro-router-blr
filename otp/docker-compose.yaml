@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  # STEP 1: Graph Builder (Runs once, builds the graph, and exits)
+  otp-builder:
+    image: opentripplanner/opentripplanner:latest
+    container_name: otp-builder
+    volumes:
+      - ./data:/var/opentripplanner
+    environment:
+      - JAVA_TOOL_OPTIONS=-Xmx2g
+    command: --build --save
+    platform: linux/arm64
+
+  # STEP 2: Graph Server (Loads the built graph and exposes the API)
+  otp-server:
+    image: opentripplanner/opentripplanner:latest
+    container_name: otp-server
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/var/opentripplanner
+    environment:
+      - JAVA_TOOL_OPTIONS=-Xmx2g
+    command: --load --serve
+    restart: always
+    # Ensures the server doesn't conflict with a concurrently running builder
+    depends_on:
+      otp-builder:
+        condition: service_completed_successfully
+    platform: linux/arm64

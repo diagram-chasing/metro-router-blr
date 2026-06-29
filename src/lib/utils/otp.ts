@@ -7,7 +7,7 @@
 import pkg from '@mapbox/polyline';
 const { decode: decodePoly } = pkg;
 
-const OTP_ENDPOINT = 'https://opentripplanner.diagramchasing.fun/otp/gtfs/v1';
+const OTP_ENDPOINT = 'http://localhost:8000/otp/gtfs/v1';
 
 // OTP transport modes we use. (The GraphQL `Mode` enum has many more.)
 export type OtpModeName =

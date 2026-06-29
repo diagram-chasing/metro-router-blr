@@ -1,11 +1,8 @@
-import { WALL_BG } from '$lib/viz/palette';
+import { WALL_BG, divergingAt, legColor, muteToNeutral, rgbToHex } from '$lib/viz/palette';
 
 // The wall's one control panel. Everything tunable lives here — nothing is read from the URL.
 export const WALL = {
-	// Display — title + number + subtitle read as one sentence: "BENGALURU LOSES <9L YEARS> TO TRAFFIC LIKE THESE".
-	// ("9L YEARS" is the hero figure; the L/cr + YEARS are rendered as a small suffix.) The figure is the
-	// aggregate life-years across the city's ~12M residents the logged commutes' corridors reveal (a
-	// share of an existing burden, not harm they add); see health.ts / emissionsGrid.ts.
+
 	title: 'BANGALORE LOSES',
 	subtitle: 'TO TRAFFIC LIKE THIS',
 	scale: 1, // type size for viewing distance
@@ -19,18 +16,12 @@ export const WALL = {
 	titleEvery: 40, // s between hero appearances
 	load: 20, // s pre-reveal dwell
 
-	// Colour scale (PM2.5 → hue only). The HEADLINE no longer uses these — it's the attribution model
-	// in $lib/viz/health.ts (transport share φ × ambient AQLI × coverage). These three set where the
-	// heat hits its red point on the map; the reported years are independent of them.
+
 	gainPerYear: 1.5, // µg/m³ a saturated corridor adds per year (colour ramp top)
 	years: 10, // decade window (also the per-route card's g PM2.5 / 10yr figure)
 	saturationRoutes: 60, // represented-corridor overlap that brings a corridor to the red point
 
-	// Dotted basemap — the road network (static/wall-roads.json) snapped to a metric grid (mapscii's
-	// trick: one dot per occupied cell → a clean dot-matrix) and drawn as live GPU dots, the receipt
-	// / mapscii 1-bit dot-field crisp at every zoom. Dots are sized in METRES so each fills its cell
-	// → adjacent cells touch → continuous dotted ROADS, not loose stipple. Secondary-and-above
-	// arteries only — one tier; the faint minor/service tier is off. See $lib/viz/dottedBasemap.
+
 	basemap: {
 		includeFaint: false, // secondary-and-above only — no minor/service tier (faint bake is empty)
 		fillRatio: 0.12, // dot radius as a fraction of cell; ≥0.5 makes roads continuous, lower = dottier
@@ -39,14 +30,9 @@ export const WALL = {
 		color: '#000000', // dot colour — black stencils the roads over the glowing heat below
 		major: { cellM: 90, restOpacity: 0.14, zoomOpacity: 0.95 }, // arteries: tighter grid, bolder
 		faint: { cellM: 70, restOpacity: 0.005, zoomOpacity: 0.1 }, // minor/service: coarser, lighter
-		// Water + greenery as dot-FIELDS (mapscii rasterises filled polygons to the same dot grid as
-		// the roads — see dottedBasemap.gridDotsFill). Colours are pulled from the heat ramp's COOL
-		// side so they harmonise with the warm field instead of fighting it: water = the diverging
-		// ramp's blue end (#3696EC) muted toward the neutral midpoint; green = a teal-leaning spruce,
-		// the same "clean/cool" note as the co2 teal and the metro leg. Denser grid for water so lakes
-		// fill in; greenery a touch sparser.
-		water: { cellM: 60, color: '#3d6f93', restOpacity: 0.45, zoomOpacity: 0.85 },
-		green: { cellM: 75, color: '#367a5e', restOpacity: 0.3, zoomOpacity: 0.7 }
+
+		water: { cellM: 60, color: rgbToHex(muteToNeutral(divergingAt(0.2), 0.5)), restOpacity: 0.2, zoomOpacity: 0.8 },
+		green: { cellM: 75, color: rgbToHex(muteToNeutral(legColor('metro'), 0.6)), restOpacity: 0.37, zoomOpacity: 0.64 }
 	},
 
 	// Labels
