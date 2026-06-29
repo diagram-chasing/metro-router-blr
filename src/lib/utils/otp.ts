@@ -1,13 +1,19 @@
 // OpenTripPlanner client for multimodal trip planning (OTP2 GTFS GraphQL API).
 //
-// Endpoint: https://opentripplanner.diagramchasing.fun/otp/gtfs/v1
-// Open instance, no auth. Returns full itineraries with per-leg geometry
-// (precision-5 polylines), route names/colours, and intermediate stops.
+// OTP runs on the same machine that serves this app, on a fixed port but a host
+// that changes with the network — so we resolve it at call time instead of
+// hardcoding: in the browser, reuse the host the page was loaded from; on the
+// server (SSR / API routes) it's reachable on localhost. Returns full itineraries
+// with per-leg geometry (precision-5 polylines), route names/colours, and stops.
 
 import pkg from '@mapbox/polyline';
 const { decode: decodePoly } = pkg;
 
-const OTP_ENDPOINT = 'https://opentripplanner.diagramchasing.fun/otp/gtfs/v1';
+const OTP_PORT = 8000;
+function otpEndpoint(): string {
+	const host = typeof window === 'undefined' ? 'localhost' : window.location.hostname;
+	return `http://${host}:${OTP_PORT}/otp/gtfs/v1`;
+}
 
 // OTP transport modes we use. (The GraphQL `Mode` enum has many more.)
 export type OtpModeName =
@@ -193,7 +199,7 @@ export async function planTrip(
 	};
 
 	try {
-		const res = await doFetch(OTP_ENDPOINT, {
+		const res = await doFetch(otpEndpoint(), {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ query: PLAN_QUERY, variables })
@@ -338,7 +344,7 @@ async function otpQuery<T>(
 	fetcher: typeof fetch
 ): Promise<T | null> {
 	try {
-		const res = await fetcher(OTP_ENDPOINT, {
+		const res = await fetcher(otpEndpoint(), {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
 			body: JSON.stringify({ query, variables })
