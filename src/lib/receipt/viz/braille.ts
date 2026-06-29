@@ -15,8 +15,8 @@ export type Basemap = {
 
 type Pt = [number, number];
 
-// Built once at $lib/.../buildBasemap.ts and committed; fetched same-origin so it works
-// offline. Null on failure → the map degrades to route-only.
+// Built once by scripts/buildMapAssets.ts (the `receipt` target) and committed; fetched
+// same-origin so it works offline. Null on failure → the map degrades to route-only.
 let cache: Promise<Basemap | null> | null = null;
 export function loadBasemap(): Promise<Basemap | null> {
 	if (!cache) {
