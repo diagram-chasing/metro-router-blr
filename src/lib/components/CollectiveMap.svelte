@@ -97,6 +97,10 @@
 		// State machine.
 		let phase: 'idle' | 'load' | (typeof PHASES)[number] = 'idle';
 		let phaseStart = 0;
+		// The live dim ramp (1 at rest → DIM_MIN while a route is featured), hoisted out of step() so
+		// the rAF loop can read it: the water/green dot-fields fade out with it, leaving only the roads
+		// lit during a spotlight.
+		let dimLevel = 1;
 		let activeRoute: [number, number][] = [];
 		let activeIsDemo = false;
 		let activeKm = 0; // featured route's trip length (km)
@@ -382,6 +386,7 @@
 			const step = (t: number) => {
 				if (phase === 'idle') {
 					field.setDim(1);
+					dimLevel = 1;
 					if (activeTag) activeTag = undefined; // clear the on-screen tag between routes
 					// Let the resting field + headline settle before the next route, unless a
 					// backlog is building — then dequeue promptly so nobody waits too long.
@@ -403,6 +408,7 @@
 				}
 				if (phase === 'load') {
 					field.setDim(1); // map rests while the bar fills
+					dimLevel = 1;
 					loadProgress = clamp01((t - phaseStart) / loadDur);
 					if (t - phaseStart >= loadDur) {
 						loading = false;
@@ -419,6 +425,7 @@
 							? lerp(DIM_MIN, 1, easeInOutCubic(clamp01(el / DUR.settle)))
 							: DIM_MIN;
 				field.setDim(dim);
+				dimLevel = dim;
 				if (el >= phaseDur(phase)) {
 					const ni = PHASES.indexOf(phase as (typeof PHASES)[number]) + 1;
 					enter(ni < PHASES.length ? PHASES[ni] : 'idle', t);
@@ -665,12 +672,17 @@
 				const bm = WALL.basemap;
 				const bloom = (rest: number, zoom: number) =>
 					lerp(rest, zoom, clamp01((map!.getZoom() - dotsZ0) / (dotsZ1 - dotsZ0 || 1)));
+				// While a route is featured the field dims to DIM_MIN; fade the water/green dot-fields out
+				// on the same envelope (1 at rest → 0 at full dim) so only the roads stay lit in the
+				// corridor. Roads pass mul=1 and are unaffected.
+				const ecoMul = clamp01((dimLevel - DIM_MIN) / (1 - DIM_MIN || 1));
 				const dot = (
 					id: string,
 					pts: [number, number][],
 					cellM: number,
 					color: [number, number, number],
-					o: { restOpacity: number; zoomOpacity: number }
+					o: { restOpacity: number; zoomOpacity: number },
+					mul = 1
 				) =>
 					buildDotsLayer(deck, pts, {
 						id,
@@ -678,14 +690,14 @@
 						minPx: bm.minPx,
 						maxPx: bm.maxPx,
 						color,
-						opacity: bloom(o.restOpacity, o.zoomOpacity),
+						opacity: bloom(o.restOpacity, o.zoomOpacity) * mul,
 						beforeId: fieldBeforeId // above the heat, under the place labels
 					});
 				const dotLayers =
 					majorDots && fieldLayer
 						? [
-								...(greenDots.length ? [dot('dots-green', greenDots, bm.green.cellM, greenColor, bm.green)] : []),
-								...(waterDots.length ? [dot('dots-water', waterDots, bm.water.cellM, waterColor, bm.water)] : []),
+								...(greenDots.length ? [dot('dots-green', greenDots, bm.green.cellM, greenColor, bm.green, ecoMul)] : []),
+								...(waterDots.length ? [dot('dots-water', waterDots, bm.water.cellM, waterColor, bm.water, ecoMul)] : []),
 								...(faintDots.length ? [dot('dots-faint', faintDots, bm.faint.cellM, dotColor, bm.faint)] : []),
 								dot('dots-major', majorDots, bm.major.cellM, dotColor, bm.major)
 							]
