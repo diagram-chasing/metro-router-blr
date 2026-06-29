@@ -9,9 +9,10 @@
 //
 // Secondary and above only (motorway → secondary) baked into `roads`; tertiary/minor/service are
 // dropped so the wall shows just the arterial skeleton. `roadsFaint` is kept (empty) for the
-// consumer's shape. Also bakes the city's lakes (`water`) and greenery (`park` + select
-// `landcover`) as polygons, which CollectiveMap rasterises into dot-fields the same way as the
-// roads (mapscii draws filled polygons as dots). Run once with network; commit the output.
+// consumer's shape. Also bakes the city's lakes (`water` class=lake) and greenery — parks and
+// gardens only (landcover subclass park/garden) — as polygons, which CollectiveMap rasterises
+// into dot-fields the same way as the roads (mapscii draws filled polygons as dots). Run once
+// with network; commit the output.
 
 import { readFileSync, writeFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
@@ -24,8 +25,10 @@ const TILEJSON_URL = 'https://tiles.openfreemap.org/planet';
 const BBOX_PAD = 0.15; // grow the grid bbox so the resting "cover" overflow stays road-filled
 const ROAD_MAJOR = new Set(['motorway', 'trunk', 'primary', 'secondary']); // secondary and above
 const ROAD_FAINT = new Set<string>(); // nothing below secondary — faint tier intentionally empty
-// Greenery landcover classes worth showing as a dot-field; parks come from the `park` layer (all of it).
-const GREEN_LANDCOVER = new Set(['wood', 'grass', 'scrub', 'wetland']);
+// Greenery: parks and gardens only. In the OpenMapTiles `landcover` layer leisure=park and
+// leisure=garden surface as class=grass with these subclasses (there is no `park` layer in the
+// OpenFreeMap planet tiles); everything else (wood/scrub/grass/golf/recreation/farmland) is dropped.
+const GREEN_SUBCLASS = new Set(['park', 'garden']);
 const SIMPLIFY_TOL = 0.00008; // ~9m in degrees — finer than the print extract, for the wall
 const AREA_TOL = 0.0002; // ~22m — coarser for area outlines; the dot grid is ~70–90m so fine edges are moot
 const MIN_AREA_M2 = 5000; // drop polygons smaller than ~70m² square — they'd yield ≤1 dot, just noise+bytes
@@ -207,15 +210,21 @@ async function main() {
 					roads.push(l);
 				for (const l of extractLines(t, tx, ty, Z, (f) => ROAD_FAINT.has(f.properties.class)))
 					roadsFaint.push(l);
-				// Lakes/reservoirs (whole `water` layer) and greenery (`park` layer + select landcover).
-				for (const p of extractPolys(tile.layers['water'], tx, ty, Z, () => true)) water.push(p);
-				for (const p of extractPolys(tile.layers['park'], tx, ty, Z, () => true)) green.push(p);
+				// Lakes only (class=lake; reservoirs/tanks map here too); greenery = parks + gardens.
+				for (const p of extractPolys(
+					tile.layers['water'],
+					tx,
+					ty,
+					Z,
+					(f) => f.properties.class === 'lake'
+				))
+					water.push(p);
 				for (const p of extractPolys(
 					tile.layers['landcover'],
 					tx,
 					ty,
 					Z,
-					(f) => GREEN_LANDCOVER.has(f.properties.class)
+					(f) => GREEN_SUBCLASS.has(f.properties.subclass)
 				))
 					green.push(p);
 			}
