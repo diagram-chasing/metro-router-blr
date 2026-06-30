@@ -3,6 +3,8 @@
 	import { page } from '$app/stores';
 
 	import TactileButton from '$lib/exhibit/TactileButton.svelte';
+	import XpProgress from '$lib/exhibit/XpProgress.svelte';
+	import XpWindow from '$lib/exhibit/XpWindow.svelte';
 	import type { StoredReceipt } from '$lib/server/receiptStore';
 	import ReceiptDoc from '$lib/receipt/ReceiptDoc.svelte';
 	import { buildReceiptView, type Distribution, type Histogram } from '$lib/receipt/receipt';
@@ -99,72 +101,57 @@
 	}
 </script>
 
-<main class="page">
-	<div class="toolbar">
-		<TactileButton label="NEW VISITOR →" size="md" glow="amber" onclick={startOver} />
-		{#if view}
-			<TactileButton
-				label={busy ? 'PRINTING…' : 'PRINT'}
-				size="md"
-				glow="amber"
-				onclick={printFast}
-			/>
-			<TactileButton label="SAVE IMAGE" size="md" glow="amber" onclick={save} />
-			<TactileButton label="PREVIEW" size="md" glow="amber" onclick={preview} />
+<XpWindow title="Your 2025 Receipt" icon="/xp/readme.ico">
+	<div class="flex min-h-0 flex-1 flex-col items-center gap-5 overflow-y-auto py-2">
+		<div class="flex flex-wrap justify-center gap-3">
+			<div class="h-[56px] w-[clamp(150px,20vw,200px)]">
+				<TactileButton label="New visitor →" size="md" onclick={startOver} />
+			</div>
+			{#if view}
+				<div class="h-[56px] w-[clamp(120px,16vw,170px)]">
+					<TactileButton label={busy ? 'Printing…' : 'Print'} size="md" onclick={printFast} />
+				</div>
+				<div class="h-[56px] w-[clamp(130px,17vw,180px)]">
+					<TactileButton label="Save image" size="md" onclick={save} />
+				</div>
+				<div class="h-[56px] w-[clamp(120px,16vw,170px)]">
+					<TactileButton label="Preview" size="md" onclick={preview} />
+				</div>
+			{/if}
+		</div>
+
+		{#if printMsg}
+			<p
+				class="text-[13px] font-semibold {printMsg === 'Sent to printer'
+					? 'text-[#1a7a1a]'
+					: 'text-[#b52012]'}"
+			>
+				{printMsg}
+			</p>
+		{/if}
+
+		{#if loading}
+			<div
+				class="mt-8 flex w-[min(420px,90%)] flex-col gap-3 rounded-[3px] border border-[#aca899] bg-[#ece9d8] p-5 shadow-[2px_2px_8px_rgba(0,0,0,0.45)]"
+			>
+				<span class="text-[14px] font-bold text-[#003366]">Printing your year...</span>
+				<XpProgress indeterminate />
+				<span class="text-[12px] text-[#5a564a]">Please wait while your receipt is prepared.</span>
+			</div>
+		{:else if error}
+			<div
+				class="mt-8 flex w-[min(420px,90%)] flex-col gap-2 rounded-[3px] border border-[#aca899] bg-[#ece9d8] p-5 shadow-[2px_2px_8px_rgba(0,0,0,0.45)]"
+			>
+				<span class="text-[14px] font-bold text-[#b52012]">Could not load receipt</span>
+				<span class="text-[12px] text-[#5a564a]">{error}</span>
+			</div>
+		{:else if view}
+			<!-- The receipt is a fixed 576px paper facsimile; frame it like a print preview. -->
+			<div
+				class="max-w-full overflow-x-auto border border-[#aca899] bg-white p-2 shadow-[4px_4px_14px_rgba(0,0,0,0.45)]"
+			>
+				<ReceiptDoc {view} bind:node />
+			</div>
 		{/if}
 	</div>
-	{#if printMsg}
-		<p class="status" class:err={printMsg !== 'Sent to printer'}>{printMsg}</p>
-	{/if}
-
-	{#if loading}
-		<p class="status">Printing your year…</p>
-	{:else if error}
-		<p class="status err">Failed to load: {error}</p>
-	{:else if view}
-		<div class="paper-wrap">
-			<ReceiptDoc {view} bind:node />
-		</div>
-	{/if}
-</main>
-
-<style>
-	.page {
-		min-height: 100vh;
-		background: #0c0c0c;
-		padding: 32px 16px 80px;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 28px;
-	}
-
-	.toolbar {
-		display: flex;
-		gap: 16px;
-		flex-wrap: wrap;
-		justify-content: center;
-		min-height: 56px;
-	}
-
-	.status {
-		color: #ededed;
-		font-family: 'IBM Plex Mono', monospace;
-		font-size: 16px;
-		padding: 60px 0;
-		letter-spacing: 0.12em;
-	}
-	.status.err {
-		color: #ff7058;
-	}
-
-	/* The receipt itself is a fixed 576 px; show it on a soft shadow so the kiosk
-	   operator sees exactly what prints. Scrollable on narrow screens. */
-	.paper-wrap {
-		max-width: 100%;
-		overflow-x: auto;
-		box-shadow:
-			0 30px 80px rgba(0, 0, 0, 0.55),
-			0 8px 24px rgba(0, 0, 0, 0.35);
-	}
-</style>
+</XpWindow>

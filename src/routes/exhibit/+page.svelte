@@ -3,9 +3,9 @@
 
 	import MapQuestion from '$lib/exhibit/MapQuestion.svelte';
 	import OnScreenKeyboard from '$lib/exhibit/OnScreenKeyboard.svelte';
-	import Panel from '$lib/exhibit/Panel.svelte';
 	import QuestionFrame from '$lib/exhibit/QuestionFrame.svelte';
 	import TactileButton from '$lib/exhibit/TactileButton.svelte';
+	import XpWindow from '$lib/exhibit/XpWindow.svelte';
 	import {
 		COPY,
 		FREQUENCY_OPTIONS,
@@ -85,12 +85,14 @@
 	);
 </script>
 
-<Panel>
+<XpWindow title="The Pollution That Wasn't" icon="/xp/readme.ico">
 	{#if step === -1}
-		<div class="welcome">
-			<p class="name-prompt">{COPY.namePrompt}</p>
+		<div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-7 text-center">
+			<p class="text-balance text-[clamp(22px,2.8vw,40px)] font-bold text-[#003399]">
+				{COPY.namePrompt}
+			</p>
 
-			<div class="flex w-[min(960px,94vw)] items-stretch gap-5">
+			<div class="flex w-[min(960px,94vw)] items-stretch gap-4">
 				<input
 					bind:value={nameInput}
 					type="text"
@@ -103,31 +105,23 @@
 					readonly
 					placeholder={COPY.namePlaceholder}
 					aria-label={COPY.namePrompt}
-					class="min-w-0 flex-1 rounded-2xl border-2 border-[#2a2a2a] bg-[#141414] px-8 py-6 text-center text-[clamp(30px,4.4vw,56px)] font-medium tracking-tight text-[#ededed] caret-transparent shadow-[inset_0_2px_10px_rgba(0,0,0,0.6)] outline-none transition-colors placeholder:text-[#555]"
+					class="font-xp !h-auto min-w-0 flex-1 !rounded-[3px] border border-[#7f9db9] bg-white !px-7 !py-5 text-center text-[clamp(28px,4vw,52px)] font-semibold !leading-none tracking-tight text-black caret-transparent shadow-[inset_1px_1px_3px_rgba(0,0,0,0.22)] outline-none placeholder:text-[#9a9a9a]"
 				/>
-				<div class="flex w-[clamp(220px,26vw,320px)] shrink-0">
+				<div class="flex w-[clamp(200px,24vw,300px)] shrink-0">
 					<TactileButton
 						label={COPY.start}
 						size="xl"
-						glow="green"
-						selected={canStart}
 						disabled={!canStart}
 						onclick={start}
 					/>
 				</div>
 			</div>
 
-			<OnScreenKeyboard bind:value={nameInput} onEnter={start} maxLength={24} />
+			<OnScreenKeyboard bind:value={nameInput} maxLength={24} />
 		</div>
 	{:else if step === 1}
-		<QuestionFrame
-			step={1}
-			prompt={PROMPTS[1]}
-			{canAdvance}
-			onBack={back}
-			onNext={next}
-		>
-			<div class="mode-grid grid">
+		<QuestionFrame step={1} prompt={PROMPTS[1]} {canAdvance} onBack={back} onNext={next}>
+			<div class="grid min-h-0 flex-1 grid-cols-3 grid-rows-2 gap-3">
 				{#each MODE_OPTIONS as opt (opt.value)}
 					<TactileButton
 						label={opt.label}
@@ -139,52 +133,32 @@
 			</div>
 		</QuestionFrame>
 	{:else if step === 2}
-		<QuestionFrame
-			step={2}
-			prompt={PROMPTS[2]}
-			{canAdvance}
-			onBack={back}
-			onNext={next}
-		>
-			<div class="freq-grid grid">
+		<QuestionFrame step={2} prompt={PROMPTS[2]} {canAdvance} onBack={back} onNext={next}>
+			<div class="grid min-h-0 flex-1 grid-cols-2 grid-rows-2 gap-3">
 				{#each FREQUENCY_OPTIONS as opt (opt.value)}
 					<TactileButton
 						label={opt.label}
 						selected={answers.frequency === opt.value}
 						size="xl"
-						glow="amber"
 						onclick={() => setAnswer('frequency', opt.value)}
 					/>
 				{/each}
 			</div>
 		</QuestionFrame>
 	{:else if step === 3}
-		<QuestionFrame
-			step={3}
-			prompt={PROMPTS[3]}
-			{canAdvance}
-			onBack={back}
-			onNext={next}
-		>
-			<div class="map-host">
+		<QuestionFrame step={3} prompt={PROMPTS[3]} {canAdvance} onBack={back} onNext={next}>
+			<div class="flex min-h-0 flex-1">
 				<MapQuestion />
 			</div>
 		</QuestionFrame>
 	{:else if step === 4}
-		<QuestionFrame
-			step={4}
-			prompt={PROMPTS[4]}
-			{canAdvance}
-			onBack={back}
-			onNext={next}
-		>
-			<div class="lifestyle-grid grid">
-				{#each LIFESTYLE_OPTIONS as opt, i (opt.value)}
+		<QuestionFrame step={4} prompt={PROMPTS[4]} {canAdvance} onBack={back} onNext={next}>
+			<div class="grid min-h-0 flex-1 grid-cols-3 gap-3">
+				{#each LIFESTYLE_OPTIONS as opt (opt.value)}
 					<TactileButton
 						label={opt.label}
 						selected={answers.lifestyle === opt.value}
 						size="xl"
-						glow={i === 0 ? 'blue' : i === 1 ? 'amber' : 'red'}
 						onclick={() => setAnswer('lifestyle', opt.value)}
 					/>
 				{/each}
@@ -200,77 +174,25 @@
 			onBack={back}
 			onNext={submit}
 		>
-			<div class="fun-grid grid" style="--cols: {funQuestion.options.length}">
+			<div
+				class="grid min-h-0 flex-1 gap-3"
+				style="grid-template-columns: repeat({funQuestion.options.length}, minmax(0, 1fr))"
+			>
 				{#each funQuestion.options as opt (opt.value)}
 					<TactileButton
 						label={opt.label}
 						selected={answers.funAnswer === opt.value}
 						size="xl"
-						glow="green"
 						onclick={() => setAnswer('funAnswer', opt.value)}
 					/>
 				{/each}
 			</div>
 			{#if error}
-				<p class="error">{COPY.submitFailed} {error}</p>
+				<p class="mt-3 text-[13px] font-semibold text-[#b52012]">
+					{COPY.submitFailed}
+					{error}
+				</p>
 			{/if}
 		</QuestionFrame>
 	{/if}
-</Panel>
-
-<style>
-	.welcome {
-		flex: 1;
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		justify-content: center;
-		text-align: center;
-		gap: 22px;
-		padding: 24px;
-	}
-	.name-prompt {
-		margin: 0;
-		font-family: 'IBM Plex Sans', sans-serif;
-		font-weight: 400;
-		font-size: clamp(26px, 3vw, 44px);
-		line-height: 1.15;
-		color: #cfcfcf;
-	}
-
-	.grid {
-		flex: 1;
-		display: grid;
-		gap: 16px;
-		align-content: stretch;
-		min-height: 0;
-	}
-	.mode-grid {
-		grid-template-columns: repeat(3, 1fr);
-		grid-template-rows: repeat(2, 1fr);
-	}
-	.freq-grid {
-		grid-template-columns: repeat(2, 1fr);
-		grid-template-rows: repeat(2, 1fr);
-	}
-	.lifestyle-grid {
-		grid-template-columns: repeat(3, 1fr);
-	}
-	.fun-grid {
-		grid-template-columns: repeat(var(--cols), 1fr);
-	}
-
-	.map-host {
-		flex: 1;
-		min-height: 0;
-		display: flex;
-	}
-
-	.error {
-		margin-top: 14px;
-		color: #c8301c;
-		font-family: 'IBM Plex Mono', monospace;
-		letter-spacing: 0.12em;
-		font-size: 13px;
-	}
-</style>
+</XpWindow>

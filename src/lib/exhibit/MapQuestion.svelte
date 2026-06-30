@@ -9,6 +9,7 @@
 	import { COPY } from './questions';
 	import { buildOtpCandidates, stationNames, tripDistanceKm } from './routeCandidates';
 	import RouteOptions from './RouteOptions.svelte';
+	import XpProgress from './XpProgress.svelte';
 	import { answers, setAnswer } from './store.svelte';
 
 	let originPick = $state<[number, number] | null>(answers.origin ?? null);
@@ -118,44 +119,67 @@
 	}
 </script>
 
-<div class="wrap">
-	<div class="map-area">
+<div class="relative flex min-h-0 flex-1 gap-3">
+	<div
+		class="relative min-h-0 min-w-0 flex-1 overflow-hidden rounded-[3px] border border-[#7f9db9] bg-white shadow-[inset_1px_1px_3px_rgba(0,0,0,0.25)]"
+	>
 		<Map {originPick} {destinationPick} segments={mapSegments} on:pick={handlePick} />
 
-		<div class="hud" class:dim={isLoading}>
-			<div class="schematic" aria-hidden="true">
-				<span class="dot" class:lit={!!originPick}></span>
-				<span class="link" class:lit={!!originPick && !!destinationPick}></span>
-				<span class="dot" class:lit={!!destinationPick}></span>
+		<!-- ── HUD: ○━━○ schematic + distance readout, XP group box ── -->
+		<div
+			class="font-xp absolute bottom-4 left-1/2 flex min-w-[320px] -translate-x-1/2 items-center gap-4 rounded-[3px] border border-[#aca899] bg-[#ece9d8] px-4 py-2 shadow-[2px_2px_6px_rgba(0,0,0,0.4)] transition-opacity duration-200 {isLoading
+				? 'opacity-60'
+				: ''}"
+		>
+			<div class="flex shrink-0 items-center" aria-hidden="true">
+				<span
+					class="h-[10px] w-[10px] rounded-full border-[1.5px] transition-colors duration-200 {originPick
+						? 'border-[#0a53d6] bg-[#0a53d6]'
+						: 'border-[#9a9a8c] bg-transparent'}"
+				></span>
+				<span
+					class="h-[2px] w-6 transition-colors duration-200 {originPick && destinationPick
+						? 'bg-[#0a53d6]'
+						: 'bg-[#9a9a8c]'}"
+				></span>
+				<span
+					class="h-[10px] w-[10px] rounded-full border-[1.5px] transition-colors duration-200 {destinationPick
+						? 'border-[#0a53d6] bg-[#0a53d6]'
+						: 'border-[#9a9a8c] bg-transparent'}"
+				></span>
 			</div>
 
-			<div class="readout">
-				<div class="value">
+			<div class="flex min-w-0 flex-1 flex-col items-start gap-0.5">
+				<div class="flex items-baseline gap-1.5 leading-none [font-variant-numeric:tabular-nums]">
 					{#if answers.distanceKm}
-						<span class="num">{answers.distanceKm.toFixed(2)}</span>
-						<span class="unit">km</span>
+						<span class="text-[22px] font-bold text-black">{answers.distanceKm.toFixed(2)}</span>
+						<span class="text-[12px] text-[#6a6a5e]">km</span>
 					{:else}
-						<span class="num placeholder">––.––</span>
-						<span class="unit placeholder">km</span>
+						<span class="text-[22px] font-bold text-[#b8b4a4]">--.--</span>
+						<span class="text-[12px] text-[#b8b4a4]">km</span>
 					{/if}
 				</div>
-				<span class="lbl">{statusLabel}</span>
+				<span
+					class="text-[10px] font-semibold uppercase leading-none tracking-[0.12em] text-[#5a564a]"
+				>
+					{statusLabel}
+				</span>
 			</div>
 
 			{#if originPick || destinationPick}
 				<button
 					type="button"
-					class="clear"
 					onclick={clear}
 					disabled={isLoading}
 					aria-label="Clear pins"
 					title="Clear pins"
+					class="grid h-7 w-7 shrink-0 place-items-center rounded-[3px] border border-[#003c74] bg-[#f4f4f4] text-[#003366] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] hover:bg-[#e9e9e9] active:bg-[#d4d4d4] disabled:opacity-40"
 				>
-					<svg width="14" height="14" viewBox="0 0 14 14" aria-hidden="true">
+					<svg width="13" height="13" viewBox="0 0 14 14" aria-hidden="true">
 						<path
 							d="M3 3 L11 11 M11 3 L3 11"
 							stroke="currentColor"
-							stroke-width="1.5"
+							stroke-width="1.6"
 							stroke-linecap="round"
 						/>
 					</svg>
@@ -164,11 +188,20 @@
 		</div>
 
 		{#if isLoading}
-			<div class="loading">{COPY.mapCrunching}</div>
+			<div
+				class="font-xp absolute left-1/2 top-4 flex w-[min(300px,72%)] -translate-x-1/2 flex-col gap-2 rounded-[3px] border border-[#aca899] bg-[#ece9d8] px-4 py-3 shadow-[2px_2px_6px_rgba(0,0,0,0.4)]"
+			>
+				<span class="text-[12px] font-semibold text-[#003366]">{COPY.mapCrunching}</span>
+				<XpProgress indeterminate />
+			</div>
 		{/if}
 
 		{#if lastError}
-			<div class="err">{lastError}</div>
+			<div
+				class="font-xp absolute right-4 top-4 max-w-[280px] rounded-[3px] border border-[#aca899] bg-[#ece9d8] px-3 py-2.5 text-[12px] font-semibold text-[#b52012] shadow-[2px_2px_6px_rgba(0,0,0,0.4)]"
+			>
+				{lastError}
+			</div>
 		{/if}
 	</div>
 
@@ -179,173 +212,3 @@
 		onSelect={selectRoute}
 	/>
 </div>
-
-<style>
-	.wrap {
-		position: relative;
-		flex: 1;
-		min-height: 0;
-		display: flex;
-		gap: 18px;
-	}
-
-	.map-area {
-		position: relative;
-		flex: 1;
-		min-width: 0;
-		min-height: 0;
-		border: 2px solid #1c1c1c;
-		border-radius: 12px;
-		overflow: hidden;
-		background: #fff;
-		box-shadow:
-			inset 0 0 0 1px rgba(255, 255, 255, 0.03),
-			inset 0 0 32px rgba(0, 0, 0, 0.6);
-	}
-
-	/* HUD anchored bottom-center of the map */
-	.hud {
-		position: absolute;
-		left: 50%;
-		bottom: 20px;
-		transform: translateX(-50%);
-		display: flex;
-		align-items: center;
-		gap: 20px;
-		padding: 12px 16px 12px 18px;
-		background: #141414;
-		border: 1px solid #2a2a2a;
-		border-radius: 10px;
-		box-shadow: 0 12px 36px rgba(0, 0, 0, 0.55);
-		font-family: 'IBM Plex Mono', ui-monospace, monospace;
-		color: #ededed;
-		min-width: 320px;
-		transition: opacity 0.2s ease;
-	}
-	.hud.dim {
-		opacity: 0.55;
-	}
-
-	/* Route schematic: ○━━○ that fills in as pins are placed */
-	.schematic {
-		display: flex;
-		align-items: center;
-		gap: 0;
-		flex-shrink: 0;
-	}
-	.dot {
-		width: 9px;
-		height: 9px;
-		border-radius: 50%;
-		border: 1.5px solid #4a4a4a;
-		background: transparent;
-		transition:
-			background 0.2s ease,
-			border-color 0.2s ease;
-	}
-	.dot.lit {
-		background: #ededed;
-		border-color: #ededed;
-	}
-	.link {
-		width: 22px;
-		height: 1.5px;
-		background: #4a4a4a;
-		transition: background 0.2s ease;
-	}
-	.link.lit {
-		background: #ededed;
-	}
-
-	.readout {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-start;
-		gap: 2px;
-		flex: 1;
-		min-width: 0;
-	}
-	.value {
-		display: flex;
-		align-items: baseline;
-		gap: 5px;
-		font-variant-numeric: tabular-nums;
-		line-height: 1;
-	}
-	.num {
-		font-size: 22px;
-		font-weight: 500;
-		color: #ededed;
-		letter-spacing: 0;
-	}
-	.unit {
-		font-size: 12px;
-		font-weight: 400;
-		color: #8a8a8a;
-		letter-spacing: 0;
-	}
-	.placeholder {
-		color: #3a3a3a;
-	}
-	.lbl {
-		font-size: 9px;
-		font-weight: 600;
-		letter-spacing: 0.22em;
-		color: #7a7a7a;
-		text-transform: uppercase;
-		line-height: 1;
-	}
-
-	.clear {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 24px;
-		height: 24px;
-		padding: 0;
-		background: transparent;
-		border: none;
-		border-radius: 4px;
-		color: #6a6a6a;
-		cursor: pointer;
-		flex-shrink: 0;
-		transition:
-			color 0.15s ease,
-			background 0.15s ease;
-	}
-	.clear:hover:not(:disabled) {
-		color: #ededed;
-		background: rgba(255, 255, 255, 0.06);
-	}
-	.clear:disabled {
-		opacity: 0.35;
-		cursor: not-allowed;
-	}
-
-	.loading {
-		position: absolute;
-		top: 16px;
-		left: 50%;
-		transform: translateX(-50%);
-		padding: 8px 16px;
-		background: rgba(16, 16, 16, 0.94);
-		color: #ededed;
-		font-family: 'IBM Plex Mono', monospace;
-		font-size: 13px;
-		letter-spacing: 0.22em;
-		border-radius: 6px;
-	}
-	.err {
-		position: absolute;
-		top: 16px;
-		right: 16px;
-		max-width: 280px;
-		padding: 10px 14px;
-		background: rgba(60, 16, 12, 0.95);
-		color: #ffb098;
-		font-family: 'IBM Plex Mono', monospace;
-		font-size: 12px;
-		letter-spacing: 0.08em;
-		border-radius: 6px;
-	}
-</style>

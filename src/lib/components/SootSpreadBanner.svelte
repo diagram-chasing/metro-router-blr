@@ -89,7 +89,7 @@
 			class="flex items-baseline justify-center gap-[calc(var(--wall-scale)*24px)] bg-black text-center text-white"
 		>
 			<span class="text-[length:calc(var(--wall-scale)*clamp(18px,1.7vw,32px))] font-bold uppercase"
-				>PARTICLE POLLUTION PER KM</span
+				>GRAMS OF PM2.5 GENERATED PER KM</span
 			>
 		</div>
 

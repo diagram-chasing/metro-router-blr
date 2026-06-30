@@ -16,17 +16,29 @@
 	} = $props();
 </script>
 
-<aside class="panel">
-	<header class="head">
-		<span class="title">{COPY.routeTitle}</span>
+<aside
+	class="font-xp flex w-[340px] shrink-0 flex-col gap-3 rounded-[3px] border border-[#aca899] bg-[#ece9d8] p-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.6)]"
+>
+	<header class="border-b border-[#c9c4b4] pb-2">
+		<span class="text-[13px] font-bold uppercase tracking-[0.08em] text-[#003366]">
+			{COPY.routeTitle}
+		</span>
 	</header>
 
 	{#if locked}
-		<div class="placeholder">{COPY.routeDropPins}</div>
+		<div
+			class="rounded-[3px] border border-dashed border-[#b8b4a4] bg-white/40 px-4 py-5 text-center text-[12px] font-semibold uppercase tracking-[0.06em] text-[#7a7666]"
+		>
+			{COPY.routeDropPins}
+		</div>
 	{:else if candidates.length === 0}
-		<div class="placeholder">{COPY.routeNoOptions}</div>
+		<div
+			class="rounded-[3px] border border-dashed border-[#b8b4a4] bg-white/40 px-4 py-5 text-center text-[12px] font-semibold uppercase tracking-[0.06em] text-[#7a7666]"
+		>
+			{COPY.routeNoOptions}
+		</div>
 	{:else}
-		<div class="list">
+		<div class="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto">
 			{#each candidates as c (c.id)}
 				<RouteOptionCard
 					candidate={c}
@@ -37,49 +49,3 @@
 		</div>
 	{/if}
 </aside>
-
-<style>
-	.panel {
-		flex: 0 0 340px;
-		display: flex;
-		flex-direction: column;
-		gap: 14px;
-		padding: 16px 16px 18px;
-		background: #161616;
-		border: 1px solid #050505;
-		border-radius: 12px;
-		box-shadow:
-			inset 0 1px 0 rgba(255, 255, 255, 0.04),
-			inset 0 -1px 0 rgba(0, 0, 0, 0.6);
-	}
-
-	.head {
-		padding: 2px 2px 10px;
-	}
-	.title {
-		font-family: 'IBM Plex Mono', ui-monospace, monospace;
-		font-size: 12px;
-		letter-spacing: 0.24em;
-		color: #ededed;
-		font-weight: 600;
-	}
-
-	.list {
-		display: flex;
-		flex-direction: column;
-		gap: 10px;
-		min-height: 0;
-		flex: 1;
-	}
-
-	.placeholder {
-		padding: 18px 14px;
-		font-family: 'IBM Plex Mono', monospace;
-		font-size: 11px;
-		letter-spacing: 0.16em;
-		color: #5a5a5a;
-		text-align: center;
-		border: 1px dashed #2a2a2a;
-		border-radius: 8px;
-	}
-</style>

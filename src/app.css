@@ -16,6 +16,34 @@
 @import 'tailwindcss/components';
 @import 'tailwindcss/utilities';
 
+/* Windows XP (Luna) UI face for the exhibit + receipt chrome. Self-hosted Tahoma (bundled,
+   offline) with a locally installed Tahoma preferred if present. Only the regular master is
+   shipped; the browser synthesises bold, so no separate 700 face is declared. */
+@font-face {
+	font-family: 'XP UI';
+	src:
+		local('Tahoma'),
+		url('/fonts/tahoma.otf') format('opentype');
+	font-weight: 400;
+	font-display: swap;
+}
+:root {
+	--font-xp: 'XP UI', 'Tahoma', 'Trebuchet MS', 'Segoe UI', 'Verdana', sans-serif;
+}
+.font-xp {
+	font-family: var(--font-xp);
+}
+
+/* Indeterminate XP progress shimmer (the green block sweeps left to right). */
+@keyframes xp-marquee {
+	from {
+		transform: translateX(-100%);
+	}
+	to {
+		transform: translateX(250%);
+	}
+}
+
 /* Wall overlay keyframes — referenced from components via Tailwind arbitrary animate-[…] classes
    (base Tailwind has no equivalent). Kept global here rather than in the config per project style. */
 @keyframes draw-in {
@@ -53,46 +81,39 @@
 	display: none !important;
 }
 
-/* simple-keyboard dark theme for the kiosk name-entry keyboard. The library renders its
-   own DOM (.hg-* classes) outside Svelte's scoped styles, so the theme lives here. */
-.kiosk-keyboard .hg-theme-default {
+/* Windows XP key faces for the kiosk name-entry keyboard. The library renders its own DOM
+   (.hg-* classes) outside Svelte's scoped styles, so the theme lives here. Keys read as XP
+   command buttons: pale beveled face, blue outline, sink on press. */
+.kiosk-keyboard.hg-theme-default {
 	background: transparent;
 	padding: 0;
-	font-family: 'IBM Plex Sans', ui-sans-serif, sans-serif;
+	font-family: var(--font-xp);
 }
-.kiosk-keyboard .hg-row {
+.kiosk-keyboard.hg-theme-default .hg-row {
 	gap: 8px;
 }
-.kiosk-keyboard .hg-row + .hg-row {
+.kiosk-keyboard.hg-theme-default .hg-row + .hg-row {
 	margin-top: 8px;
 }
-.kiosk-keyboard .hg-theme-default .hg-button {
+.kiosk-keyboard.hg-theme-default .hg-button {
 	height: clamp(58px, 8.4vh, 88px);
-	background: #1a1a1a;
-	color: #ededed;
-	border: 1px solid #2a2a2a;
-	border-bottom: 3px solid #050505;
-	border-radius: 12px;
+	background: linear-gradient(#ffffff, #ecebe5 86%, #d8d0c4);
+	color: #222;
+	border: 1px solid #003c74;
+	border-radius: 3px;
 	font-size: clamp(20px, 2.5vw, 34px);
-	font-weight: 500;
-	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+	font-weight: 400;
+	box-shadow: none;
 }
-.kiosk-keyboard .hg-theme-default .hg-button:active,
-.kiosk-keyboard .hg-theme-default .hg-button.hg-activeButton {
-	background: #2d2d2d;
-	transform: translateY(1px);
-	border-bottom-width: 2px;
+.kiosk-keyboard.hg-theme-default .hg-button:active,
+.kiosk-keyboard.hg-theme-default .hg-button.hg-activeButton {
+	background: linear-gradient(#cdcac3, #e3e3db 8%, #e5e5de 94%, #f2f2f1);
+	box-shadow: none;
 }
-.kiosk-keyboard .hg-theme-default .hg-button.hg-functionBtn {
-	background: #121212;
-	color: #cfcfcf;
+.kiosk-keyboard.hg-theme-default .hg-button.hg-functionBtn {
+	background: linear-gradient(#f6f5ef, #e7e3d2 86%, #d4cdbb);
+	color: #222;
 }
-.kiosk-keyboard .hg-theme-default .hg-button.hg-button-space {
+.kiosk-keyboard.hg-theme-default .hg-button.hg-button-space {
 	flex-grow: 6;
-}
-.kiosk-keyboard .hg-theme-default .hg-button.hg-button-enter {
-	flex-grow: 2;
-	background: #1f3d29;
-	color: #dbefdf;
-	border-bottom-color: #0b1f13;
 }

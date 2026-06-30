@@ -14,7 +14,7 @@ export const COPY = {
 	start: "LET'S GO",
 	print: 'PRINT RECEIPT',
 	printing: 'PRINTING…',
-	submitFailed: 'SUBMIT FAILED —',
+	submitFailed: 'SUBMIT FAILED:',
 	// Map question (Q3)
 	mapSetOrigin: 'Tap map to set origin',
 	mapSetDestination: 'Tap to set destination',

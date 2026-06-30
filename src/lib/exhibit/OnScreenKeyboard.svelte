@@ -5,46 +5,27 @@
 
 	let {
 		value = $bindable(''),
-		onEnter,
 		maxLength = 24
 	}: {
 		value?: string;
-		onEnter?: () => void;
 		maxLength?: number;
 	} = $props();
 
 	let host = $state<HTMLDivElement | null>(null);
 	let keyboard: Keyboard | null = null;
-	// Start capitalised so a name's first letter is upper-case; drops to lower after the
-	// first keypress, the way a name is normally written.
-	let shifted = true;
 
+	// Single always-uppercase layout: no shift key, names are entered in caps.
 	const LAYOUT = {
-		default: [
-			'q w e r t y u i o p',
-			'a s d f g h j k l',
-			'{shift} z x c v b n m {bksp}',
-			'{space} {enter}'
-		],
-		shift: [
-			'Q W E R T Y U I O P',
-			'A S D F G H J K L',
-			'{shift} Z X C V B N M {bksp}',
-			'{space} {enter}'
-		]
+		default: ['Q W E R T Y U I O P', 'A S D F G H J K L', 'Z X C V B N M {bksp}', '{space}']
 	};
 
 	const DISPLAY = {
 		'{bksp}': '⌫',
-		'{shift}': '⇧',
-		'{space}': 'space',
-		'{enter}': 'done'
+		'{space}': 'space'
 	};
 
-	const applyLayout = () => keyboard?.setOptions({ layoutName: shifted ? 'shift' : 'default' });
-
-	// Build once when the host mounts. Reactive reads (value/shifted/maxLength) are
-	// untracked so a keypress never tears down and rebuilds the keyboard.
+	// Build once when the host mounts. Reactive reads (value/maxLength) are untracked so a
+	// keypress never tears down and rebuilds the keyboard.
 	$effect(() => {
 		const el = host;
 		if (!el) return;
@@ -54,22 +35,12 @@
 				new Keyboard(el, {
 					layout: LAYOUT,
 					display: DISPLAY,
-					layoutName: shifted ? 'shift' : 'default',
+					// simple-keyboard overwrites the host className on render, so inject our
+					// styling hook through the theme option (it is preserved).
+					theme: 'hg-theme-default kiosk-keyboard',
 					maxLength,
 					onChange: (input: string) => {
 						value = input;
-						if (shifted && input.length > 0) {
-							shifted = false;
-							applyLayout();
-						}
-					},
-					onKeyPress: (button: string) => {
-						if (button === '{shift}') {
-							shifted = !shifted;
-							applyLayout();
-						} else if (button === '{enter}') {
-							onEnter?.();
-						}
 					}
 				})
 		);
@@ -89,4 +60,7 @@
 	});
 </script>
 
-<div bind:this={host} class="kiosk-keyboard w-[min(760px,90vw)]"></div>
+<div class="mx-auto w-[min(760px,90vw)]">
+	<!-- simple-keyboard needs a class on the host to derive its keyboardDOMClass. -->
+	<div bind:this={host} class="kiosk-keyboard"></div>
+</div>
