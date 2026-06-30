@@ -5,7 +5,7 @@
 
 	let {
 		step,
-		total = 6,
+		total = 5,
 		prompt,
 		canAdvance = false,
 		canGoBack = true,

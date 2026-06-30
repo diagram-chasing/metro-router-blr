@@ -5,7 +5,6 @@
 
 import type {
 	Answers,
-	Decider,
 	Frequency,
 	FunQuestionId,
 	Lifestyle,
@@ -37,7 +36,6 @@ export type Combo = {
 	tripName: string;
 	frequency: Frequency;
 	lifestyle: Lifestyle;
-	decider: Decider;
 	funQuestionId?: FunQuestionId;
 	funAnswer?: string;
 	dataState: DataState;
@@ -102,7 +100,6 @@ function makeAnswers(c: Combo): Answers {
 		chosenRouteId: c.pickedKind === 'none' ? undefined : c.pickedKind,
 		route,
 		lifestyle: c.lifestyle,
-		decider: c.decider,
 		funQuestionId: c.funQuestionId,
 		funAnswer: c.funAnswer
 	};
@@ -188,7 +185,7 @@ export function buildCase(c: Combo): Case {
 	const mine = computed.comparison.usual.gPerKm; // histogram marker = the habit
 	const { hist, dist } = makeData(c.dataState, mine, computed.perTripKg);
 	const view = buildReceiptView(computed, answers, geo, dist, hist, c.seedId, CREATED_AT);
-	const valence = subjectValence(computed.trip.mode, computed.trip.decider);
+	const valence = subjectValence(computed.trip.mode);
 	return { combo: c, answers, computed, view, valence };
 }
 
@@ -198,7 +195,6 @@ export const USUAL_MODES: Mode[] = ['auto', 'car', 'two_wheeler', 'bus', 'metro'
 export const PICKED: PickedChoice[] = ['cab', 'auto', 'metro', 'bus', 'walk', 'none'];
 export const FREQUENCIES: Frequency[] = ['daily', 'few_weekly', 'weekly', 'occasional'];
 export const LIFESTYLES: Lifestyle[] = ['homebody', 'moderate', 'always_out'];
-export const DECIDERS: Decider[] = ['speed', 'cost', 'comfort', 'habit', 'no_option'];
 export const DATA_STATES: DataState[] = ['empty', 'sparse', 'populated'];
 export const TRIPS: { name: string; km: number }[] = [
 	{ name: 'very-short', km: 0.8 },

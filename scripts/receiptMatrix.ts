@@ -14,7 +14,6 @@ import {
 	buildCase,
 	USUAL_MODES,
 	PICKED,
-	DECIDERS,
 	TRIPS,
 	DATA_STATES,
 	FREQUENCIES,
@@ -120,7 +119,7 @@ function flagsFor(cse: Case, text: string, rows: number): string[] {
 }
 
 function comboLabel(c: Combo): string {
-	return `${c.usualMode} | drew:${c.pickedKind} | ${c.tripName}(${c.distanceKm}km) | ${c.decider} | ${c.frequency} | ${c.dataState} | ${c.seedId}`;
+	return `${c.usualMode} | drew:${c.pickedKind} | ${c.tripName}(${c.distanceKm}km) | ${c.frequency} | ${c.dataState} | ${c.seedId}`;
 }
 
 function signature(cse: Case): string {
@@ -146,27 +145,25 @@ const cases: Case[] = [];
 let idx = 0;
 for (const usualMode of USUAL_MODES)
 	for (const pickedKind of PICKED)
-		for (const decider of DECIDERS)
-			for (const trip of TRIPS)
-				for (const dataState of DATA_STATES) {
-					const fun = FUN[idx % FUN.length];
-					cases.push(
-						buildCase({
-							usualMode,
-							pickedKind,
-							distanceKm: trip.km,
-							tripName: trip.name,
-							frequency: FREQUENCIES[idx % FREQUENCIES.length],
-							lifestyle: LIFESTYLES[idx % LIFESTYLES.length],
-							decider,
-							funQuestionId: fun.id,
-							funAnswer: fun.ans,
-							dataState,
-							seedId: SEEDS[idx % SEEDS.length]
-						})
-					);
-					idx++;
-				}
+		for (const trip of TRIPS)
+			for (const dataState of DATA_STATES) {
+				const fun = FUN[idx % FUN.length];
+				cases.push(
+					buildCase({
+						usualMode,
+						pickedKind,
+						distanceKm: trip.km,
+						tripName: trip.name,
+						frequency: FREQUENCIES[idx % FREQUENCIES.length],
+						lifestyle: LIFESTYLES[idx % LIFESTYLES.length],
+						funQuestionId: fun.id,
+						funAnswer: fun.ans,
+						dataState,
+						seedId: SEEDS[idx % SEEDS.length]
+					})
+				);
+				idx++;
+			}
 
 type Scored = { cse: Case; text: string; rows: number; flags: string[]; sig: string };
 const scored: Scored[] = cases.map((cse) => {
@@ -266,7 +263,7 @@ h('## Valence × gap matrix\n');
 const dirs = ['no-gap', 'cleaner', 'dirtier'];
 h(`| valence | ${dirs.join(' | ')} |`);
 h(`| --- | ${dirs.map(() => '---').join(' | ')} |`);
-for (const v of ['affirm', 'critical', 'sympathetic'])
+for (const v of ['affirm', 'critical'])
 	h(`| ${v} | ${dirs.map((d) => vmatrix[v]?.[d] ?? 0).join(' | ')} |`);
 h('');
 

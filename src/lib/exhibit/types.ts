@@ -8,7 +8,6 @@ export type Mode =
 
 export type Frequency = 'daily' | 'few_weekly' | 'weekly' | 'occasional';
 export type Lifestyle = 'homebody' | 'moderate' | 'always_out';
-export type Decider = 'speed' | 'cost' | 'comfort' | 'habit' | 'no_option';
 export type FunQuestionId = 'walking' | 'crowd_tolerance' | 'last_mile';
 
 export type FunOption = { label: string; value: string };
@@ -31,6 +30,7 @@ export type RouteGeometry = {
 };
 
 export type Answers = {
+	name?: string;
 	mode?: Mode;
 	frequency?: Frequency;
 	origin?: [number, number];
@@ -41,7 +41,6 @@ export type Answers = {
 	chosenRouteId?: string;
 	route?: RouteGeometry;
 	lifestyle?: Lifestyle;
-	decider?: Decider;
 	funQuestionId?: FunQuestionId;
 	funAnswer?: string;
 };

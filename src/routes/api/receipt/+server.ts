@@ -52,7 +52,7 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
 	if (!answers || typeof answers !== 'object') {
 		return json({ error: 'body must be an Answers object' }, 400);
 	}
-	if (!answers.mode || !answers.frequency || !answers.lifestyle || !answers.decider) {
+	if (!answers.mode || !answers.frequency || !answers.lifestyle) {
 		return json({ error: 'missing required answers' }, 400);
 	}
 	if (typeof answers.distanceKm !== 'number' || answers.distanceKm <= 0) {

@@ -83,6 +83,10 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 
 	T(ruleStr('═'));
 	T(ledger(`${view.meta.dateLabel}  ${view.meta.timeLabel}`, `Order no. ${view.meta.visitorNo}`), { small: true });
+	if (view.meta.name) {
+		gap();
+		T(`Prepared for ${view.meta.name}`, { align: 'center', bold: true });
+	}
 	gap();
 
 	// 01 your route — the map is the route the visitor DREW (Q3); the Mode line is

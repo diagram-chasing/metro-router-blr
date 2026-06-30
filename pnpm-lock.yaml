@@ -56,6 +56,9 @@ importers:
       qrcode-generator:
         specifier: ^2.0.4
         version: 2.0.4
+      simple-keyboard:
+        specifier: ^3.8.157
+        version: 3.8.157
     devDependencies:
       '@eslint/compat':
         specifier: ^1.2.5
@@ -3155,6 +3158,9 @@ packages:
 
   simple-get@4.0.1:
     resolution: {integrity: sha512-brv7p5WgH0jmQJr1ZDDfKDOSeWWg+OVypG99A/5vYGPqJ6pxiaHLy8nxtFjBA7oMa01ebA9gfh1uMCFqOuXxvA==}
+
+  simple-keyboard@3.8.157:
+    resolution: {integrity: sha512-TWE/m1EMBh43jJhMDkl+AugYFRzgLj3GWeyNFRQM1yqhPI6aO8lu5M5sxQeTQ3p5w+8JW4+RaYndsv+fqC+vAQ==}
 
   sirv@3.0.2:
     resolution: {integrity: sha512-2wcC/oGxHis/BoHkkPwldgiPSYcpZK3JU28WoMVv55yHJgcZ8rlXvuG9iZggz+sU1d4bRgIGASwyWqjxu3FM0g==}
@@ -6771,6 +6777,8 @@ snapshots:
       decompress-response: 6.0.0
       once: 1.4.0
       simple-concat: 1.0.1
+
+  simple-keyboard@3.8.157: {}
 
   sirv@3.0.2:
     dependencies:

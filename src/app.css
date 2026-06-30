@@ -52,3 +52,47 @@
 .maplibregl-ctrl-attrib-button {
 	display: none !important;
 }
+
+/* simple-keyboard dark theme for the kiosk name-entry keyboard. The library renders its
+   own DOM (.hg-* classes) outside Svelte's scoped styles, so the theme lives here. */
+.kiosk-keyboard .hg-theme-default {
+	background: transparent;
+	padding: 0;
+	font-family: 'IBM Plex Sans', ui-sans-serif, sans-serif;
+}
+.kiosk-keyboard .hg-row {
+	gap: 8px;
+}
+.kiosk-keyboard .hg-row + .hg-row {
+	margin-top: 8px;
+}
+.kiosk-keyboard .hg-theme-default .hg-button {
+	height: clamp(58px, 8.4vh, 88px);
+	background: #1a1a1a;
+	color: #ededed;
+	border: 1px solid #2a2a2a;
+	border-bottom: 3px solid #050505;
+	border-radius: 12px;
+	font-size: clamp(20px, 2.5vw, 34px);
+	font-weight: 500;
+	box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04);
+}
+.kiosk-keyboard .hg-theme-default .hg-button:active,
+.kiosk-keyboard .hg-theme-default .hg-button.hg-activeButton {
+	background: #2d2d2d;
+	transform: translateY(1px);
+	border-bottom-width: 2px;
+}
+.kiosk-keyboard .hg-theme-default .hg-button.hg-functionBtn {
+	background: #121212;
+	color: #cfcfcf;
+}
+.kiosk-keyboard .hg-theme-default .hg-button.hg-button-space {
+	flex-grow: 6;
+}
+.kiosk-keyboard .hg-theme-default .hg-button.hg-button-enter {
+	flex-grow: 2;
+	background: #1f3d29;
+	color: #dbefdf;
+	border-bottom-color: #0b1f13;
+}

@@ -7,7 +7,7 @@ import {
 	routeEmissions,
 	tripEmissions
 } from '$lib/emissions';
-import type { Answers, Decider, Frequency, FunQuestionId, Lifestyle, Mode } from '$lib/exhibit/types';
+import type { Answers, Frequency, FunQuestionId, Lifestyle, Mode } from '$lib/exhibit/types';
 import type { GeoSnapshot } from '$lib/server/receiptStore';
 import { assignArchetype, archetypeBasis } from './archetype';
 import { estimateCorridorTraffic } from './corridorTraffic';
@@ -42,8 +42,6 @@ export type ComputedReceipt = {
 		destinationStation?: string;
 		lifestyle: Lifestyle;
 		lifestyleLabel: string;
-		decider: Decider;
-		deciderLabel: string;
 	};
 
 	// Per-trip emissions (their mode vs the best transit-led alternative)
@@ -64,7 +62,6 @@ export type ComputedReceipt = {
 
 	// Recommendation
 	recommendation: {
-		deciderHeadline: string;
 		recommendedCombo: string;
 	};
 
@@ -140,7 +137,7 @@ export type RouteSeg = { mode: Mode; lengthM: number };
 export type RouteGeoLeg = { coords: [number, number][]; gPerKm: number };
 
 export type ReceiptView = {
-	meta: { visitorNo: string; dateLabel: string; timeLabel: string };
+	meta: { visitorNo: string; dateLabel: string; timeLabel: string; name?: string };
 	item: {
 		origin: string;
 		dest: string;
@@ -315,18 +312,14 @@ export function interp(s: string, vars: Record<string, string>): string {
 }
 
 // The one tone decision the whole receipt keys off. The SUBJECT is the visitor's
-// stated habit (Q1) — clean modes are affirmed; a dirty mode is criticised, unless
-// the visitor has no real alternative (decider 'no_option'), in which case the
-// footprint is the network's gap, not theirs, and we stay sympathetic. Every
+// stated habit (Q1) — clean modes are affirmed; a dirty mode is criticised. Every
 // verdict-bearing beat resolves this once and picks copy from the matching pool, so
 // a positive choice can never collect a negative line.
-export type Valence = 'affirm' | 'critical' | 'sympathetic';
+export type Valence = 'affirm' | 'critical';
 
-export function subjectValence(mode: Mode, decider: Decider): Valence {
+export function subjectValence(mode: Mode): Valence {
 	const clean = mode === 'bus' || mode === 'metro' || mode === 'active';
-	if (clean) return 'affirm';
-	if (decider === 'no_option') return 'sympathetic';
-	return 'critical';
+	return clean ? 'affirm' : 'critical';
 }
 
 // A line is opener (frames the beat, names the mode) + verdict (the numbers) +
@@ -354,10 +347,7 @@ const TAILS: Record<Valence, string[]> = {
 		'but moving on.',
 		'it is what it is, i guess.',
 		'make of it what you like.'
-	],
-	// Sympathetic verdict bodies already absolve ("not on you", "no line near you"), so the
-	// tail here only closes — it never restates the absolution.
-	sympathetic: ['file it away.', 'for when it changes.']
+	]
 };
 
 // Tails that only make sense after a numeric verdict — never on the parking (land-use) beat.
@@ -370,43 +360,10 @@ function beatTail(id: string, beat: TailBeat, v: Valence, want: boolean): string
 }
 
 // Pick at most one beat to carry a tail this receipt. The empty slots give a real chance of
-// a tail-free receipt; swap only qualifies when it renders the sympathetic forecast.
-function chooseTailedBeat(c: ComputedReceipt, v: Valence, id: string): TailBeat | '' {
+// a tail-free receipt.
+function chooseTailedBeat(id: string): TailBeat | '' {
 	const candidates: string[] = ['modeRank', 'corridor', 'parking', '', ''];
-	if (v === 'sympathetic' && c.halfSwap.savedKg > 0) candidates.push('swap');
 	return pick(id, 'tail-beat', candidates) as TailBeat | '';
-}
-
-// ── Recommendation · decider headline ──
-const DECIDER_POOLS: Record<Decider, string[]> = {
-	speed: [
-		'the metro version is a few minutes longer and skips the part where you sit still behind a bus, reconsidering things.',
-		'metro is barely slower here, and nothing on it idles in traffic. you keep those minutes, though.'
-	],
-	cost: [
-		"switching this trip saves big money every month. i won't itemise it; you'd be shocked.",
-		"the cheaper version exists and you're not taking it.",
-		'this swap pays you back every month. just so you know.'
-	],
-	comfort: [
-		'ac the whole way, about the same time. i do not know what else you want from me.',
-		'the comfortable option is also the clean one here. rare. take it.',
-		'same time, air-conditioned, fewer decisions. that is the pitch. that is all i have.'
-	],
-	habit: [
-		'change one thing. the longest leg. that is the whole ask.',
-		'you do not have to overhaul anything. swap the heaviest leg and stop there.',
-		'one leg. the big one. leave the rest of your routine alone.'
-	],
-	no_option: [
-		'no good option today, honestly. when a line reaches you, this is what changes.',
-		"there isn't a clean version of this yet. when the network catches up, here is the difference.",
-		'fair enough. nothing better exists for you right now. file this for when it does.'
-	]
-};
-
-function deciderHeadline(decider: Decider, id: string): string {
-	return pick(id, 'decider', DECIDER_POOLS[decider]);
 }
 
 // ── Personal nudge · friction overlay ──
@@ -475,7 +432,7 @@ const UNITS_CLEAN = [
 	"doesn't add up to one of anything. a most excellent achievement."
 ];
 
-// Neutral clean-branch copy: used when the mode-valence is critical/sympathetic but the annual
+// Neutral clean-branch copy: used when the mode-valence is critical but the annual
 // happens to land tiny — state the small number plainly, neither praising nor scolding the choice.
 const YEAR_NEUTRAL = [
 	'small, annualised. the grid has almost nothing to draw.',
@@ -502,15 +459,7 @@ const LIFESTYLE_LABEL: Record<Lifestyle, string> = {
 	always_out: 'always on the move'
 };
 
-const DECIDER_LABEL: Record<Decider, string> = {
-	speed: 'speed',
-	cost: 'cost',
-	comfort: 'comfort',
-	habit: 'habit',
-	no_option: 'no real alternative'
-};
-
-// The "you told us …" premise for the swap beat, drawn from the Q6 friction answer.
+// The "you told us …" premise for the swap beat, drawn from the friction answer.
 const PREMISE: Record<FunQuestionId, string> = {
 	walking: "you'd happily walk for a good coffee",
 	crowd_tolerance: "crowds don't faze you",
@@ -577,16 +526,8 @@ const VERDICTS_CLEAN = [
 	"clean enough that the verdict won't load."
 ];
 
-// Dirty per km, but no clean line reaches them — the rank is on the map, not on them.
-const VERDICTS_SYMPATHETIC = [
-	'{ord} dirtiest of {tot} ways across town, and not one of the clean ones runs your route.',
-	'heavy per km, yes. also the only thing that actually reaches where you live.',
-	'{ord} of {tot}. less a verdict on you than on the map you were handed.',
-	'the per-km number is high. the alternative that would lower it does not exist yet for you.'
-];
-
 function modeRankCopy(c: ComputedReceipt, id: string, wantTail: boolean): string {
-	const v = subjectValence(c.trip.mode, c.trip.decider);
+	const v = subjectValence(c.trip.mode);
 	const lc = c.trip.modeLabel.toLowerCase();
 	const tot = c.modeRank.totalModes;
 	const rank = c.modeRank.carbonRankFromDirtiest;
@@ -605,8 +546,6 @@ function modeRankCopy(c: ComputedReceipt, id: string, wantTail: boolean): string
 	let verdict: string;
 	if (v === 'affirm') {
 		verdict = pick(id, 'mr-verdict', VERDICTS_CLEAN);
-	} else if (v === 'sympathetic') {
-		verdict = interp(pick(id, 'mr-verdict', VERDICTS_SYMPATHETIC), vars);
 	} else if (rank === 1) {
 		verdict = interp(pick(id, 'mr-verdict', VERDICTS_DIRTIEST), { tot: String(tot) });
 	} else {
@@ -644,14 +583,8 @@ const CORRIDOR_DIRTY = [
 	'a bus emits {busG} g/km here. you came in at {youG}, for one person.'
 ];
 
-// Same road, same numbers, but no bus to switch to — so we state it, we don't scold.
-const CORRIDOR_SYMPATHETIC = [
-	'a bus would do this road at {busG} g/km. you did {youG}, with no line near you to take it.',
-	'the bus manages {busG} g/km here; you came in at {youG}, for want of one that reaches you.'
-];
-
 function corridorCopy(c: ComputedReceipt, id: string, wantTail: boolean): string {
-	const v = subjectValence(c.trip.mode, c.trip.decider);
+	const v = subjectValence(c.trip.mode);
 	const rows = c.corridor.rows;
 	const carG = String(rows.find((r) => r.key === 'car')?.gPerKm ?? 0);
 	const busG = String(rows.find((r) => r.key === 'bus')?.gPerKm ?? 18);
@@ -666,8 +599,6 @@ function corridorCopy(c: ComputedReceipt, id: string, wantTail: boolean): string
 			youG: String(you.gPerKm),
 			carG
 		});
-	} else if (v === 'sympathetic') {
-		line = interp(pick(id, 'cor-verdict', CORRIDOR_SYMPATHETIC), { busG, youG: String(you.gPerKm) });
 	} else {
 		line = interp(pick(id, 'cor-verdict', CORRIDOR_DIRTY), { busG, youG: String(you.gPerKm) });
 	}
@@ -692,26 +623,9 @@ const SWAP_LEAD = [
 	'put half these trips on {mode} + a short auto. {premise}, after all.'
 ];
 
-// Same arithmetic, but the option doesn't exist yet — so it's a forecast, not a nudge.
-const SWAP_SYMPATHETIC = [
-	'the day a line reaches you, half these trips move to metro+auto and the year drops by about {savedKg} kg.',
-	'there is no clean version of this today. when there is, the year settles near ~{swapKg} kg.',
-	'when the network catches up, that is about {savedKg} kg a year you are not emitting by choice, not yet.'
-];
-
-function swapCopy(c: ComputedReceipt, a: Answers, id: string, wantTail: boolean): string {
-	const v = subjectValence(c.trip.mode, c.trip.decider);
-
+function swapCopy(c: ComputedReceipt, a: Answers, id: string): string {
 	if (c.halfSwap.savedKg <= 0) {
 		return pick(id, 'swap-none', SWAP_NONE);
-	}
-
-	if (v === 'sympathetic') {
-		const line = interp(pick(id, 'swap-symp', SWAP_SYMPATHETIC), {
-			swapKg: comma(c.halfSwap.annualKg),
-			savedKg: comma(c.halfSwap.savedKg)
-		});
-		return `${line} ${beatTail(id, 'swap', v, wantTail)}`.replace(/\s+/g, ' ').trim();
 	}
 
 	// No tail here: a forward-looking nudge shouldn't end on a verdict sign-off.
@@ -793,7 +707,7 @@ const PARK_NONE = [
 
 function parkingCopy(c: ComputedReceipt, id: string, wantTail: boolean): string {
 	const mode = c.trip.mode;
-	const v = subjectValence(mode, c.trip.decider);
+	const v = subjectValence(mode);
 	const line =
 		mode === 'car' || mode === 'two_wheeler'
 			? pick(id, 'park-verdict', PARK_OWN)
@@ -865,6 +779,14 @@ export function comma(n: number): string {
 	return Math.round(n).toLocaleString('en-IN');
 }
 
+// First name as entered, tidied for the receipt greeting: first word only, capitalised,
+// length-capped so it never blows past the 48-col line. undefined when nothing usable.
+function formatName(raw: string | undefined): string | undefined {
+	const first = (raw ?? '').trim().split(/\s+/)[0]?.slice(0, 20);
+	if (!first) return undefined;
+	return first.charAt(0).toUpperCase() + first.slice(1);
+}
+
 // Deterministic editorial variation: pick one line from a pool using the receipt
 // id + a per-beat salt. Every visitor — even one with identical answers — gets a
 // different turn of phrase, and it stays stable across re-renders of the same id.
@@ -909,7 +831,6 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 	const hasRoute = !!(legs && legs.length);
 	const frequency: Frequency = a.frequency ?? 'few_weekly';
 	const lifestyle: Lifestyle = a.lifestyle ?? 'moderate';
-	const decider: Decider = a.decider ?? 'habit';
 	const tripsPerYear = TRIPS_PER_YEAR[frequency];
 	const lifestyleMul = LIFESTYLE_MULTIPLIER[lifestyle];
 
@@ -958,7 +879,7 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 	const twoYearSavingKg = annualSavingKg * 2;
 	const treeYearsEquivalent = annualSavingKg / KG_CO2_PER_TREE_YEAR;
 
-	const arch = assignArchetype(tripMode, decider);
+	const arch = assignArchetype(tripMode);
 	const subtitle = subtitleFor(a.funQuestionId, a.funAnswer);
 
 	// No receipt id at compute time; key the pick on the answer so it stays
@@ -1012,9 +933,7 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 			originStation: a.originStation,
 			destinationStation: a.destinationStation,
 			lifestyle,
-			lifestyleLabel: LIFESTYLE_LABEL[lifestyle],
-			decider,
-			deciderLabel: DECIDER_LABEL[decider]
+			lifestyleLabel: LIFESTYLE_LABEL[lifestyle]
 		},
 		perTripKg: round(perTripKg, 2),
 		bestComboPerTripKg: round(combo.co2Kg, 2),
@@ -1029,7 +948,6 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 		twoYearSavingKg: round(twoYearSavingKg, 0),
 		treeYearsEquivalent: round(treeYearsEquivalent, 0),
 		recommendation: {
-			deciderHeadline: deciderHeadline(decider, decider),
 			recommendedCombo: combo.comboLabel
 		},
 		archetype: {
@@ -1117,6 +1035,7 @@ export function buildReceiptView(
 		hour12: true
 	});
 	const visitorNo = (id.split('-')[1] ?? id).padStart(4, '0').slice(-4).toUpperCase();
+	const greetingName = formatName(a.name);
 
 	// "Cleaner than you" prefers the per-km histogram of everyone so far, falling back
 	// to the same-band distribution if the histogram is too sparse to show.
@@ -1136,8 +1055,8 @@ export function buildReceiptView(
 
 	// One tone decision, reused for the tail budget (≤1 beat carries a sign-off) and for the
 	// clean-year copy (a criticised receipt shouldn't congratulate a tiny number).
-	const tailV = subjectValence(c.trip.mode, c.trip.decider);
-	const tailedBeat = chooseTailedBeat(c, tailV, id);
+	const tailV = subjectValence(c.trip.mode);
+	const tailedBeat = chooseTailedBeat(id);
 
 	// What-if slope chart: the habit-vs-drawn gap when the route diverges, else the
 	// half-swap. Same branch order the section renders in (gap takes precedence).
@@ -1188,7 +1107,7 @@ export function buildReceiptView(
 	const dirtiness = Math.max(0, Math.min(1, SEAL.perKmWeight * nNorm + SEAL.annualWeight * mNorm));
 
 	return {
-		meta: { visitorNo, dateLabel, timeLabel },
+		meta: { visitorNo, dateLabel, timeLabel, name: greetingName },
 		item: {
 			origin,
 			dest,
@@ -1252,14 +1171,14 @@ export function buildReceiptView(
 			swapKg: c.halfSwap.annualKg,
 			savedKg: c.halfSwap.savedKg,
 			treesSaved: c.halfSwap.treesSaved,
-			copy: swapCopy(c, a, id, tailedBeat === 'swap'),
+			copy: swapCopy(c, a, id),
 			ideas: swapIdeas(geo)
 		},
 		whatIf,
 		archetype: {
 			name: c.archetype.name.toUpperCase(),
 			subtitle: c.archetype.subtitle,
-			stampSeed: `${a.mode}|${a.frequency}|${a.lifestyle}|${a.decider}|${a.funAnswer ?? ''}`,
+			stampSeed: `${a.mode}|${a.frequency}|${a.lifestyle}|${a.funAnswer ?? ''}`,
 			copy: 'Generated from your four answers. No two are alike.',
 			basis: archetypeBasis(c, id),
 			figure: { n: figN, m: figM, darkness: dirtiness }

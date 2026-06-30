@@ -1,16 +1,16 @@
-import type { Decider, Frequency, FunQuestion, Lifestyle, Mode } from './types';
+import type { Frequency, FunQuestion, Lifestyle, Mode } from './types';
 
 // Step prompts
 export const PROMPTS: Record<number, string> = {
 	1: 'When you make your most regular trip across the city, how do you usually get there?',
 	2: 'How often is that trip?',
 	3: "Drop two pins. Then pick how you'd make this trip.",
-	4: 'Apart from that trip, how much are you out in a normal week?',
-	5: 'What mostly decides how you travel?'
+	4: 'Apart from that trip, how much are you out in a normal week?'
 };
 
 export const COPY = {
-	welcomeTitle: 'How heavy is your everyday travel?',
+	namePrompt: 'First, what should we call you?',
+	namePlaceholder: 'Your first name',
 	start: "LET'S GO",
 	print: 'PRINT RECEIPT',
 	printing: 'PRINTING…',
@@ -47,14 +47,6 @@ export const LIFESTYLE_OPTIONS: { value: Lifestyle; label: string; sub: string }
 	{ value: 'homebody', label: 'HOMEBODY', sub: 'mostly home' },
 	{ value: 'moderate', label: 'MODERATE', sub: 'a fair bit' },
 	{ value: 'always_out', label: 'ALWAYS OUT', sub: 'on the move' }
-];
-
-export const DECIDER_OPTIONS: { value: Decider; label: string; sub: string }[] = [
-	{ value: 'speed', label: 'SPEED', sub: 'get me there fast' },
-	{ value: 'cost', label: 'COST', sub: 'keep it cheap' },
-	{ value: 'comfort', label: 'COMFORT', sub: 'i like my bubble' },
-	{ value: 'habit', label: 'HABIT', sub: "don't think about it" },
-	{ value: 'no_option', label: 'NO OPTION', sub: 'no real alternative' }
 ];
 
 export const FUN_QUESTIONS: FunQuestion[] = [

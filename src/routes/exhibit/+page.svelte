@@ -2,12 +2,12 @@
 	import { goto } from '$app/navigation';
 
 	import MapQuestion from '$lib/exhibit/MapQuestion.svelte';
+	import OnScreenKeyboard from '$lib/exhibit/OnScreenKeyboard.svelte';
 	import Panel from '$lib/exhibit/Panel.svelte';
 	import QuestionFrame from '$lib/exhibit/QuestionFrame.svelte';
 	import TactileButton from '$lib/exhibit/TactileButton.svelte';
 	import {
 		COPY,
-		DECIDER_OPTIONS,
 		FREQUENCY_OPTIONS,
 		LIFESTYLE_OPTIONS,
 		MODE_OPTIONS,
@@ -17,18 +17,24 @@
 	import { answers, resetAnswers, setAnswer } from '$lib/exhibit/store.svelte';
 	import type { FunQuestion } from '$lib/exhibit/types';
 
-	// -1 = welcome, 1..6 = questions
+	// -1 = welcome / name entry, 1..5 = questions
 	let step = $state(-1);
 	let funQuestion = $state<FunQuestion>(pickRandomFunQuestion());
+	let nameInput = $state(answers.name ?? '');
 	let submitting = $state(false);
 	let error = $state<string | null>(null);
 
+	const canStart = $derived(nameInput.trim().length > 0);
+
 	$effect(() => {
-		if (step === 6) setAnswer('funQuestionId', funQuestion.id);
+		if (step === 5) setAnswer('funQuestionId', funQuestion.id);
 	});
 
 	function start() {
+		if (!canStart) return;
+		const name = nameInput.trim();
 		resetAnswers();
+		setAnswer('name', name);
 		funQuestion = pickRandomFunQuestion();
 		step = 1;
 	}
@@ -74,21 +80,44 @@
 					: step === 4
 						? !!answers.lifestyle
 						: step === 5
-							? !!answers.decider
-							: step === 6
-								? !!answers.funAnswer
-								: false
+							? !!answers.funAnswer
+							: false
 	);
 </script>
 
 <Panel>
 	{#if step === -1}
 		<div class="welcome">
-			<h1>{COPY.welcomeTitle}</h1>
+			<p class="name-prompt">{COPY.namePrompt}</p>
 
-			<div class="cta">
-				<TactileButton label={COPY.start} size="xl" glow="green" selected onclick={start} />
+			<div class="flex w-[min(960px,94vw)] items-stretch gap-5">
+				<input
+					bind:value={nameInput}
+					type="text"
+					inputmode="none"
+					autocomplete="off"
+					autocapitalize="words"
+					autocorrect="off"
+					spellcheck="false"
+					maxlength="24"
+					readonly
+					placeholder={COPY.namePlaceholder}
+					aria-label={COPY.namePrompt}
+					class="min-w-0 flex-1 rounded-2xl border-2 border-[#2a2a2a] bg-[#141414] px-8 py-6 text-center text-[clamp(30px,4.4vw,56px)] font-medium tracking-tight text-[#ededed] caret-transparent shadow-[inset_0_2px_10px_rgba(0,0,0,0.6)] outline-none transition-colors placeholder:text-[#555]"
+				/>
+				<div class="flex w-[clamp(220px,26vw,320px)] shrink-0">
+					<TactileButton
+						label={COPY.start}
+						size="xl"
+						glow="green"
+						selected={canStart}
+						disabled={!canStart}
+						onclick={start}
+					/>
+				</div>
 			</div>
+
+			<OnScreenKeyboard bind:value={nameInput} onEnter={start} maxLength={24} />
 		</div>
 	{:else if step === 1}
 		<QuestionFrame
@@ -164,25 +193,6 @@
 	{:else if step === 5}
 		<QuestionFrame
 			step={5}
-			prompt={PROMPTS[5]}
-			{canAdvance}
-			onBack={back}
-			onNext={next}
-		>
-			<div class="decider-grid grid">
-				{#each DECIDER_OPTIONS as opt (opt.value)}
-					<TactileButton
-						label={opt.label}
-						selected={answers.decider === opt.value}
-						size="lg"
-						onclick={() => setAnswer('decider', opt.value)}
-					/>
-				{/each}
-			</div>
-		</QuestionFrame>
-	{:else if step === 6}
-		<QuestionFrame
-			step={6}
 			prompt={funQuestion.prompt}
 			{canAdvance}
 			nextLabel={submitting ? COPY.printing : COPY.print}
@@ -216,25 +226,16 @@
 		align-items: center;
 		justify-content: center;
 		text-align: center;
-		gap: 28px;
+		gap: 22px;
 		padding: 24px;
 	}
-	.welcome h1 {
+	.name-prompt {
 		margin: 0;
 		font-family: 'IBM Plex Sans', sans-serif;
-		font-weight: 500;
-		font-size: clamp(40px, 5.4vw, 80px);
-		line-height: 1.05;
-		letter-spacing: -0.015em;
-		max-width: 16ch;
-		color: #ededed;
-		text-shadow: 0 1px 0 rgba(0, 0, 0, 0.7);
-	}
-	.cta {
-		margin-top: 12px;
-		width: clamp(320px, 38vw, 460px);
-		height: clamp(96px, 12vh, 132px);
-		display: flex;
+		font-weight: 400;
+		font-size: clamp(26px, 3vw, 44px);
+		line-height: 1.15;
+		color: #cfcfcf;
 	}
 
 	.grid {
@@ -254,9 +255,6 @@
 	}
 	.lifestyle-grid {
 		grid-template-columns: repeat(3, 1fr);
-	}
-	.decider-grid {
-		grid-template-columns: repeat(5, 1fr);
 	}
 	.fun-grid {
 		grid-template-columns: repeat(var(--cols), 1fr);
