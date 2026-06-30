@@ -7,7 +7,12 @@
 	import { createClock, type Clock } from '$lib/viz/clock';
 	import { loadDeck, type Deck } from '$lib/viz/deck';
 	import { ChoroplethField, type HoodReading } from '$lib/viz/choroplethField';
-	import { buildFieldLayer, buildHoodLabels, buildDotsLayer, buildRouteLayers } from '$lib/viz/layers';
+	import {
+		buildFieldLayer,
+		buildHoodLabels,
+		buildDotsLayer,
+		buildRouteLayers
+	} from '$lib/viz/layers';
 	import { roadsOnlyStyle, easeInOutCubic, easeOutCubic, easeInOutSine } from '$lib/viz/palette';
 	import { loadWallRoads, gridDots, gridDotsFill, hexToRgb } from '$lib/viz/dottedBasemap';
 	import { WALL } from '$lib/config/wall';
@@ -18,37 +23,69 @@
 		loadBaseline as loadFieldBaseline,
 		pollField as pollFieldSnapshot
 	} from '$lib/viz/wallField';
-	import { routePM25, PM25_MAX_G_PER_PKM, type Leg } from '$lib/emissions';
-	import ChoiceCrowdBanner from './ChoiceCrowdBanner.svelte';
+	import {
+		routePM25,
+		PM25_MAX_G_PER_PKM,
+		MODE_PM25_G_PER_PKM,
+		legKindToMode,
+		pm25Bucket,
+		type Leg
+	} from '$lib/emissions';
+	import type { LegKind } from '$lib/exhibit/routeCandidates';
+	import SootSpreadBanner from './SootSpreadBanner.svelte';
+	import AqiExplainer from './AqiExplainer.svelte';
 
 	let { variant = 'wall' }: { variant?: 'home' | 'wall' } = $props();
 
 	// Reactive overlay bits (everything else is imperative for perf).
 	let count = $state<number | null>(null);
-	// "Choice crowd" banner — how everyone moved today, accumulating. modeSplit drives the block
-	// crowd; the two PM2.5 sums (over a decade) drive the avoidable-soot footer. crowdPrev is the
-	// snapshot from the banner's previous appearance, so blocks that joined since then flash;
-	// crowdShow bumps each appearance to replay that flash.
+	// Aggregate readouts from /api/stats. modeSplit feeds the cold-start fallback distribution; the two
+	// PM2.5 sums (over a decade) feed the AQI explainer's avoidable-soot line; pm25Bands is the
+	// soot-per-km histogram the spread banner draws.
 	let modeSplit = $state<Record<string, number>>({});
 	let pm25ActualG = $state(0);
 	let pm25AvoidableG = $state(0);
-	let crowdPrev = $state<Record<string, number>>({});
-	let crowdShow = $state(0);
+	let pm25Bands = $state<number[]>([]);
 	let titleEvery = $state(WALL.titleEvery); // s between banner appearances
-	let heroOpacity = $state(0); // banner pulse opacity, driven from the rAF loop
 	let loading = $state(false); // true while the pre-reveal progress bar fills
 	let loadProgress = $state(0); // 0..1 fill of that bottom-edge bar
-	let queued = $state(0); // routes waiting their spotlight — surfaced as "+N others joined"
+	let queued = $state(0); // routes waiting their spotlight — surfaced as "+N more waiting"
 	let activeTag = $state<string | undefined>(undefined); // O→D label of the route on screen
 	let scaleW = $state(WALL.scale); // wall type scale, for viewing distance
 
-	// Recalc readout — a large, minimal card in the top band (route + the grams of PM2.5 this
-	// journey deposits over a decade). Fixed position so it stays clear of the lit corridor and
-	// reads from across the room; only opacity animates. Driven from the rAF loop.
-	let card = $state<{ show: boolean; opacity: number; route?: string; grams: number }>({
+	// Top-banner channels — both ride the WALL.hero pulse envelope + titleEvery cadence. The soot-spread
+	// distribution and the AQI explainer alternate on idle beats; a route spotlight forces the spread up
+	// with ▲ YOU on the featured route's band. spreadMine is that route's g/pkm (-1 = idle, no caret);
+	// spreadAppear re-keys the banner so the band draw-in replays each appearance.
+	let spreadOpacity = $state(0);
+	let spreadAppear = $state(0);
+	let spreadMine = $state(-1);
+	let explainerOpacity = $state(0);
+	let explainerWhich = $state<0 | 1>(0);
+
+	// Rising soot number — the grams of PM2.5 the featured journey deposits over a decade, fading in at
+	// the route's centre, scaling up and floating upward as if emitted. Replaces the old corner card;
+	// projected to screen each frame, transform-only so it never thrashes layout.
+	let emit = $state<{
+		show: boolean;
+		x: number;
+		y: number;
+		opacity: number;
+		scale: number;
+		grams: number;
+	}>({
 		show: false,
+		x: 0,
+		y: 0,
 		opacity: 0,
+		scale: 1,
 		grams: 0
+	});
+
+	// Incoming-journey teaser shown during the load dwell — builds anticipation for the next reveal.
+	let teaser = $state<{ show: boolean; origin?: string; dest?: string; queued: number }>({
+		show: false,
+		queued: 0
 	});
 
 	let mapContainer: HTMLDivElement;
@@ -65,6 +102,162 @@
 	const HERO_RISE = WALL.hero.rise;
 	const HERO_HOLD = WALL.hero.hold;
 	const HERO_FALL = WALL.hero.fall;
+
+	// Bands the spread banner draws: prefer the server histogram; before the first poll (or an old
+	// server) fall back to an approximation from modeSplit × each mode's PM2.5 — enough to avoid an
+	// empty banner on cold start. modeSplit is keyed by candidate kind (cab/auto/metro/bus/walk).
+	const fallbackBands = $derived.by(() => {
+		const b = [0, 0, 0, 0, 0];
+		for (const [kind, n] of Object.entries(modeSplit)) {
+			const mode = legKindToMode(kind as LegKind);
+			b[pm25Bucket(MODE_PM25_G_PER_PKM[mode] ?? 0)] += n;
+		}
+		return b;
+	});
+	const bandsToShow = $derived(pm25Bands.length ? pm25Bands : fallbackBands);
+
+	// ── Dev-only overlay toggles (persisted) ──
+	// Number keys flip an overlay's visibility (1 spread · 2 explainer · 3 emit · 4 teaser · 5 loadbar);
+	// Shift+number PINS it — forces it on-screen at full opacity with sample data so it can be styled in
+	// isolation, independent of the animation state machine. 0 toggles all, v swaps the explainer's two
+	// messages, h/? hides this hint. State persists to localStorage so it survives HMR/reloads. Gated to
+	// dev — import.meta.env.DEV is statically false in prod, so this whole block is dead-code-eliminated
+	// and the wall is never affected (dbg defaults all-true, pins all-false → overlays behave normally).
+	const DEV = import.meta.env.DEV;
+	const DBG_KEY = 'collectivemap:debug';
+	type DbgKey = 'spread' | 'explainer' | 'emit' | 'teaser' | 'loadbar';
+	type PinKey = 'spread' | 'explainer' | 'emit' | 'teaser';
+	const loadDbg = () => {
+		if (!DEV || typeof localStorage === 'undefined') return null;
+		try {
+			return JSON.parse(localStorage.getItem(DBG_KEY) ?? 'null') as {
+				dbg?: Partial<Record<DbgKey, boolean>>;
+				pin?: Partial<Record<PinKey, boolean>>;
+				dbgHelp?: boolean;
+				dbgWhich?: 0 | 1;
+				freezeDrift?: boolean;
+			} | null;
+		} catch {
+			return null;
+		}
+	};
+	const savedDbg = loadDbg();
+	let dbg = $state({
+		spread: savedDbg?.dbg?.spread ?? true,
+		explainer: savedDbg?.dbg?.explainer ?? true,
+		emit: savedDbg?.dbg?.emit ?? true,
+		teaser: savedDbg?.dbg?.teaser ?? true,
+		loadbar: savedDbg?.dbg?.loadbar ?? true
+	});
+	let pin = $state({
+		spread: savedDbg?.pin?.spread ?? false,
+		explainer: savedDbg?.pin?.explainer ?? false,
+		emit: savedDbg?.pin?.emit ?? false,
+		teaser: savedDbg?.pin?.teaser ?? false
+	});
+	let dbgHelp = $state(savedDbg?.dbgHelp ?? true);
+	let dbgWhich = $state<0 | 1>(savedDbg?.dbgWhich ?? 0);
+	let winW = $state(0);
+	let winH = $state(0);
+
+	// Camera / state-machine controls (for styling a specific phase). freezeDrift stops the ambient
+	// wander; freezeMachine pauses the whole spotlight sequence at the current phase AND holds its clock
+	// so within-phase animations stop where they are; armHold makes the next summoned route auto-freeze
+	// once it reaches the zoomed-in highlight. fireDemoRef bridges to the imperative loop's fireDemo().
+	let freezeDrift = $state(savedDbg?.freezeDrift ?? false);
+	let freezeMachine = $state(false);
+	let armHold = $state(false);
+	let fireDemoRef: (() => void) | null = null;
+
+	// Persist on any change (deep-reads via stringify so every nested flag is tracked).
+	$effect(() => {
+		if (!DEV || typeof localStorage === 'undefined') return;
+		localStorage.setItem(DBG_KEY, JSON.stringify({ dbg, pin, dbgHelp, dbgWhich, freezeDrift }));
+	});
+
+	onMount(() => {
+		if (!DEV) return;
+		const KEYS: Record<string, DbgKey> = {
+			Digit1: 'spread',
+			Digit2: 'explainer',
+			Digit3: 'emit',
+			Digit4: 'teaser',
+			Digit5: 'loadbar'
+		};
+		const onKey = (e: KeyboardEvent) => {
+			if (e.code === 'KeyH' || e.key === '?') return void (dbgHelp = !dbgHelp);
+			if (e.code === 'KeyV') return void (dbgWhich = dbgWhich === 0 ? 1 : 0);
+			if (e.code === 'KeyD') return void (freezeDrift = !freezeDrift); // freeze the ambient camera
+			if (e.code === 'KeyF') return void (freezeMachine = !freezeMachine); // pause the state machine
+			if (e.code === 'KeyG') {
+				// Summon a demo route and lock it once it reaches the zoomed-in highlight.
+				freezeMachine = false;
+				armHold = true;
+				fireDemoRef?.();
+				return;
+			}
+			if (e.code === 'KeyX') return void ((freezeMachine = false), (armHold = false)); // resume
+			if (e.code === 'Digit0') {
+				const v = !(dbg.spread || dbg.explainer || dbg.emit || dbg.teaser || dbg.loadbar);
+				dbg.spread = v;
+				dbg.explainer = v;
+				dbg.emit = v;
+				dbg.teaser = v;
+				dbg.loadbar = v;
+				return;
+			}
+			const key = KEYS[e.code];
+			if (!key) return;
+			if (e.shiftKey && key !== 'loadbar')
+				pin[key] = !pin[key]; // Shift+n → pin for styling
+			else dbg[key] = !dbg[key]; // n → show/hide
+		};
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
+	});
+
+	// Effective overlay views — when pinned, force the element on at full opacity with sample data so it
+	// renders steadily for styling even while the state machine is idle.
+	const SAMPLE_BANDS = [3, 11, 9, 6, 2];
+	const emitView = $derived.by(() => {
+		if (!pin.emit) return emit;
+		if (emit.show) return { ...emit, opacity: 1 };
+		return { show: true, x: winW / 2, y: winH / 2, opacity: 1, scale: 1, grams: 1840 };
+	});
+	const spreadView = $derived.by(() => {
+		if (!dbg.spread) return null;
+		const live = count !== null && count > 0;
+		if (pin.spread) {
+			const bands = bandsToShow.some((n) => n > 0) ? bandsToShow : SAMPLE_BANDS;
+			return {
+				bands,
+				total: live ? (count ?? 0) : 31,
+				mine: spreadMine >= 0 ? spreadMine : 0.012,
+				opacity: 1,
+				appearance: spreadAppear
+			};
+		}
+		if (!live) return null;
+		return {
+			bands: bandsToShow,
+			total: count ?? 0,
+			mine: spreadMine,
+			opacity: spreadOpacity,
+			appearance: spreadAppear
+		};
+	});
+	const teaserView = $derived.by(() => {
+		if (!dbg.teaser) return null;
+		if (pin.teaser)
+			return {
+				show: true,
+				origin: teaser.origin ?? 'Indiranagar',
+				dest: teaser.dest ?? 'Majestic',
+				queued: teaser.queued || 3
+			};
+		return teaser.show ? teaser : null;
+	});
+	const showExplainer = $derived(dbg.explainer && (pin.explainer || (count !== null && count > 0)));
 
 	onMount(() => {
 		let disposed = false;
@@ -102,6 +295,7 @@
 		// lit during a spotlight.
 		let dimLevel = 1;
 		let activeRoute: [number, number][] = [];
+		let activeCenter: [number, number] | null = null; // featured route's bbox centre (geo) — load lean + rising-soot anchor
 		let activeIsDemo = false;
 		let activeOrigin: string | undefined; // featured route's origin/destination names (receipt chips)
 		let activeDest: string | undefined;
@@ -266,11 +460,13 @@
 						modeSplit?: Record<string, number>;
 						pm25ActualG10yr?: number;
 						pm25AvoidableG10yr?: number;
+						pm25BandsAll?: number[];
 					};
 					count = s.count;
 					modeSplit = s.modeSplit ?? {};
 					pm25ActualG = s.pm25ActualG10yr ?? 0;
 					pm25AvoidableG = s.pm25AvoidableG10yr ?? 0;
+					pm25Bands = s.pm25BandsAll ?? [];
 				} catch {
 					/* ignore */
 				}
@@ -283,6 +479,20 @@
 				if (p2 === 'load') {
 					loading = true;
 					loadProgress = 0;
+					teaser = { show: true, origin: activeOrigin, dest: activeDest, queued: queue.length };
+					// Lean gently toward the incoming route's region so the wait isn't a dead-still frame.
+					if (activeCenter) {
+						const ll = WALL.loadLean;
+						map!.easeTo({
+							center: [
+								lerp(restView.center[0], activeCenter[0], ll.frac),
+								lerp(restView.center[1], activeCenter[1], ll.frac)
+							],
+							zoom: restView.zoom + ll.zoom,
+							duration: WALL.load * 0.6 * 1000,
+							easing: easeInOutSine
+						});
+					}
 				} else if (p2 === 'dim') {
 					// The blocky route overlay (buildRouteLayers) now carries the reveal, so the field no
 					// longer ignites the corridor. We still rasterize for the zoomBack deposit (demo routes).
@@ -346,6 +556,7 @@
 			const ambientEnabled = driftAmt > 0 && !reduceMotion;
 
 			const ambientDrift = (t: number) => {
+				if (freezeDrift || freezeMachine) return; // dev: hold the camera still for styling
 				if (!ambientEnabled || !field.ready) return;
 				if (ambientNextAt < 0) ambientNextAt = t + 6; // let the field reveal settle first
 				if (phase !== 'idle') {
@@ -387,6 +598,7 @@
 					field.setDim(1);
 					dimLevel = 1;
 					if (activeTag) activeTag = undefined; // clear the on-screen tag between routes
+					if (freezeMachine) return; // dev: hold idle (no dequeue) for styling the resting frame
 					// Let the resting field + headline settle before the next route, unless a
 					// backlog is building — then dequeue promptly so nobody waits too long.
 					const rest = queue.length > 2 ? 0.3 : IDLE_REST;
@@ -403,6 +615,19 @@
 						activePm25 = next.pm25PerPkm;
 						activeTrips = next.tripsPerYear;
 						activeScale = next.emissionScale;
+						// Route bbox centre (geo) — drives the load lean and the rising-soot anchor. Bearing
+						// and pitch are fixed 0, so this projects straight to screen space.
+						let lo0 = Infinity,
+							la0 = Infinity,
+							lo1 = -Infinity,
+							la1 = -Infinity;
+						for (const [lo, la] of next.route) {
+							if (lo < lo0) lo0 = lo;
+							if (lo > lo1) lo1 = lo;
+							if (la < la0) la0 = la;
+							if (la > la1) la1 = la;
+						}
+						activeCenter = [(lo0 + lo1) / 2, (la0 + la1) / 2];
 						enter('load', t); // "load" the route for loadDur seconds before revealing it
 					}
 					return;
@@ -411,12 +636,18 @@
 					field.setDim(1); // map rests while the bar fills
 					dimLevel = 1;
 					loadProgress = clamp01((t - phaseStart) / loadDur);
-					if (t - phaseStart >= loadDur) {
+					if (!freezeMachine && t - phaseStart >= loadDur) {
 						loading = false;
 						loadProgress = 0;
+						teaser = { ...teaser, show: false };
 						enter('dim', t);
 					}
 					return;
+				}
+				// dev: a summoned route auto-freezes once it reaches the zoomed-in highlight (hold).
+				if (armHold && phase === 'hold') {
+					armHold = false;
+					freezeMachine = true;
 				}
 				const el = t - phaseStart;
 				const dim =
@@ -427,7 +658,7 @@
 							: DIM_MIN;
 				field.setDim(dim);
 				dimLevel = dim;
-				if (el >= phaseDur(phase)) {
+				if (!freezeMachine && el >= phaseDur(phase)) {
 					const ni = PHASES.indexOf(phase as (typeof PHASES)[number]) + 1;
 					enter(ni < PHASES.length ? PHASES[ni] : 'idle', t);
 				}
@@ -436,8 +667,12 @@
 			let labelTick = -1;
 			let anchorTick = -1; // slower cadence for re-querying which labels are visible
 			let lastFadeT = 0; // previous frame time, for dt-based opacity easing
-			let bannerVisible = false; // banner shown last frame — detect the rise to flash new blocks
-			let crowdBaseline: Record<string, number> = {}; // mode counts as of the current appearance
+			let prevClockT = 0; // previous frame time, for the dev freeze clock-hold
+			// Rising-edge trackers for the two top-banner channels (so each appearance replays its draw-in
+			// and picks up the right ▲ YOU / explainer message exactly once).
+			let spotPrev = false; // spotlight spread shown last frame
+			let idleSpreadPrev = false; // idle-timer spread shown last frame
+			let explPrev = false; // explainer shown last frame
 			let hoods: HoodReading[] = [];
 			// Reused render objects, one per live label, keyed the same as liveLabels. We mutate these in
 			// place and only swap the `hoods` array when the SET changes, so deck recomputes glyph layout
@@ -558,6 +793,10 @@
 				variant === 'wall' ? { onStall: () => location.reload(), stallMs: 6000 } : {};
 			clock = createClock((t) => {
 				now = t;
+				// dev freeze: advance phaseStart with the clock so `t - phaseStart` is held constant —
+				// every phase-relative animation (dim ramp, highlight, soot rise, spread) stops in place.
+				if (freezeMachine && prevClockT) phaseStart += t - prevClockT;
+				prevClockT = t;
 				step(t);
 				ambientDrift(t); // gentle camera wander during the quiet times
 				field.setFrame(t);
@@ -639,8 +878,8 @@
 					: null;
 
 				// Highlight envelope: 0 at rest → 1 across the featured window → 0 again as the camera
-				// zooms back. One curve drives the receipt-style route overlay (fades in), the route
-				// card (fades in), and the ambient neighbourhood labels (fade out) so they move together.
+				// zooms back. One curve drives the receipt-style route overlay (fades in) and the ambient
+				// neighbourhood labels (fade out) so they move together.
 				const phaseEl = t - phaseStart;
 				const highlight =
 					phase === 'dim'
@@ -651,21 +890,37 @@
 								? 1 - easeInOutCubic(clamp01(phaseEl / DUR.zoomBack))
 								: 0;
 
-				// Route card rides the curve — on screen for exactly the zoomed-in span. Fixed position,
-				// so only opacity animates — no jitter at distance.
-				if (cardData) {
-					card = {
-						show: highlight > 0.001,
-						opacity: clamp01(highlight),
-						route: cardData.route,
-						grams: cardData.grams
-					};
-				} else if (card.show) {
-					card = { show: false, opacity: 0, grams: 0 };
+				// Rising soot number: at hold start the route is fully drawn (the zoom-in easeTo spans
+				// dim+reveal). The grams fade in at the route centre, scale up and float upward, then fade
+				// out — clearing the way for the spread banner to draw in (the "emit, then locate" beat).
+				// Projected each frame; written transform-only so it never thrashes layout.
+				const EMIT_DUR = Math.min(WALL.emit.rise, 0.6 * phaseDur('hold'));
+				if (cardData && activeCenter && map && (phase === 'hold' || phase === 'recalc')) {
+					const e = phase === 'hold' ? clamp01(phaseEl / EMIT_DUR) : 1;
+					if (e < 1) {
+						const pr = map.project(activeCenter as [number, number]);
+						const eo = easeOutCubic(e);
+						const appear = clamp01(e / 0.12); // quick fade-in
+						const fade = 1 - clamp01((e - 0.55) / 0.45); // fade-out as it climbs
+						emit = {
+							show: true,
+							x: pr.x,
+							y: pr.y - eo * WALL.emit.risePx * scaleW,
+							opacity: appear * fade,
+							scale: 1 + 0.12 * eo,
+							grams: cardData.grams
+						};
+					} else if (emit.show) {
+						emit = { ...emit, show: false, opacity: 0 };
+					}
+				} else if (emit.show) {
+					emit = { ...emit, show: false, opacity: 0 };
 				}
 
-				// Banner pulse: fade in, hold, fade out, then stay hidden until the next cycle. Keyed
-				// to `now % titleEvery` so the window is fixed and the period sets only the gap.
+				// Two top-banner channels sharing the WALL.hero pulse + titleEvery cadence: idle beats
+				// alternate the soot-spread distribution (even) and the AQI explainer (odd); a route
+				// spotlight forces the spread up (with ▲ YOU), beginning AFTER the soot number, and
+				// suppresses the explainer.
 				let hv: number;
 				if (reduceMotion) {
 					hv = 1;
@@ -680,15 +935,47 @@
 									? 1 - Math.pow(clamp01((hc - HERO_RISE - HERO_HOLD) / HERO_FALL), 3)
 									: 0;
 				}
-				// On each rise, snapshot what was already on the wall so the just-joined blocks flash.
-				const showing = hv > 0.02;
-				if (showing && !bannerVisible) {
-					crowdPrev = crowdBaseline; // the crowd as of the previous appearance
-					crowdBaseline = { ...modeSplit }; // baseline for the next appearance
-					crowdShow++; // re-key the band so the flash replays
+				const beat = titleEvery > 0 ? Math.floor(now / titleEvery) : 0;
+				const beatIsSpread = beat % 2 === 0; // even → spread, odd → explainer
+				const idle = phase === 'idle'; // timer banners pulse only when nothing is featured
+
+				// Spotlight spread envelope: held at 0 until the soot number has risen, then up, held
+				// through recalc, easing out on the zoom-back.
+				const spotE = reduceMotion
+					? phase === 'hold' || phase === 'recalc' || phase === 'zoomBack'
+						? 1
+						: 0
+					: phase === 'hold'
+						? clamp01((phaseEl - EMIT_DUR) / HERO_RISE)
+						: phase === 'recalc'
+							? 1
+							: phase === 'zoomBack'
+								? 1 - easeInOutCubic(clamp01(phaseEl / DUR.zoomBack))
+								: 0;
+				const spotlightActive = spotE > 0.001;
+
+				// Rising edges → replay each appearance's draw-in once and pick up the right ▲ YOU / message.
+				if (spotlightActive && !spotPrev) {
+					spreadMine = activePm25; // ▲ YOU on the featured route's band
+					spreadAppear++;
 				}
-				bannerVisible = showing;
-				if (heroOpacity !== hv) heroOpacity = hv; // skip 60fps no-op writes while hidden
+				spotPrev = spotlightActive;
+				const idleSpreadShowing = idle && beatIsSpread && hv > 0.02;
+				if (idleSpreadShowing && !idleSpreadPrev) {
+					spreadMine = -1; // idle spread shows the population only, no caret
+					spreadAppear++;
+				}
+				idleSpreadPrev = idleSpreadShowing;
+				const explShowing = idle && !beatIsSpread && hv > 0.02;
+				if (explShowing && !explPrev) {
+					explainerWhich = (Math.floor(beat / 2) % 2) as 0 | 1;
+				}
+				explPrev = explShowing;
+
+				const nextSpread = Math.max(spotE, idle && beatIsSpread ? hv : 0);
+				const nextExpl = idle && !beatIsSpread ? hv : 0;
+				if (spreadOpacity !== nextSpread) spreadOpacity = nextSpread; // skip 60fps no-op writes
+				if (explainerOpacity !== nextExpl) explainerOpacity = nextExpl;
 
 				// Dotted basemap tiers (if baked) sit above the heat, below the place labels. Bottom→top:
 				// the green then water dot-FILLS (coloured), then the black road dots (faint network under
@@ -722,9 +1009,15 @@
 				const dotLayers =
 					majorDots && fieldLayer
 						? [
-								...(greenDots.length ? [dot('dots-green', greenDots, bm.green.cellM, greenColor, bm.green, ecoMul)] : []),
-								...(waterDots.length ? [dot('dots-water', waterDots, bm.water.cellM, waterColor, bm.water, ecoMul)] : []),
-								...(faintDots.length ? [dot('dots-faint', faintDots, bm.faint.cellM, dotColor, bm.faint)] : []),
+								...(greenDots.length
+									? [dot('dots-green', greenDots, bm.green.cellM, greenColor, bm.green, ecoMul)]
+									: []),
+								...(waterDots.length
+									? [dot('dots-water', waterDots, bm.water.cellM, waterColor, bm.water, ecoMul)]
+									: []),
+								...(faintDots.length
+									? [dot('dots-faint', faintDots, bm.faint.cellM, dotColor, bm.faint)]
+									: []),
 								dot('dots-major', majorDots, bm.major.cellM, dotColor, bm.major)
 							]
 						: [];
@@ -797,6 +1090,7 @@
 				});
 				queued = queue.length;
 			};
+			fireDemoRef = fireDemo; // bridge for the dev "summon highlight" (g) shortcut
 
 			// Boot resilience: a wall powers on before its local server is necessarily ready.
 			// Retry the critical loads with backoff until the field is live. The basemap is
@@ -903,143 +1197,217 @@
 	});
 </script>
 
-<div class="wrap" class:wall={variant === 'wall'} style="--wall-scale:{scaleW}">
-	<div bind:this={mapContainer} class="map"></div>
+<svelte:window bind:innerWidth={winW} bind:innerHeight={winH} />
 
-	{#if loading}
+<div
+	class="absolute inset-0 bg-[#04060c]"
+	class:cursor-none={variant === 'wall'}
+	style="--wall-scale:{scaleW}"
+>
+	<div bind:this={mapContainer} class="absolute inset-0 h-full w-full"></div>
+
+	{#if loading && dbg.loadbar}
 		<!-- Thin "loading" bar filling the bottom edge L→R while the next route is prepared. -->
-		<div class="loadbar"><div class="fill" style="transform:scaleX({loadProgress})"></div></div>
-	{/if}
-
-	{#if card.show}
-		<!-- The featured route's readout as a little receipt slip: white paper, monospace, a dashed
-		     rule, and the PM2.5 this commute deposits over a decade in a reverse (black-on-white)
-		     hero bar — matching src/lib/receipt. On screen for the whole zoomed-in window. -->
-		<div class="routecard slip" style="opacity:{card.opacity}; --wall-scale:{scaleW}">
-			<div class="route">{card.route ?? 'New journey'}</div>
-			<div class="rule"></div>
-			{#if card.grams >= 1000}
-				<div class="emis">
-					+{(card.grams / 1000).toFixed(1)}<span class="unit"> kg PM2.5 / 10yr</span>
-				</div>
-			{:else}
-				<div class="emis">+{Math.round(card.grams)}<span class="unit"> g PM2.5 / 10yr</span></div>
-			{/if}
+		<div
+			class="pointer-events-none absolute inset-x-0 bottom-0 z-[18] h-[calc(var(--wall-scale)*10px)] bg-white/[0.08]"
+		>
+			<div
+				class="h-full w-full origin-left bg-[#ffe2d6] will-change-transform"
+				style="transform:scaleX({loadProgress})"
+			></div>
 		</div>
 	{/if}
 
-	{#if count !== null && count > 0}
-		<!-- The "choice crowd" banner — how everyone moved today as one block per commute, the dark
-		     mass bracketed as the avoidable soot. Pulses across the top on the titleEvery cadence
-		     (driven by heroOpacity); same receipt-slip language as the route card and src/lib/receipt. -->
-		<ChoiceCrowdBanner
-			counts={modeSplit}
-			prevCounts={crowdPrev}
-			total={count ?? 0}
+	{#if teaserView}
+		<div
+			class="pointer-events-none absolute bottom-[calc(var(--wall-scale)*26px)] left-1/2 z-[18] flex -translate-x-1/2 animate-[teaser-in_0.45s_cubic-bezier(0.2,0.9,0.25,1)_both] flex-row items-center gap-[calc(var(--wall-scale)*16px)] whitespace-nowrap border-[calc(var(--wall-scale)*2px)] border-ink bg-paper px-[calc(var(--wall-scale)*8px)] py-[calc(var(--wall-scale)*8px)] font-mono text-ink shadow-[0_8px_30px_rgba(0,0,0,0.5)] [-webkit-font-smoothing:none] [font-smooth:never] motion-reduce:animate-none"
+		>
+			<!-- status tag — inverted chip (ink block, paper type) -->
+			<span
+				class="bg-ink px-[calc(var(--wall-scale)*15px)] py-[calc(var(--wall-scale)*13px)] text-[length:calc(var(--wall-scale)*clamp(10px,1.85vw,24px))] font-bold uppercase tracking-[0.14em] text-paper"
+			>
+				NEW COMMUTE
+			</span>
+
+			{#if teaserView.origin || teaserView.dest}
+				<!-- the route is the hero of the row -->
+				<span
+					class="mr-4 text-[length:calc(var(--wall-scale)*clamp(18px,1.7vw,30px))] font-bold tracking-[0.02em]"
+				>
+					{teaserView.origin ?? '—'} → {teaserView.dest ?? '—'}
+				</span>
+			{/if}
+
+			<!-- {#if teaserView.queued > 0}
+				<span
+					class="text-[length:calc(var(--wall-scale)*clamp(10px,0.85vw,14px))] font-bold uppercase tracking-[0.06em] opacity-55"
+				>
+					+{teaserView.queued} more
+				</span>
+			{/if} -->
+		</div>
+	{/if}
+
+	{#if emitView.show && dbg.emit}
+		<div
+			class="pointer-events-none absolute left-0 top-0 z-[16] will-change-[transform,opacity]"
+			style="transform: translate3d({emitView.x}px, {emitView.y}px, 0) translate(-50%, -50%) scale({emitView.scale}); opacity:{emitView.opacity}; --wall-scale:{scaleW}"
+		>
+			<div
+				class="flex animate-[emit-pop_0.55s_cubic-bezier(0.34,1.56,0.64,1)_both] flex-col items-center gap-[calc(var(--wall-scale)*4px)] border-[calc(var(--wall-scale)*2px)] border-paper bg-ink px-[calc(var(--wall-scale)*16px)] py-[calc(var(--wall-scale)*10px)] font-mono text-paper shadow-[0_8px_30px_rgba(0,0,0,0.5)] [-webkit-font-smoothing:none] [font-smooth:never] motion-reduce:animate-none"
+			>
+				<div
+					class="flex items-baseline whitespace-nowrap tabular-nums leading-none tracking-[0.01em] text-[#ff5a36]"
+				>
+					<span
+						class="inline-block origin-bottom animate-[emit-plus_0.5s_cubic-bezier(0.34,1.8,0.5,1)_0.06s_both] text-[length:calc(var(--wall-scale)*clamp(40px,4.5vw,88px))] font-bold motion-reduce:animate-none"
+						>+</span
+					>
+					<span class="text-[length:calc(var(--wall-scale)*clamp(40px,4.5vw,88px))] font-bold">
+						{emitView.grams >= 1000
+							? (emitView.grams / 1000).toFixed(1)
+							: Math.round(emitView.grams)}</span
+					>
+					<span
+						class="ml-[calc(var(--wall-scale)*6px)] text-[length:calc(var(--wall-scale)*clamp(18px,2vw,34px))] font-bold"
+						>{emitView.grams >= 1000 ? 'kg' : 'g'}</span
+					>
+				</div>
+				<div
+					class="animate-[emit-caption_0.4s_ease-out_0.2s_both] text-[length:calc(var(--wall-scale)*clamp(9px,0.8vw,14px))] font-bold uppercase tracking-[0.14em] text-paper opacity-70 motion-reduce:animate-none"
+				>
+					particle pollution · 10 years
+				</div>
+			</div>
+		</div>
+	{/if}
+
+	{#if spreadView}
+		<!-- Soot-per-km distribution (where this commute lands) — pulses on the timer and is the climax
+		     of each spotlight with ▲ YOU on the featured route's band. -->
+		<SootSpreadBanner
+			bands={spreadView.bands}
+			mine={spreadView.mine}
+			total={spreadView.total}
+			opacity={spreadView.opacity}
+			scale={scaleW}
+			appearance={spreadView.appearance}
+			stagger={WALL.spread.stagger}
+			drawIn={WALL.spread.drawIn}
+		/>
+	{/if}
+	{#if showExplainer}
+		<!-- The intermittent one-liner: soot → the AQI you breathe → months of life (alternates with
+		     the avoidable-soot call-to-action). -->
+		<AqiExplainer
+			which={pin.explainer ? dbgWhich : explainerWhich}
 			actualG={pm25ActualG}
 			avoidableG={pm25AvoidableG}
-			opacity={heroOpacity}
+			opacity={pin.explainer ? 1 : explainerOpacity}
 			scale={scaleW}
-			appearance={crowdShow}
 		/>
+	{/if}
+
+	{#if DEV && dbgHelp}
+		<!-- Dev-only overlay-toggle HUD (gated to import.meta.env.DEV; absent from the prod wall). -->
+		<div
+			class="pointer-events-none absolute bottom-2 left-2 z-50 rounded bg-black/70 px-3 py-2 font-mono text-xs leading-relaxed text-white"
+		>
+			<div class="mb-1 font-bold uppercase tracking-wider opacity-60">debug · h to hide</div>
+			<div class="mb-1 opacity-50">n hide · ⇧n pin (force-on)</div>
+			<div>
+				<span class="opacity-50">1</span> spread
+				<span class={dbg.spread ? 'text-green-400' : 'text-red-400'}>{dbg.spread ? '●' : '○'}</span>
+				{#if pin.spread}<span class="text-yellow-400">pin</span>{/if}
+			</div>
+			<div>
+				<span class="opacity-50">2</span> explainer
+				<span class={dbg.explainer ? 'text-green-400' : 'text-red-400'}
+					>{dbg.explainer ? '●' : '○'}</span
+				>
+				{#if pin.explainer}<span class="text-yellow-400">pin</span>{/if}
+			</div>
+			<div>
+				<span class="opacity-50">3</span> emit
+				<span class={dbg.emit ? 'text-green-400' : 'text-red-400'}>{dbg.emit ? '●' : '○'}</span>
+				{#if pin.emit}<span class="text-yellow-400">pin</span>{/if}
+			</div>
+			<div>
+				<span class="opacity-50">4</span> teaser
+				<span class={dbg.teaser ? 'text-green-400' : 'text-red-400'}>{dbg.teaser ? '●' : '○'}</span>
+				{#if pin.teaser}<span class="text-yellow-400">pin</span>{/if}
+			</div>
+			<div>
+				<span class="opacity-50">5</span> loadbar
+				<span class={dbg.loadbar ? 'text-green-400' : 'text-red-400'}
+					>{dbg.loadbar ? '●' : '○'}</span
+				>
+			</div>
+			<div><span class="opacity-50">0</span> toggle all</div>
+			<div class="my-1 border-t border-white/20"></div>
+			<div>
+				<span class="opacity-50">d</span> drift
+				<span class={freezeDrift ? 'text-red-400' : 'text-green-400'}
+					>{freezeDrift ? 'off' : 'on'}</span
+				>
+			</div>
+			<div>
+				<span class="opacity-50">f</span> freeze
+				<span class={freezeMachine ? 'text-yellow-400' : 'opacity-50'}
+					>{freezeMachine ? 'held' : '—'}</span
+				>
+			</div>
+			<div><span class="opacity-50">g</span> summon highlight</div>
+			<div><span class="opacity-50">x</span> resume</div>
+			<div><span class="opacity-50">v</span> swap explainer msg</div>
+		</div>
 	{/if}
 </div>
 
 <style>
-	.wrap {
-		position: absolute;
-		inset: 0;
-		background: #04060c;
-		--wall-scale: 1;
+	/* spring-ish pop: quick overshoot, a settle dip, then home — with a tiny rotate for life */
+	@keyframes -global-emit-pop {
+		0% {
+			opacity: 0;
+			transform: scale(0.2) rotate(-4deg);
+		}
+		55% {
+			opacity: 1;
+			transform: scale(1.14) rotate(2deg);
+		}
+		72% {
+			transform: scale(0.95) rotate(-1deg);
+		}
+		86% {
+			opacity: 1 !important;
+			transform: scale(1.03);
+		}
+		100% {
+			opacity: 1 !important;
+			transform: scale(1) rotate(0deg);
+		}
 	}
-	/* Hide the OS cursor on the unattended wall. */
-	.wrap.wall {
-		cursor: none;
+	/* the "+" punches in a beat after the badge — Comeau-style orchestration */
+	@keyframes -global-emit-plus {
+		0% {
+			transform: scale(0);
+		}
+		60% {
+			transform: scale(1.35);
+		}
+		100% {
+			transform: scale(1);
+		}
 	}
-	.map {
-		position: absolute;
-		inset: 0;
-		width: 100%;
-		height: 100%;
-	}
-	/* Thin pre-reveal loading bar — full-width faint track at the very bottom edge, warm fill
-	   scaling in from the left. Above the overlays so it's never occluded. */
-	.loadbar {
-		position: absolute;
-		left: 0;
-		right: 0;
-		bottom: 0;
-		height: calc(var(--wall-scale) * 10px);
-		background: rgba(255, 255, 255, 0.08);
-		z-index: 18;
-		pointer-events: none;
-	}
-	.loadbar .fill {
-		height: 100%;
-		width: 100%;
-		transform-origin: left center;
-		background: #ffe2d6;
-		will-change: transform;
-	}
-	/* Shared receipt-slip surface — white paper, mono, crisp 1-bit, same language as
-	   src/lib/receipt/ReceiptDoc (.paper). The route card uses it; the banner carries its own. */
-	.slip {
-		background: #fff;
-		color: #000;
-		font-family: ui-monospace, 'Liberation Mono', 'Cascadia Mono', 'DejaVu Sans Mono', Menlo,
-			'Courier New', monospace;
-		-webkit-font-smoothing: none;
-		font-smooth: never;
-		box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
-	}
-	/* Recalc readout styled as a receipt slip: white paper, monospace, a dashed rule, and the
-	   emissions in a reverse (black-on-white) hero — same language as src/lib/receipt/ReceiptDoc.
-	   No glass/blur/glow; crisp 1-bit, font smoothing off, to match the printed aesthetic. */
-	.routecard {
-		position: absolute;
-		right: clamp(20px, 4.5%, 84px);
-		bottom: clamp(20px, 4.5%, 84px);
-		z-index: 16;
-		pointer-events: none;
-		display: flex;
-		flex-direction: column;
-		gap: calc(var(--wall-scale) * 8px);
-		min-width: calc(var(--wall-scale) * 220px);
-		max-width: calc(var(--wall-scale) * 320px);
-		padding: calc(var(--wall-scale) * 12px) calc(var(--wall-scale) * 14px);
-		transition: opacity 0.15s linear;
-		will-change: opacity;
-	}
-	.routecard .route {
-		font-size: calc(var(--wall-scale) * 15px);
-		font-weight: 700;
-		text-transform: uppercase;
-		letter-spacing: 0.06em;
-		text-align: center;
-		line-height: 1.15;
-	}
-	.routecard .rule {
-		border-top: 2px dashed #000;
-	}
-	/* The reverse hero, after ReceiptDoc's .rev (white-on-black inverted total). */
-	.routecard .emis {
-		background: #000;
-		color: #fff;
-		font-size: calc(var(--wall-scale) * clamp(26px, 3vw, 44px));
-		font-weight: 700;
-		line-height: 1;
-		text-align: center;
-		letter-spacing: 0.01em;
-		padding: calc(var(--wall-scale) * 8px) calc(var(--wall-scale) * 10px);
-		font-variant-numeric: tabular-nums;
-	}
-	.routecard .emis .unit {
-		font-size: 0.4em;
-		font-weight: 700;
-		letter-spacing: 0.05em;
-	}
-	:global(.maplibregl-ctrl-logo),
-	:global(.maplibregl-ctrl-attrib-button) {
-		display: none !important;
+	/* caption rises and fades in last */
+	@keyframes -global-emit-caption {
+		from {
+			opacity: 0;
+			transform: translateY(45%);
+		}
+		to {
+			opacity: 0.7;
+			transform: translateY(0);
+		}
 	}
 </style>

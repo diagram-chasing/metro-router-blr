@@ -11,8 +11,8 @@ export const WALL = {
 	// Motion / feel
 	idle: 3, // ambient field shimmer
 	drift: 1, // camera wander
-	titleEvery: 40, // s between hero appearances
-	load: 20, // s pre-reveal dwell
+	titleEvery: 28, // s between banner appearances (now alternates two messages: spread ↔ AQI sentence)
+	load: 10, // s pre-reveal dwell (the teaser slip + camera lean fill it now)
 
 
 	gainPerYear: 1.5, // µg/m³ a saturated corridor adds per year (colour ramp top)
@@ -52,5 +52,12 @@ export const WALL = {
 	dimMin: 0.3,
 	idleRest: 1.4,
 	hero: { rise: 0.8, hold: 4, fall: 1.2 },
-	ambient: { glide: 22, hold: 4 }
+	ambient: { glide: 22, hold: 4 },
+
+	// Rising soot number emitted from the route's centre during a spotlight (replaces the old card).
+	emit: { rise: 2.0, risePx: 130 }, // s for the rise+fade; px it floats up (×--wall-scale)
+	// Soot-spread banner band draw-in (L→R growth on each appearance).
+	spread: { drawIn: 0.9, stagger: 0.06 }, // s per band, s between bands
+	// Load-phase anticipation: gentle camera lean toward the incoming route's region.
+	loadLean: { zoom: 0.4, frac: 0.45 } // extra zoom levels, fraction of the way to the route centre
 };

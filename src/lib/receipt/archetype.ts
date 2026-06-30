@@ -36,14 +36,14 @@ export function assignArchetype(mode: Mode, decider: Decider): Archetype {
 const BASIS: Record<string, string[]> = {
 	featherweight: [
 		"you travel under your own power. there's almost nothing here to weigh.",
-		'no engine, no fuel, no real footprint — about {kg} kg for the whole year, if that.'
+		'no engine, no fuel, no real footprint. about {kg} kg for the whole year, if that.'
 	],
 	offgrid: [
 		"you ride what's already running. your slice of the air is a fraction of what the cab beside you spends.",
-		'shared transit, shared engine — the bus was making that trip with or without you on it.'
+		'shared transit, shared engine. the bus was making that trip with or without you on it.'
 	],
 	lightweight: [
-		'carbon rank {cRank} of {tot} — lighter than the cars and autos around you, but still your own engine, your own fuel.',
+		'carbon rank {cRank} of {tot}, lighter than the cars and autos around you, but still your own engine, your own fuel.',
 		'low carbon per km, for a private vehicle. that is the kind reading. it is still petrol, still this traffic.'
 	],
 	stranded: [
@@ -51,7 +51,7 @@ const BASIS: Record<string, string[]> = {
 		'the footprint is real, but nothing cleaner runs your route yet. this one is not on you.'
 	],
 	minute: [
-		'you spend emissions to save time — about {mult}× the cleaner route, for minutes this traffic mostly takes back.',
+		'you spend emissions to save time, about {mult}× the cleaner route, for minutes this traffic mostly takes back.',
 		'faster on paper. on this road the time saved and the carbon spent rarely balance.'
 	],
 	comfort: [
@@ -59,11 +59,11 @@ const BASIS: Record<string, string[]> = {
 		'door to door and climate-controlled, and heavier on the air than the route you skipped.'
 	],
 	economy: [
-		'you chose this to spend less. the shared route costs less and emits less — here, about {mult}× less.',
+		'you chose this to spend less. the shared route costs less and emits less, about {mult}× less here.',
 		'cheaper was available, and it was also cleaner. it usually is.'
 	],
 	default: [
-		"not a decision so much as an unbroken habit — about {mult}× heavier than the switch you haven't made.",
+		"not a decision so much as an unbroken habit, about {mult}× heavier than the switch you haven't made.",
 		'you never chose this, you just never changed it. which is the part that can still change.'
 	]
 };

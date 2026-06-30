@@ -240,6 +240,26 @@ export function bucket(gPerKm: number): number {
 	return BUCKET_MAX.length; // 4
 }
 
+// ── PM2.5 soot-per-km bands (the wall's distribution axis) ──
+// Edges in MILLIGRAMS PM2.5 / passenger-km (human-readable on the wall). Reference per-pkm values
+// (g→mg): metro/walk 0 · auto 9 · two_wheeler 14 · bus 46 · car 182. Bands:
+//   0  0-1     metro / walk / metro-heavy multimodal
+//   1  2-19    auto, two-wheeler, light blends
+//   2  20-89   bus, moderate blends
+//   3  90-149  car-heavy multimodal (cab diluted by walk/metro access)
+//   4  150+    pure car / cab
+export const PM25_BUCKET_MAX = [2, 20, 90, 150] as const; // mg/pkm
+
+/** Bucket a blended PM2.5 value (g/pkm — the model's native unit) into 0..4.
+ *  Converts to mg first, since PM25_BUCKET_MAX is expressed in mg for legibility. */
+export function pm25Bucket(gPerKm: number): number {
+	const mg = gPerKm * 1000;
+	for (let i = 0; i < PM25_BUCKET_MAX.length; i++) {
+		if (mg < PM25_BUCKET_MAX[i]) return i;
+	}
+	return PM25_BUCKET_MAX.length; // 4
+}
+
 // ── Journey emissions ──
 
 export type Leg = { coords: [number, number][]; legKind: LegKind };

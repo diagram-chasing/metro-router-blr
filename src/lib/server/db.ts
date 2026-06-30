@@ -19,6 +19,7 @@ import {
 	routePM25,
 	pm25GramsOverYears,
 	firstLastMileKm,
+	pm25Bucket,
 	MODE_PM25_G_PER_PKM,
 	type Leg
 } from '$lib/emissions';
@@ -253,6 +254,7 @@ export type Stats = {
 	modeSplit: Record<string, number>;
 	pm25ActualG10yr: number; // Σ grams of PM2.5 the logged commutes deposit over a decade
 	pm25AvoidableG10yr: number; // …of which this much had a cleaner option (metro + short auto access)
+	pm25BandsAll: number[]; // counts per PM25_BUCKET_MAX soot-per-km band (bounded, length 5) — the wall's distribution
 };
 
 // The decade window the wall's "choice crowd" banner and per-route card both report over.
@@ -279,6 +281,8 @@ export function stats(): Stats {
 	// the receipt's own basis — the same trip on a metro trunk (0 PM2.5) with short auto access.
 	let pm25ActualG10yr = 0;
 	let pm25AvoidableG10yr = 0;
+	// Soot-per-km distribution: one count per band, built in the same scan (no extra query).
+	const pm25BandsAll = [0, 0, 0, 0, 0];
 	const sootRows = d
 		.prepare('SELECT segments, trips_per_year AS trips FROM lines')
 		.all() as { segments: string; trips: number | null }[];
@@ -292,6 +296,7 @@ export function stats(): Stats {
 		}
 		const { km, gPerKm } = routePM25(legs);
 		if (km <= 0) continue;
+		pm25BandsAll[pm25Bucket(gPerKm)]++;
 		const actual = pm25GramsOverYears(gPerKm, km, trips, SOOT_YEARS);
 		const { firstMile, lastMile } = firstLastMileKm(km);
 		const cleanGPerKm = ((firstMile + lastMile) * MODE_PM25_G_PER_PKM.auto) / km;
@@ -306,7 +311,8 @@ export function stats(): Stats {
 		avgCo2PerKmG: agg.avgKm ? Math.round(agg.avgKm) : 0,
 		modeSplit,
 		pm25ActualG10yr,
-		pm25AvoidableG10yr
+		pm25AvoidableG10yr,
+		pm25BandsAll
 	};
 }
 

@@ -69,16 +69,6 @@ export const FUN_QUESTIONS: FunQuestion[] = [
 		]
 	},
 	{
-		id: 'planning_slack',
-		title: 'THE SNOOZE COUNT',
-		prompt: 'Your alarm goes off. How many times do you hit snooze?',
-		options: [
-			{ label: 'UP ON FIRST RING', value: 'first' },
-			{ label: 'TWO OR THREE', value: 'few' },
-			{ label: 'SEVEN ALARMS', value: 'many' }
-		]
-	},
-	{
 		id: 'crowd_tolerance',
 		title: 'CONCERT SPOT',
 		prompt: 'At a concert, where are you?',
@@ -89,13 +79,13 @@ export const FUN_QUESTIONS: FunQuestion[] = [
 		]
 	},
 	{
-		id: 'boredom',
-		title: 'DEAD TIME',
-		prompt: 'Sitting with nothing to do. What do you do?',
+		id: 'last_mile',
+		title: 'THE LAST MILE',
+		prompt: 'Fifteen minutes on foot, or a forty-rupee auto. You…',
 		options: [
-			{ label: 'DOOMSCROLL', value: 'scroll' },
-			{ label: 'READ A BOOK OR PODCAST', value: 'book' },
-			{ label: 'NEED TO MOVE AROUND', value: 'move' }
+			{ label: 'WALK IT', value: 'walk' },
+			{ label: 'DEPENDS ON THE DAY', value: 'depends' },
+			{ label: 'ALWAYS THE AUTO', value: 'auto' }
 		]
 	}
 ];

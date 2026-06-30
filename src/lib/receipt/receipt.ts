@@ -204,6 +204,16 @@ export type ReceiptView = {
 		// formatted line each ([] when no nearby-transit data is available).
 		ideas: string[];
 	};
+	// The "can you do better / what if" comparison, rendered as a slope chart
+	// (viz/SlopeChart): 'gap' = the habit vs the route drawn (Q1 vs Q3); 'swap' = now vs
+	// the half-swap. points carry annual kg; a downward slope reads cleaner, upward heavier.
+	whatIf: {
+		show: boolean;
+		variant: 'gap' | 'swap';
+		direction: 'cleaner' | 'dirtier';
+		points: { label: string; value: number }[];
+		caption: string;
+	};
 	archetype: {
 		name: string;
 		subtitle: string;
@@ -322,7 +332,8 @@ export function subjectValence(mode: Mode, decider: Decider): Valence {
 // A line is opener (frames the beat, names the mode) + verdict (the numbers) +
 // tail (a short sign-off). Openers only name the mode, so they stay tone-neutral and
 // shared; tails carry tone and so are keyed by valence — a deflationary tail never
-// lands on an affirming verdict.
+// lands on an affirming verdict. At most ONE beat per receipt carries a tail
+// (chooseTailedBeat), so the aside reads as a deliberate sign-off, not a per-section tic.
 const OPENERS = [
 	'{lc}, eh?',
 	'{lc}, i see.',
@@ -332,25 +343,39 @@ const OPENERS = [
 	'so. {lc}.'
 ];
 
+type TailBeat = 'modeRank' | 'corridor' | 'swap' | 'parking';
+
 const TAILS: Record<Valence, string[]> = {
-	affirm: ['', '', '', 'credit where due.', "i'll allow it.", 'good for you.', 'no notes.'],
+	affirm: ['credit where due.', "i'll allow it.", 'good for you.', 'no notes.'],
 	critical: [
-		'but anyway.',
 		"i wouldn't dwell on it.",
-		'do with that what you will.',
 		'i checked twice.',
 		"i'd hoped to be wrong.",
 		'but moving on.',
 		'it is what it is, i guess.',
-		'make of it what you like.',
-		'',
-		'',
-		''
+		'make of it what you like.'
 	],
-	sympathetic: ['', '', '', 'not on you, this one.', 'file it away.', 'for when it changes.']
+	// Sympathetic verdict bodies already absolve ("not on you", "no line near you"), so the
+	// tail here only closes — it never restates the absolution.
+	sympathetic: ['file it away.', 'for when it changes.']
 };
 
-const tail = (id: string, salt: string, v: Valence) => pick(id, salt, TAILS[v]);
+// Tails that only make sense after a numeric verdict — never on the parking (land-use) beat.
+const NUMBER_VERDICT_TAILS = new Set(['i checked twice.', "i'd hoped to be wrong."]);
+
+function beatTail(id: string, beat: TailBeat, v: Valence, want: boolean): string {
+	if (!want) return '';
+	const pool = beat === 'parking' ? TAILS[v].filter((t) => !NUMBER_VERDICT_TAILS.has(t)) : TAILS[v];
+	return pick(id, `${beat}-tail`, pool);
+}
+
+// Pick at most one beat to carry a tail this receipt. The empty slots give a real chance of
+// a tail-free receipt; swap only qualifies when it renders the sympathetic forecast.
+function chooseTailedBeat(c: ComputedReceipt, v: Valence, id: string): TailBeat | '' {
+	const candidates: string[] = ['modeRank', 'corridor', 'parking', '', ''];
+	if (v === 'sympathetic' && c.halfSwap.savedKg > 0) candidates.push('swap');
+	return pick(id, 'tail-beat', candidates) as TailBeat | '';
+}
 
 // ── Recommendation · decider headline ──
 const DECIDER_POOLS: Record<Decider, string[]> = {
@@ -370,13 +395,13 @@ const DECIDER_POOLS: Record<Decider, string[]> = {
 	],
 	habit: [
 		'change one thing. the longest leg. that is the whole ask.',
-		'you do not have to overhaul anything — swap the heaviest leg and stop there.',
+		'you do not have to overhaul anything. swap the heaviest leg and stop there.',
 		'one leg. the big one. leave the rest of your routine alone.'
 	],
 	no_option: [
 		'no good option today, honestly. when a line reaches you, this is what changes.',
 		"there isn't a clean version of this yet. when the network catches up, here is the difference.",
-		'fair enough — nothing better exists for you right now. file this for when it does.'
+		'fair enough. nothing better exists for you right now. file this for when it does.'
 	]
 };
 
@@ -390,17 +415,13 @@ const FRICTION_POOLS: Record<FunQuestionId, string[]> = {
 		'a short auto covers the walking legs, so the swap is realistic. you keep your feet dry.',
 		'the walking bits become a quick auto. nobody is asking you to hike.'
 	],
-	planning_slack: [
-		"keep it to one transfer. the simpler the swap, the more it sticks. i've seen the alternative.",
-		'one transfer, maximum. complexity is where these plans go to die.'
-	],
 	crowd_tolerance: [
 		'crowds do not bother you, you said, so the only thing left to want is comfort. the metro has ac.',
 		'you can handle a crowd, so this comes down to comfort, and the ac side wins.'
 	],
-	boredom: [
-		'add up the dead time and it is hours a week. on the metro that idle time becomes yours again.',
-		'that idle time becomes yours again. hours of it. do nothing with them, ideally.'
+	last_mile: [
+		'the metro takes the long middle; a short auto or a few minutes on foot closes each end. you already do this.',
+		"the ends are a quick auto or a short walk, the part you've never minded. the metro handles the rest."
 	]
 };
 
@@ -420,7 +441,19 @@ const CLEANER_NOTE = [
 	'{x} in 10 so far beat you on this.'
 ];
 
+// Edges read wrong with the "{x} in 10" frame: x=0 references an empty set, x=10 is clunky.
+const CLEANER_NOTE_NONE = [
+	'no one logged here today has come in cleaner than you. noted.',
+	'so far, nobody here beats you on this. rare.'
+];
+const CLEANER_NOTE_ALL = [
+	'just about everyone logged here so far comes in cleaner than you.',
+	'so far, near enough everyone here beats you on this.'
+];
+
 function cleanerNoteCopy(tenths: number, id: string): string {
+	if (tenths <= 0) return pick(id, 'cleaner', CLEANER_NOTE_NONE);
+	if (tenths >= 10) return pick(id, 'cleaner', CLEANER_NOTE_ALL);
 	return interp(pick(id, 'cleaner', CLEANER_NOTE), { x: String(tenths) });
 }
 
@@ -440,6 +473,20 @@ const UNITS_CLEAN = [
 	'below the threshold for a single unit. pleasantly anticlimactic.',
 	'the equivalents all come out zero. nothing to make tangible.',
 	"doesn't add up to one of anything. a most excellent achievement."
+];
+
+// Neutral clean-branch copy: used when the mode-valence is critical/sympathetic but the annual
+// happens to land tiny — state the small number plainly, neither praising nor scolding the choice.
+const YEAR_NEUTRAL = [
+	'small, annualised. the grid has almost nothing to draw.',
+	'the yearly number lands low. not much to plot here.',
+	'under the line where this chart fills in.'
+];
+
+const UNITS_NEUTRAL = [
+	'too small to convert into a cylinder or a tree.',
+	'the equivalents round to zero. nothing physical to translate.',
+	"doesn't reach one unit of anything."
 ];
 
 const FREQUENCY_LABEL: Record<Frequency, string> = {
@@ -466,10 +513,23 @@ const DECIDER_LABEL: Record<Decider, string> = {
 // The "you told us …" premise for the swap beat, drawn from the Q6 friction answer.
 const PREMISE: Record<FunQuestionId, string> = {
 	walking: "you'd happily walk for a good coffee",
-	planning_slack: 'you cut it fine most mornings',
 	crowd_tolerance: "crowds don't faze you",
-	boredom: 'your commute is mostly dead time'
+	last_mile: 'the last stretch is no trouble to you'
 };
+
+// Name the transit mode(s) actually running on this corridor (connectivity.json),
+// busiest first — so the swap copy says "the bus" where there's no metro. Generic
+// fallback when the area pair has no recorded transit.
+function transitModePhrase(conn: Connectivity | null): string {
+	if (!conn || !conn.modes.length) return 'public transport';
+	const NAMES: Record<ConnectivityMode['key'], string> = {
+		metro: 'the metro',
+		ac_bus: 'an AC bus',
+		bus: 'the bus'
+	};
+	const names = conn.modes.slice(0, 2).map((m) => NAMES[m.key]);
+	return names.length > 1 ? `${names[0]} or ${names[1]}` : names[0];
+}
 
 const DISCLAIMER =
 	'Estimates use India-specific operational (well-to-wheel) emission factors; actual figures vary with vehicle, occupancy and traffic.';
@@ -483,15 +543,14 @@ function multiplierPhrase(m: number): string {
 function subtitleFor(funId: FunQuestionId | undefined, funAnswer: string | undefined): string {
 	if (!funId) return '';
 	if (funId === 'crowd_tolerance' && funAnswer === 'front') return '…who can handle a crowd anyway';
-	if (funId === 'planning_slack' && funAnswer === 'many') return '…always running, always booking';
-	if (funId === 'boredom' && funAnswer === 'scroll') return '…with hours to reclaim';
 	if (funId === 'walking' && funAnswer === 'delivered') return '…allergic to a five-minute walk';
+	if (funId === 'last_mile' && funAnswer === 'auto') return '…who autos the last mile anyway';
 	return '';
 }
 
 const VERDICTS_DIRTY = [
 	'{ord} dirtiest of the {tot} ways to cross town.',
-	'{ord} from the bottom — the bottom being clean.',
+	'{ord} from the bottom. the bottom being clean.',
 	'{cleaner} of the {tot} options were cleaner. you passed on them.',
 	'dirtier per km than all but {dirtier} of the {tot}.',
 	'{ord} place out of {tot}. we count from the worst.',
@@ -501,7 +560,7 @@ const VERDICTS_DIRTY = [
 ];
 
 const VERDICTS_DIRTIEST = [
-	'the single dirtiest of the {tot}. the actual worst sorry.',
+	'the single dirtiest of the {tot}. the actual worst, sorry.',
 	'dead last of {tot}, and last means dirtiest.',
 	'no mode here is worse per km. you found the floor.'
 ];
@@ -511,7 +570,7 @@ const VERDICTS_CLEAN = [
 	"then there's no number here worth printing.",
 	"cleanest tenth in the city. i don't even get to be disappointed.",
 	'barely a smudge on the ledger.',
-	'i ran the maths and it came back boring. good for you.',
+	'i ran the maths and it came back boring.',
 	'nothing to roast. this is awkward for me, professionally.',
 	'the dirty column stayed empty. unlike most people here hmmph.',
 	'you have left me machine with nothing to do.',
@@ -520,13 +579,13 @@ const VERDICTS_CLEAN = [
 
 // Dirty per km, but no clean line reaches them — the rank is on the map, not on them.
 const VERDICTS_SYMPATHETIC = [
-	'{ord} dirtiest of {tot} ways across town — and not one of the clean ones runs your route.',
+	'{ord} dirtiest of {tot} ways across town, and not one of the clean ones runs your route.',
 	'heavy per km, yes. also the only thing that actually reaches where you live.',
 	'{ord} of {tot}. less a verdict on you than on the map you were handed.',
 	'the per-km number is high. the alternative that would lower it does not exist yet for you.'
 ];
 
-function modeRankCopy(c: ComputedReceipt, id: string): string {
+function modeRankCopy(c: ComputedReceipt, id: string, wantTail: boolean): string {
 	const v = subjectValence(c.trip.mode, c.trip.decider);
 	const lc = c.trip.modeLabel.toLowerCase();
 	const tot = c.modeRank.totalModes;
@@ -559,7 +618,7 @@ function modeRankCopy(c: ComputedReceipt, id: string): string {
 		verdict = interp(pick(id, 'mr-verdict', pool), vars);
 	}
 
-	return `${opener} ${verdict} ${tail(id, 'mr-tail', v)}`.trim();
+	return `${opener} ${verdict} ${beatTail(id, 'modeRank', v, wantTail)}`.trim();
 }
 
 // Same road, compared. The daily total lives in the section eyebrow, so the deck
@@ -574,23 +633,24 @@ const CORRIDOR_NOYOU = [
 const CORRIDOR_CLEAN = [
 	'{youG} g/km, your {youLabel}. the car beside you spends {carG}.',
 	'the {youLabel} does it on {youG} g/km. the cars manage {carG}.',
-	'your {youLabel}: {youG} g/km. the car next to it: {carG}.'
+	'your {youLabel}: {youG} g/km. the car next to it: {carG}.',
+	'{youG} g/km on your {youLabel}; the car alongside burns {carG} for the same road.'
 ];
 
 const CORRIDOR_DIRTY = [
-	'the bus does this road at {busG} g/km. you did {youG}.',
+	'the bus travels this road emitting just {busG} g/km. you did {youG}.',
 	'{busG} g/km gets a busload down this road. you spent {youG}.',
-	'same road, same distance. the bus: {busG} g/km. you: {youG}.',
-	'a bus manages {busG} g/km here. you came in at {youG}, for one person.'
+	'on the same road for same distance, the bus emits {busG} g/km. you: {youG}.',
+	'a bus emits {busG} g/km here. you came in at {youG}, for one person.'
 ];
 
 // Same road, same numbers, but no bus to switch to — so we state it, we don't scold.
 const CORRIDOR_SYMPATHETIC = [
-	'a bus would do this road at {busG} g/km. you did {youG} — with no line near you to take it.',
+	'a bus would do this road at {busG} g/km. you did {youG}, with no line near you to take it.',
 	'the bus manages {busG} g/km here; you came in at {youG}, for want of one that reaches you.'
 ];
 
-function corridorCopy(c: ComputedReceipt, id: string): string {
+function corridorCopy(c: ComputedReceipt, id: string, wantTail: boolean): string {
 	const v = subjectValence(c.trip.mode, c.trip.decider);
 	const rows = c.corridor.rows;
 	const carG = String(rows.find((r) => r.key === 'car')?.gPerKm ?? 0);
@@ -611,7 +671,7 @@ function corridorCopy(c: ComputedReceipt, id: string): string {
 	} else {
 		line = interp(pick(id, 'cor-verdict', CORRIDOR_DIRTY), { busG, youG: String(you.gPerKm) });
 	}
-	return `${line} ${tail(id, 'cor-tail', v)}`.trim();
+	return `${line} ${beatTail(id, 'corridor', v, wantTail)}`.trim();
 }
 
 const SWAP_NONE = [
@@ -623,44 +683,23 @@ const SWAP_NONE = [
 	"no swap. you're the benchmark."
 ];
 
-// Optional nod to the friction premise. '' lets some receipts skip the lead.
+// The whole swap nudge in one line: the friction premise + the concrete action,
+// naming the transit mode(s) actually on this corridor. The before/after numbers and
+// the tree saving live in the panel below, so the copy never restates them.
 const SWAP_LEAD = [
-	"you told me {premise}, so a short walk won't hurt you.",
-	'given {premise}, this next bit is well within your tolerance.',
-	'',
-	''
-];
-
-const SWAP_MATH = [
-	'move half your trips to metro-plus-a-short-auto and the year drops to about {swapKg} kg.',
-	'put half these trips on the metro with an auto at each end: the year falls to ~{swapKg} kg.',
-	"swap half of them onto metro and short autos and you're down to about {swapKg} kg a year."
-];
-
-const SWAP_SAVING_TREES = [
-	"that's {savedKg} kg kept out of the air — about what {treesPhrase} do in a year.",
-	'you would save {savedKg} kg a year, roughly the work of {treesPhrase}.',
-	'{savedKg} kg you do not emit. call it {treesPhrase} working on your behalf.'
-];
-
-// "1 tree" / "N trees" — keeps the saving copy grammatical at the n=1 boundary.
-function treesPhrase(n: number): string {
-	return n === 1 ? '1 tree' : `${comma(n)} trees`;
-}
-
-const SWAP_SAVING_NOTREES = [
-	"that's {savedKg} kg you keep out of the air. small but it helps.",
-	'{savedKg} kg saved a year. not nothing.'
+	'you told me {premise}, so put half these trips on {mode} + a short auto.',
+	'{premise}, so half of these could be {mode} + a short auto.',
+	'put half these trips on {mode} + a short auto. {premise}, after all.'
 ];
 
 // Same arithmetic, but the option doesn't exist yet — so it's a forecast, not a nudge.
 const SWAP_SYMPATHETIC = [
-	'the day a line reaches you, half these trips on metro+auto would bring the year to ~{swapKg} kg — about {savedKg} less.',
-	'there is no clean version of this today. when there is, the year falls to ~{swapKg} kg, roughly {savedKg} off.',
-	'when the network catches up, moving half these trips onto it drops the year to ~{swapKg} kg — {savedKg} you are not emitting by choice yet.'
+	'the day a line reaches you, half these trips move to metro+auto and the year drops by about {savedKg} kg.',
+	'there is no clean version of this today. when there is, the year settles near ~{swapKg} kg.',
+	'when the network catches up, that is about {savedKg} kg a year you are not emitting by choice, not yet.'
 ];
 
-function swapCopy(c: ComputedReceipt, a: Answers, id: string): string {
+function swapCopy(c: ComputedReceipt, a: Answers, id: string, wantTail: boolean): string {
 	const v = subjectValence(c.trip.mode, c.trip.decider);
 
 	if (c.halfSwap.savedKg <= 0) {
@@ -672,20 +711,13 @@ function swapCopy(c: ComputedReceipt, a: Answers, id: string): string {
 			swapKg: comma(c.halfSwap.annualKg),
 			savedKg: comma(c.halfSwap.savedKg)
 		});
-		return `${line} ${tail(id, 'swap-tail', v)}`.replace(/\s+/g, ' ').trim();
+		return `${line} ${beatTail(id, 'swap', v, wantTail)}`.replace(/\s+/g, ' ').trim();
 	}
 
-	const premise = a.funQuestionId ? PREMISE[a.funQuestionId] : 'comfort is what you optimise for';
-	const lead = interp(pick(id, 'swap-lead', SWAP_LEAD), { premise });
-	const math = interp(pick(id, 'swap-math', SWAP_MATH), { swapKg: comma(c.halfSwap.annualKg) });
-
-	const savingPool = c.halfSwap.treesSaved >= 1 ? SWAP_SAVING_TREES : SWAP_SAVING_NOTREES;
-	const saving = interp(pick(id, 'swap-save', savingPool), {
-		savedKg: comma(c.halfSwap.savedKg),
-		treesPhrase: treesPhrase(c.halfSwap.treesSaved)
-	});
-
-	return `${lead} ${math} ${saving} ${tail(id, 'swap-tail', v)}`.replace(/\s+/g, ' ').trim();
+	// No tail here: a forward-looking nudge shouldn't end on a verdict sign-off.
+	const premise = (a.funQuestionId && PREMISE[a.funQuestionId]) || 'comfort is what you optimise for';
+	const mode = transitModePhrase(c.connectivity);
+	return interp(pick(id, 'swap-lead', SWAP_LEAD), { premise, mode }).replace(/\s+/g, ' ').trim();
 }
 
 // ── Usual vs this-trip gap (the comparison block) ──
@@ -694,15 +726,15 @@ function swapCopy(c: ComputedReceipt, a: Answers, id: string): string {
 // a downgrade or scolds an upgrade.
 const GAP_CLEANER = [
 	'the gap is the choice you have every morning.',
-	'you drew the lighter trip yourself — {savedKg} kg/yr below your habit.',
+	'you drew the lighter trip yourself, {savedKg} kg/yr below your habit.',
 	'same trip, {savedKg} kg/yr apart. the cleaner one is the one you just sketched.',
 	'one of these you do; the other you drew. {savedKg} kg/yr sits between them.'
 ];
 
 const GAP_DIRTIER = [
 	'you usually travel lighter than the route you just drew.',
-	'the trip you sketched is the heavier one — by {savedKg} kg/yr.',
-	'your habit is the cleaner of the two. this particular route, less so — {savedKg} kg/yr more.'
+	'the trip you sketched is the heavier one, by {savedKg} kg/yr.',
+	'your habit is the cleaner of the two. this particular route, less so, {savedKg} kg/yr more.'
 ];
 
 function gapCopy(c: ComputedReceipt, id: string): string {
@@ -736,7 +768,7 @@ const PS_OWN = [
 	'PS: the air is one thing. your parked vehicle also holds {areaM2} m2 which is roughly {rupees} of {areaLabel} at no charge. someone pays for that. not you though.'
 ];
 const PS_NONE = [
-	'PS: it is not only the air. while you parked nothing, the car beside you takes {areaM2} m2 — ~{rupees} of {areaLabel} used for free.'
+	'PS: it is not only the air. while you parked nothing, the car beside you takes {areaM2} m2, ~{rupees} of {areaLabel} used for free.'
 ];
 
 function psCopy(c: ComputedReceipt, areaLabel: string, id: string): string {
@@ -749,23 +781,24 @@ function psCopy(c: ComputedReceipt, areaLabel: string, id: string): string {
 // A short, branch-aware deck for the parking real-estate graphic (numbers live in
 // the footprint box + panel, so the prose stays out of their way).
 const PARK_OWN = [
-	'Everything above was emissions, but a car also takes something else! A parked vehicle squats on public street it never pays rent for.',
-	'Everything above was emissions, but a car also takes something else! That vehicle sits on the kerb all day, paying nothing for the privilege.',
-	'Everything above was emissions, but a car also takes something else! A parked car holds down public ground rent-free.'
+	'that was all emissions. a car also takes something the air does not: it parks on public street it never pays rent for.',
+	'emissions aside, your parked vehicle squats on public kerb all day and pays nothing for the privilege.',
+	'and that is just the air. parked, that car still holds down public ground, rent-free.'
 ];
 const PARK_NONE = [
 	'you parked nothing today. the car beside you sits free, on land you help fund.',
-	'nothing of yours is parked. the car next to it pays nothing for the spot. you do.'
+	'nothing of yours is parked. the car next to it pays nothing for the spot. you do.',
+	'no spot taken by you. the car alongside holds public ground for free, the ground you help pay for.'
 ];
 
-function parkingCopy(c: ComputedReceipt, id: string): string {
+function parkingCopy(c: ComputedReceipt, id: string, wantTail: boolean): string {
 	const mode = c.trip.mode;
 	const v = subjectValence(mode, c.trip.decider);
 	const line =
 		mode === 'car' || mode === 'two_wheeler'
 			? pick(id, 'park-verdict', PARK_OWN)
 			: pick(id, 'park-verdict', PARK_NONE);
-	return `${line} ${tail(id, 'park-tail', v)}`.trim();
+	return `${line} ${beatTail(id, 'parking', v, wantTail)}`.trim();
 }
 
 // ── Helpers ──
@@ -818,7 +851,7 @@ const CO2_CRITTERS: { mass: number; noun: string }[] = [
 	{ mass: 5000, noun: 'elephants' },
 	{ mass: 2300, noun: 'rhinos' },
 	{ mass: 1500, noun: 'hippos' },
-	{ mass: 1200, noun: 'hatchbacks' },
+
 	{ mass: 680, noun: 'cows' }
 ];
 function co2EquivLabel(kg: number, id: string): string {
@@ -914,7 +947,7 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 	const cmpMult =
 		usualEmissions.kgPerTrip > 0 && picked.kgPerTrip > 0
 			? Math.max(usualEmissions.kgPerTrip, picked.kgPerTrip) /
-				Math.min(usualEmissions.kgPerTrip, picked.kgPerTrip)
+			Math.min(usualEmissions.kgPerTrip, picked.kgPerTrip)
 			: 0;
 
 	// Annual CO2e (kg)
@@ -1101,6 +1134,43 @@ export function buildReceiptView(
 	const areaLabel = geo?.destinationLabel ?? geo?.originLabel ?? c.parking.areaLabel;
 	const yearClean = c.annualCommuteKg < CLEAN_YEAR_KG;
 
+	// One tone decision, reused for the tail budget (≤1 beat carries a sign-off) and for the
+	// clean-year copy (a criticised receipt shouldn't congratulate a tiny number).
+	const tailV = subjectValence(c.trip.mode, c.trip.decider);
+	const tailedBeat = chooseTailedBeat(c, tailV, id);
+
+	// What-if slope chart: the habit-vs-drawn gap when the route diverges, else the
+	// half-swap. Same branch order the section renders in (gap takes precedence).
+	const compShow = c.comparison.divergent && c.comparison.direction !== 'same';
+	const swapShow = c.halfSwap.savedKg > 0;
+	const treesWord = c.halfSwap.treesSaved === 1 ? 'tree' : 'trees';
+	const whatIf: ReceiptView['whatIf'] = compShow
+		? {
+			show: true,
+			variant: 'gap',
+			direction: c.comparison.direction === 'dirtier' ? 'dirtier' : 'cleaner',
+			points: [
+				{ label: c.comparison.usual.modeLabel, value: Math.round(c.comparison.usual.annualKg) },
+				{ label: c.comparison.picked.modeLabel, value: Math.round(c.comparison.picked.annualKg) }
+			],
+			caption:
+				c.comparison.direction === 'dirtier'
+					? `+${comma(c.comparison.deltaAnnualKg)} kg/yr the way you drew it`
+					: `the gap: ${comma(c.comparison.deltaAnnualKg)} kg/yr`
+		}
+		: swapShow
+			? {
+				show: true,
+				variant: 'swap',
+				direction: 'cleaner',
+				points: [
+					{ label: 'Now', value: Math.round(c.annualCommuteKg) },
+					{ label: 'If you swap', value: Math.round(c.halfSwap.annualKg) }
+				],
+				caption: `saves ${comma(c.halfSwap.savedKg)} kg/yr  ~${c.halfSwap.treesSaved} ${treesWord}`
+			}
+			: { show: false, variant: 'swap', direction: 'cleaner', points: [], caption: '' };
+
 	// Emissions "resonance": the profile seal is a Chladni standing-wave figure.
 	// n (a low→high mode) tracks how dirty the trip is per km; m tracks the total
 	// annual burden. Clean, light commutes ring calm figures; heavy ones get busy,
@@ -1148,7 +1218,7 @@ export function buildReceiptView(
 			copy: gapCopy(c, id)
 		},
 		modeRank: {
-			copy: modeRankCopy(c, id),
+			copy: modeRankCopy(c, id, tailedBeat === 'modeRank'),
 			histogram: hist ? { values: hist.values, mine: hist.mine } : null,
 			cleanerNote
 		},
@@ -1160,7 +1230,7 @@ export function buildReceiptView(
 			co2Equiv: co2EquivLabel(c.corridor.dailyCo2eKg, id),
 			isFallback: c.corridor.isFallback,
 			rows: c.corridor.rows,
-			copy: corridorCopy(c, id)
+			copy: corridorCopy(c, id, tailedBeat === 'corridor')
 		},
 		connectivity: c.connectivity ? { total: c.connectivity.total, modes: c.connectivity.modes } : null,
 		oneTrip: { co2G: Math.round(c.perTripKg * 1000) },
@@ -1168,13 +1238,13 @@ export function buildReceiptView(
 			co2Kg: c.annualCommuteKg,
 			kgPerBlock: KG_PER_BLOCK,
 			isClean: yearClean,
-			copy: yearClean ? pick(id, 'year-clean', YEAR_CLEAN) : ''
+			copy: yearClean ? pick(id, 'year-clean', tailV === 'affirm' ? YEAR_CLEAN : YEAR_NEUTRAL) : ''
 		},
 		units: {
 			cylinders: c.cylindersYear,
 			trees: c.treesYear,
 			isClean: yearClean,
-			copy: yearClean ? pick(id, 'units-clean', UNITS_CLEAN) : ''
+			copy: yearClean ? pick(id, 'units-clean', tailV === 'affirm' ? UNITS_CLEAN : UNITS_NEUTRAL) : ''
 		},
 		swap: {
 			show: c.halfSwap.savedKg > 0,
@@ -1182,9 +1252,10 @@ export function buildReceiptView(
 			swapKg: c.halfSwap.annualKg,
 			savedKg: c.halfSwap.savedKg,
 			treesSaved: c.halfSwap.treesSaved,
-			copy: swapCopy(c, a, id),
+			copy: swapCopy(c, a, id, tailedBeat === 'swap'),
 			ideas: swapIdeas(geo)
 		},
+		whatIf,
 		archetype: {
 			name: c.archetype.name.toUpperCase(),
 			subtitle: c.archetype.subtitle,
@@ -1197,7 +1268,7 @@ export function buildReceiptView(
 		parking: {
 			areaM2: c.parking.areaM2,
 			valueLabel: rupeesLakh(c.parking.rupees),
-			copy: parkingCopy(c, id)
+			copy: parkingCopy(c, id, tailedBeat === 'parking')
 		},
 		finePrint: {
 			psCopy: psCopy(c, areaLabel, id),

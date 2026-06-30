@@ -210,7 +210,7 @@ export const FUN: { id?: FunQuestionId; ans?: string }[] = [
 	{},
 	{ id: 'walking', ans: 'delivered' },
 	{ id: 'crowd_tolerance', ans: 'front' },
-	{ id: 'boredom', ans: 'scroll' },
-	{ id: 'planning_slack', ans: 'many' }
+	{ id: 'last_mile', ans: 'auto' },
+	{ id: 'last_mile', ans: 'walk' }
 ];
 export const SEEDS = ['seed-a3f', 'seed-b7c', 'seed-c1e', 'seed-d9k'];

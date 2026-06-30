@@ -15,3 +15,40 @@
 @import 'tailwindcss/base';
 @import 'tailwindcss/components';
 @import 'tailwindcss/utilities';
+
+/* Wall overlay keyframes — referenced from components via Tailwind arbitrary animate-[…] classes
+   (base Tailwind has no equivalent). Kept global here rather than in the config per project style. */
+@keyframes draw-in {
+	from {
+		transform: scaleX(0);
+	}
+	to {
+		transform: scaleX(1);
+	}
+}
+@keyframes caret-in {
+	from {
+		transform: translateY(-6px);
+		opacity: 0;
+	}
+	to {
+		transform: translateY(0);
+		opacity: 1;
+	}
+}
+@keyframes teaser-in {
+	from {
+		transform: translate(-50%, 12px);
+		opacity: 0;
+	}
+	to {
+		transform: translate(-50%, 0);
+		opacity: 1;
+	}
+}
+
+/* Hide MapLibre's injected attribution/logo controls on the unattended wall. */
+.maplibregl-ctrl-logo,
+.maplibregl-ctrl-attrib-button {
+	display: none !important;
+}

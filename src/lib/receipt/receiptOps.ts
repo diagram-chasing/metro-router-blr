@@ -14,8 +14,8 @@ import {
 	blockBars,
 	eyebrow,
 	panelRow,
-	panelPair,
 	panelRule,
+	transitRows,
 	heroSrc,
 	asciiSpread,
 	asciiOdometer,
@@ -41,7 +41,7 @@ export type PrintOp =
 	}
 	| { t: 'rule' }
 	| { t: 'gap'; n?: number }
-	| { t: 'img'; id: 'map' | 'stamp' | 'car' }
+	| { t: 'img'; id: 'map' | 'stamp' | 'car' | 'slope' }
 	| { t: 'qr'; data: string }
 	| { t: 'cut' };
 
@@ -179,15 +179,18 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	T(ruleStr('-'));
 	gap();
 
-	// 06 what if — when the drawn route (Q3) differs from the habit (Q1), this is the
-	// gap between them (usual vs this trip). Otherwise it's the generic half-swap.
-	if (view.comparison.show) {
-		const c = view.comparison;
-		eyebrowOp(
-			'Can you do better?'
-		);
-		gap();
-		deck(c.copy);
+	// 06 what if — a slope chart (viz/SlopeChart) of the comparison (habit vs the route
+	// drawn, Q1 vs Q3) or, when those match, the generic half-swap. The before/after numbers
+	// live inside the chart image; the deck carries the line and the caption the saving.
+	const wi = view.whatIf;
+	eyebrowOp(
+		view.comparison.show ? 'Can you do better?' : 'What if...',
+		wi.show && wi.variant === 'swap' ? `-${inr(view.swap.savedKg)} kg/yr` : ''
+	);
+	gap();
+	deck(view.comparison.show ? view.comparison.copy : view.swap.copy);
+	if (wi.variant === 'swap' && view.swap.show && view.connectivity && view.connectivity.modes.length) {
+		const conn = view.connectivity;
 		gap();
 		T(panelPair(c.usualLabel, inr(c.usualKg), c.pickedLabel, inr(c.pickedKg), 'kg/yr'));
 		// T(

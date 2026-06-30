@@ -165,6 +165,23 @@ export function panelPair(
 	return panelRow(left, unit, cols);
 }
 
+/** Transit-mode rows for the swap panel: each `│ label  hint … trips │`, aligned on the
+ *  label column and clamped so a long route can never push out the right-hand count. */
+export function transitRows(
+	rows: { label: string; trips: string; hint: string }[],
+	cols = PRINT_COLS
+): string[] {
+	if (!rows.length) return [];
+	const labelW = Math.max(...rows.map((r) => r.label.length));
+	const inner = cols - 4; // matches panelRow's '│ ' … ' │'
+	return rows.map((r) => {
+		const leftBudget = inner - r.trips.length - 2;
+		let left = (r.hint ? `${r.label.padEnd(labelW)}  ${r.hint}` : r.label).trimEnd();
+		if (left.length > leftBudget) left = left.slice(0, Math.max(0, leftBudget)).trimEnd();
+		return panelRow(left, r.trips, cols);
+	});
+}
+
 /** A double-rule "subtotal" line, optionally with embedded text: `═══ mid ═══`. */
 export function panelRule(mid = '', cols = PRINT_COLS): string {
 	if (!mid) return '═'.repeat(cols);
