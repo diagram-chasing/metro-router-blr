@@ -323,11 +323,12 @@
 		};
 		const queue: Pending[] = [];
 
-		// Compress only the long, non-reveal phases when routes are waiting, so nobody waits
-		// too long for their spotlight; never faster than 0.45× so it stays legible at distance.
+		// Compress the two message phases when routes are waiting, so nobody waits too long for
+		// their spotlight; clamped to a 6s floor (below) so each message stays legible at distance.
 		const phaseDur = (ph: string) => {
 			if (ph === 'hold' || ph === 'recalc') {
-				return DUR[ph] * Math.max(0.45, 1 - 0.12 * queue.length);
+				// Never below 6s: each message has to stay readable across the room despite backlog.
+				return Math.max(6, DUR[ph] * (1 - 0.08 * queue.length));
 			}
 			return DUR[ph];
 		};
@@ -670,8 +671,7 @@
 			let prevClockT = 0; // previous frame time, for the dev freeze clock-hold
 			// Rising-edge trackers for the two top-banner channels (so each appearance replays its draw-in
 			// and picks up the right ▲ YOU / explainer message exactly once).
-			let spotPrev = false; // spotlight spread shown last frame
-			let idleSpreadPrev = false; // idle-timer spread shown last frame
+			let spotPrev = false; // spotlight distribution shown last frame
 			let explPrev = false; // explainer shown last frame
 			let hoods: HoodReading[] = [];
 			// Reused render objects, one per live label, keyed the same as liveLabels. We mutate these in
@@ -890,37 +890,42 @@
 								? 1 - easeInOutCubic(clamp01(phaseEl / DUR.zoomBack))
 								: 0;
 
-				// Rising soot number: at hold start the route is fully drawn (the zoom-in easeTo spans
-				// dim+reveal). The grams fade in at the route centre, scale up and float upward, then fade
-				// out — clearing the way for the spread banner to draw in (the "emit, then locate" beat).
-				// Projected each frame; written transform-only so it never thrashes layout.
-				const EMIT_DUR = Math.min(WALL.emit.rise, 0.6 * phaseDur('hold'));
+				// Soot number: at hold start the route is fully drawn (the zoom-in easeTo spans dim+reveal).
+				// The grams fade in at the route centre and float up, then HOLD — staying fully up for the
+				// whole hold phase so the emitted amount reads for its full ~7s (≥6s) window. It fades out
+				// only once the camera hands off to the distribution chart (recalc). Projected each frame,
+				// transform-only so it never thrashes layout.
+				const EMIT_RISE = Math.min(WALL.emit.rise, 0.35 * phaseDur('hold'));
 				if (cardData && activeCenter && map && (phase === 'hold' || phase === 'recalc')) {
-					const e = phase === 'hold' ? clamp01(phaseEl / EMIT_DUR) : 1;
-					if (e < 1) {
-						const pr = map.project(activeCenter as [number, number]);
+					const pr = map.project(activeCenter as [number, number]);
+					if (phase === 'hold') {
+						const e = clamp01(phaseEl / EMIT_RISE);
 						const eo = easeOutCubic(e);
-						const appear = clamp01(e / 0.12); // quick fade-in
-						const fade = 1 - clamp01((e - 0.55) / 0.45); // fade-out as it climbs
 						emit = {
 							show: true,
 							x: pr.x,
 							y: pr.y - eo * WALL.emit.risePx * scaleW,
-							opacity: appear * fade,
+							opacity: clamp01(e / 0.18), // quick fade-in, then held at 1 through hold
 							scale: 1 + 0.12 * eo,
 							grams: cardData.grams
 						};
-					} else if (emit.show) {
-						emit = { ...emit, show: false, opacity: 0 };
+					} else {
+						// recalc: the distribution chart has taken over — fade the number out, then drop it.
+						const out = 1 - clamp01(phaseEl / 0.6);
+						if (out <= 0.001) {
+							if (emit.show) emit = { ...emit, show: false, opacity: 0 };
+						} else {
+							emit = { ...emit, opacity: out, show: true };
+						}
 					}
 				} else if (emit.show) {
 					emit = { ...emit, show: false, opacity: 0 };
 				}
 
-				// Two top-banner channels sharing the WALL.hero pulse + titleEvery cadence: idle beats
-				// alternate the soot-spread distribution (even) and the AQI explainer (odd); a route
-				// spotlight forces the spread up (with ▲ YOU), beginning AFTER the soot number, and
-				// suppresses the explainer.
+				// Two top-banner channels on the WALL.hero pulse + titleEvery cadence. The soot-per-km
+				// distribution appears ONLY as the climax of a route spotlight (recalc, after the soot
+				// number has had its window) — never on idle beats. The idle pulse cycles the AQI
+				// explainer's two messages.
 				let hv: number;
 				if (reduceMotion) {
 					hv = 1;
@@ -936,44 +941,36 @@
 									: 0;
 				}
 				const beat = titleEvery > 0 ? Math.floor(now / titleEvery) : 0;
-				const beatIsSpread = beat % 2 === 0; // even → spread, odd → explainer
 				const idle = phase === 'idle'; // timer banners pulse only when nothing is featured
 
-				// Spotlight spread envelope: held at 0 until the soot number has risen, then up, held
-				// through recalc, easing out on the zoom-back.
+				// Distribution chart envelope: it's the spotlight climax. Held at 0 through the soot-number
+				// window (hold), draws in at the start of recalc, holds through it (~8s, ≥6s floor), then
+				// eases out on the zoom-back as the map resumes.
 				const spotE = reduceMotion
-					? phase === 'hold' || phase === 'recalc' || phase === 'zoomBack'
+					? phase === 'recalc' || phase === 'zoomBack'
 						? 1
 						: 0
-					: phase === 'hold'
-						? clamp01((phaseEl - EMIT_DUR) / HERO_RISE)
-						: phase === 'recalc'
-							? 1
-							: phase === 'zoomBack'
-								? 1 - easeInOutCubic(clamp01(phaseEl / DUR.zoomBack))
-								: 0;
+					: phase === 'recalc'
+						? clamp01(phaseEl / HERO_RISE)
+						: phase === 'zoomBack'
+							? 1 - easeInOutCubic(clamp01(phaseEl / DUR.zoomBack))
+							: 0;
 				const spotlightActive = spotE > 0.001;
 
-				// Rising edges → replay each appearance's draw-in once and pick up the right ▲ YOU / message.
+				// Rising edge → replay the band draw-in once and pin ▲ YOU on the featured route's band.
 				if (spotlightActive && !spotPrev) {
-					spreadMine = activePm25; // ▲ YOU on the featured route's band
+					spreadMine = activePm25;
 					spreadAppear++;
 				}
 				spotPrev = spotlightActive;
-				const idleSpreadShowing = idle && beatIsSpread && hv > 0.02;
-				if (idleSpreadShowing && !idleSpreadPrev) {
-					spreadMine = -1; // idle spread shows the population only, no caret
-					spreadAppear++;
-				}
-				idleSpreadPrev = idleSpreadShowing;
-				const explShowing = idle && !beatIsSpread && hv > 0.02;
+				const explShowing = idle && hv > 0.02; // the explainer is the only idle-beat banner now
 				if (explShowing && !explPrev) {
-					explainerWhich = (Math.floor(beat / 2) % 2) as 0 | 1;
+					explainerWhich = (beat % 2) as 0 | 1; // alternate its two messages beat to beat
 				}
 				explPrev = explShowing;
 
-				const nextSpread = Math.max(spotE, idle && beatIsSpread ? hv : 0);
-				const nextExpl = idle && !beatIsSpread ? hv : 0;
+				const nextSpread = spotE; // distribution only during a spotlight, never on idle beats
+				const nextExpl = idle ? hv : 0;
 				if (spreadOpacity !== nextSpread) spreadOpacity = nextSpread; // skip 60fps no-op writes
 				if (explainerOpacity !== nextExpl) explainerOpacity = nextExpl;
 
@@ -1254,13 +1251,13 @@
 			style="transform: translate3d({emitView.x}px, {emitView.y}px, 0) translate(-50%, -50%) scale({emitView.scale}); opacity:{emitView.opacity}; --wall-scale:{scaleW}"
 		>
 			<div
-				class="flex animate-[emit-pop_0.55s_cubic-bezier(0.34,1.56,0.64,1)_both] flex-col items-center gap-[calc(var(--wall-scale)*4px)] border-[calc(var(--wall-scale)*2px)] border-paper bg-ink px-[calc(var(--wall-scale)*16px)] py-[calc(var(--wall-scale)*10px)] font-mono text-paper shadow-[0_8px_30px_rgba(0,0,0,0.5)] [-webkit-font-smoothing:none] [font-smooth:never] motion-reduce:animate-none"
+				class="flex animate-[emit-pop_0.55s_cubic-bezier(0.34,1.56,0.64,1)_both] flex-col items-center gap-[calc(var(--wall-scale)*4px)] border-[calc(var(--wall-scale)*2px)] border-black bg-ink px-[calc(var(--wall-scale)*16px)] py-[calc(var(--wall-scale)*10px)] font-mono text-paper shadow-[0_8px_30px_rgba(0,0,0,0.5)] [-webkit-font-smoothing:none] [font-smooth:never] motion-reduce:animate-none"
 			>
 				<div
 					class="flex items-baseline whitespace-nowrap tabular-nums leading-none tracking-[0.01em] text-[#ff5a36]"
 				>
 					<span
-						class="inline-block origin-bottom animate-[emit-plus_0.5s_cubic-bezier(0.34,1.8,0.5,1)_0.06s_both] text-[length:calc(var(--wall-scale)*clamp(40px,4.5vw,88px))] font-bold motion-reduce:animate-none"
+						class="inline-block origin-bottom animate-[emit-plus_0.5s_cubic-bezier(0.34,1.8,0.5,1)_0.06s_both] text-[length:calc(var(--wall-scale)*clamp(40px,5.5vw,88px))] font-bold motion-reduce:animate-none"
 						>+</span
 					>
 					<span class="text-[length:calc(var(--wall-scale)*clamp(40px,4.5vw,88px))] font-bold">
@@ -1269,14 +1266,14 @@
 							: Math.round(emitView.grams)}</span
 					>
 					<span
-						class="ml-[calc(var(--wall-scale)*6px)] text-[length:calc(var(--wall-scale)*clamp(18px,2vw,34px))] font-bold"
+						class="ml-[calc(var(--wall-scale)*6px)] text-[length:calc(var(--wall-scale)*clamp(18px,2.5vw,44px))] font-black"
 						>{emitView.grams >= 1000 ? 'kg' : 'g'}</span
 					>
 				</div>
 				<div
-					class="animate-[emit-caption_0.4s_ease-out_0.2s_both] text-[length:calc(var(--wall-scale)*clamp(9px,0.8vw,14px))] font-bold uppercase tracking-[0.14em] text-paper opacity-70 motion-reduce:animate-none"
+					class="text-white! animate-[emit-caption_0.4s_ease-out_0.2s_both] text-[length:calc(var(--wall-scale)*clamp(9px,1.8vw,24px))] font-bold uppercase opacity-70 motion-reduce:animate-none"
 				>
-					particle pollution · 10 years
+					PM2.5 over 10 years
 				</div>
 			</div>
 		</div>

@@ -46,15 +46,13 @@
 		<p class={panel}>
 			The particle pollution our commutes leave in the air is the
 			<span class={chip}>AQI</span>, which costs us
-			<span class="text-[#ff5a36]">years of life</span>.
+			<span class="text-[#ff5a36]">years of life</span>
 		</p>
 	{:else}
 		<p class={panel}>
-			<span class={chip}>{fmt.a} of {fmt.b} {fmt.unit}</span>
-			of that
-			<span class={chip}>PM2.5</span>
-			over the next decade came from trips that
-			<span class="text-[#ff5a36]">had a cleaner option</span>.
+			When we add today's <span class={chip}>{fmt.a} {fmt.unit} of PM2.5</span>
+			over the next decade, it costs us in
+			<span class="text-[#ff5a36]">years of life</span>
 		</p>
 	{/if}
 </div>

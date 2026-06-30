@@ -43,12 +43,13 @@ export const WALL = {
 	poll: 4000, // ms between server polls
 	decayKm: 1.2, // spatial smear radius
 
-	// Route spotlight camera: fit the route to the screen with some padding, zooming in further for
-	// small routes so they fill the frame (maxZoom only caps very tiny trips from over-zooming).
-	focus: { padding: 200, maxZoom: 13 },
+	// Route spotlight camera: fit the route to the screen with generous padding so the endpoint name
+	// chips (which extend out past the route, mostly horizontally) never run off the screen edge.
+	// maxZoom caps tiny trips from over-zooming, which also keeps their chips well inside the frame.
+	focus: { padding: { top: 260, bottom: 260, left: 340, right: 340 }, maxZoom: 12.5 },
 
-	// Show pacing (s)
-	dur: { dim: 0.6, reveal: 1.8, hold: 4.6, recalc: 2.4, zoomBack: 1.4, settle: 1.1 },
+	// Show pacing (s). hold = the soot number's window; recalc = the distribution chart's window.
+	dur: { dim: 0.6, reveal: 1.8, hold: 7, recalc: 8, zoomBack: 1.4, settle: 1.1 },
 	dimMin: 0.3,
 	idleRest: 1.4,
 	hero: { rise: 0.8, hold: 4, fall: 1.2 },
