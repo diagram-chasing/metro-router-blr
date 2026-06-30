@@ -61,9 +61,9 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
 
 	const a = answers as Answers;
 	const computed = computeReceipt(a);
-	// Real area-to-area transit for the drawn trip — read server-side from the 22 MB
-	// connectivity dataset and stored on the receipt so the client never loads it.
-	computed.connectivity = await lookupConnectivity(a.origin, a.destination);
+	// Real transit serving the drawn trip — planned live via OpenTripPlanner and
+	// stored on the receipt so the client never has to.
+	computed.connectivity = await lookupConnectivity(a.origin, a.destination, fetch);
 	const geo = await buildGeoSnapshot(a, fetch);
 	const id = makeId();
 	const createdAt = Date.now();

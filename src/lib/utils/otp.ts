@@ -7,7 +7,7 @@
 import pkg from '@mapbox/polyline';
 const { decode: decodePoly } = pkg;
 
-const OTP_ENDPOINT = 'http://localhost:8000/otp/gtfs/v1';
+const OTP_ENDPOINT = 'https://opentripplanner.diagramchasing.fun/otp/gtfs/v1';
 
 // OTP transport modes we use. (The GraphQL `Mode` enum has many more.)
 export type OtpModeName =
@@ -287,6 +287,49 @@ query Departures($id: String!, $num: Int!) {
 // Collapses destination/terminal variants so a route reads as one line.
 function baseRoute(shortName: string): string {
 	return shortName.trim().split(/\s+/)[0];
+}
+
+export interface RouteStat {
+	/** the exact GTFS route short-name this stat is for */
+	shortName: string;
+	/** route mode (BUS / SUBWAY / …) — used to classify metro vs bus */
+	mode: OtpModeName;
+	/** total scheduled trips on the route (≈ daily, the feed uses one calendar) */
+	trips: number;
+}
+
+/**
+ * Daily trip counts for a set of exact route short-names, looked up from OTP in a
+ * single aliased GraphQL query. `routes(name:)` matches by substring, so each
+ * result is filtered back to an exact short-name match (and summed when a name maps
+ * to several GTFS routes). Names with no match are simply absent from the result.
+ */
+export async function routeTripStats(
+	names: string[],
+	fetcher: typeof fetch = fetch
+): Promise<Map<string, RouteStat>> {
+	const result = new Map<string, RouteStat>();
+	if (!names.length) return result;
+
+	const varDefs = names.map((_, i) => `$n${i}: String!`).join(', ');
+	const fields = names
+		.map((_, i) => `r${i}: routes(name: $n${i}) { shortName mode trips { id } }`)
+		.join('\n');
+	const query = `query RouteTrips(${varDefs}) {\n${fields}\n}`;
+	const variables: Record<string, string> = {};
+	names.forEach((n, i) => (variables[`n${i}`] = n));
+
+	type RawRoute = { shortName: string; mode: OtpModeName; trips: { id: string }[] | null };
+	const data = await otpQuery<Record<string, RawRoute[]>>(query, variables, fetcher);
+	if (!data) return result;
+
+	names.forEach((n, i) => {
+		const matches = (data[`r${i}`] ?? []).filter((r) => r.shortName === n);
+		if (!matches.length) return;
+		const trips = matches.reduce((sum, r) => sum + (r.trips?.length ?? 0), 0);
+		result.set(n, { shortName: n, mode: matches[0].mode, trips });
+	});
+	return result;
 }
 
 async function otpQuery<T>(

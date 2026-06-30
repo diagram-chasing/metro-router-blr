@@ -14,19 +14,19 @@ import { estimateCorridorTraffic } from './corridorTraffic';
 import { landValueAtPoint } from './landValue';
 import { carsAddedToday } from './carsAdded';
 
-// Transit connectivity between the trip's origin and destination areas (H3 res-8
-// hexagons), read from connectivity.json server-side. `modes` lists each public-
-// transport mode with at least one trip on the pair, busiest-route short names first.
+// Transit connectivity between the trip's origin and destination, derived live
+// from OpenTripPlanner (see lookupConnectivity). We plan the trip, collect the
+// routes the suggested itineraries board first, then sum each route's daily trips.
+// `modes` lists each public-transport class actually serving the trip, with the
+// boarded route short-names and that class's total daily trips.
 export type ConnectivityMode = {
 	key: 'metro' | 'ac_bus' | 'bus';
 	label: string;
 	trips: number;
-	routes: string[];
+	routes: string[]; // boarded-route short-names contributing to this class
 };
 export type Connectivity = {
-	originH3: string;
-	destH3: string;
-	total: number; // daily transit trips across all modes on this area pair
+	total: number; // daily transit trips summed across the routes serving this trip
 	modes: ConnectivityMode[];
 };
 
@@ -92,9 +92,9 @@ export type ComputedReceipt = {
 		rows: { key: string; label: string; countPerDay: number; gPerKm: number; isYou: boolean }[];
 	};
 
-	// Daily transit trips between the trip's origin and destination areas, from
-	// connectivity.json. Filled in server-side (see lookupConnectivity); null at pure
-	// compute time and when the area pair has no recorded transit.
+	// Daily transit trips serving the trip's origin→destination, derived from
+	// OpenTripPlanner. Filled in server-side (see lookupConnectivity); null at pure
+	// compute time and when no transit reasonably serves the trip.
 	connectivity: Connectivity | null;
 
 	// Beat 7 — equivalences for the YEAR-TOTAL commute (not the saving)
@@ -1016,8 +1016,8 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 			isFallback: corridorTraffic.isFallback,
 			rows: corridorRows
 		},
-		// Pure compute has no filesystem access; the server endpoint fills this from
-		// connectivity.json before the receipt is stored.
+		// Pure compute makes no network calls; the server endpoint fills this from
+		// OpenTripPlanner before the receipt is stored.
 		connectivity: null,
 		cylindersYear: round(cylindersYear, 0),
 		treesYear: round(treesYear, 0),

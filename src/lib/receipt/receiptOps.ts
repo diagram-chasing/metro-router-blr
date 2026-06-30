@@ -5,7 +5,9 @@
 // Pure (DOM-free) on purpose: the harness and any server context can build the ops
 // without pulling the browser-only capture path that lives in printReceipt.ts.
 
-import type { ReceiptView } from './receipt';
+import type { Connectivity, ReceiptView } from './receipt';
+
+type CleanerWayInput = Pick<Connectivity, 'total' | 'modes'>;
 import {
 	PRINT_COLS,
 	PRINT_COLS_B,
@@ -47,6 +49,19 @@ export function qrUrl(view: ReceiptView): string {
 	return typeof location !== 'undefined'
 		? `${location.origin}/receipt?id=${view.finePrint.barcodeSeed}`
 		: `https://pollution.receipt/${view.finePrint.barcodeSeed}`;
+}
+
+// The "A cleaner way to make this trip" block, as plain receipt lines (header
+// flush-left, the rest indented like deck() copy).
+export function cleanerWayLines(conn: CleanerWayInput): string[] {
+	const lines: string[] = [];
+	const deck = (s: string) => wrapText(s, PRINT_COLS - 3).forEach((l) => lines.push('   ' + l));
+	deck(`Make your commute cleaner by using one of the ${inr(conn.total)} daily transit connections`);
+	conn.modes.forEach((m) => {
+		const routes = m.routes.length ? ` (${m.routes.join(', ')})` : '';
+		deck(`${inr(m.trips)}x ${m.label}${routes}`);
+	});
+	return lines;
 }
 
 export function buildReceiptOps(view: ReceiptView): PrintOp[] {
@@ -187,16 +202,8 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 		deck(view.swap.copy);
 		if (view.swap.show) {
 			if (view.connectivity && view.connectivity.modes.length) {
-				const conn = view.connectivity;
 				gap();
-				T('A cleaner way to make this trip:');
-				deck(`Any of the ${inr(conn.total)} daily transit trips on this route`);
-				conn.modes.forEach((m) => {
-					const routes = m.routes.length
-						? ' on ' + m.routes.map((r) => `[${r}]`).join(', ')
-						: '';
-					deck(`${inr(m.trips)} ${m.label} trips${routes}`);
-				});
+				cleanerWayLines(view.connectivity).forEach((l) => T(l));
 			}
 			gap();
 
