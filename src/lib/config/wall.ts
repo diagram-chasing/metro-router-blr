@@ -40,6 +40,11 @@ export const WALL = {
 	cell: 0.003, // grid resolution (deg)
 	blocky: 1, // heat super-cell size in data cells (1 = native ~330m cells; >1 chunks the field)
 	steps: 25, // posterize the heat into N discrete colour/opacity bands (0/<2 = continuous ramp)
+	// Ordered-dither stipple (paper-design dithering look): quantizes the heat coverage to a 1-bit
+	// Bayer stipple, dense corridors solid and faint cells thinning to dots. 0 = off (smooth heat).
+	dither: 1, // crossfade smooth heat (0) → full stipple (1)
+	ditherType: 8, // Bayer matrix: 2 | 4 | 8 (coarser → finer ordered pattern)
+	ditherPx: 2, // stipple dot size in device pixels (bigger reads across the room)
 	poll: 4000, // ms between server polls
 	decayKm: 1.2, // spatial smear radius
 

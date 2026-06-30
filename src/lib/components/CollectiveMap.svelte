@@ -348,6 +348,9 @@
 			const demo = WALL.demo;
 			const blockyAmt = WALL.blocky; // heat super-cell size (chunks the smooth field)
 			const stepsW = WALL.steps; // posterize the heat into discrete bands (0/<2 = smooth ramp)
+			const ditherAmt = WALL.dither; // ordered-dither stipple amount (0 = smooth heat)
+			const ditherTypeW = WALL.ditherType; // Bayer matrix size (2 | 4 | 8)
+			const ditherPxW = WALL.ditherPx; // stipple dot size in device pixels
 
 			const deck = await loadDeck();
 			if (disposed) return;
@@ -873,7 +876,10 @@
 							idle: idleAmt,
 							beforeId: fieldBeforeId,
 							blocky: blockyAmt,
-							steps: stepsW
+							steps: stepsW,
+							dither: ditherAmt,
+							ditherType: ditherTypeW,
+							ditherPx: ditherPxW
 						})
 					: null;
 

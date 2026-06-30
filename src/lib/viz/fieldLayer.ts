@@ -24,74 +24,86 @@ layout(std140) uniform fieldFxUniforms {
   float pathCount;     // valid points (2..8); <2 → circle fallback
   float blocky;        // heat super-cell size in grid cells (1 = native; >1 chunks the field)
   float steps;         // posterize the heat into N discrete bands (<2 = continuous ramp)
+  float dither;        // ordered-dither amount 0..1 (0 = smooth heat; 1 = full 1-bit stipple)
+  float ditherType;    // Bayer matrix size: 2 | 4 | 8
+  float ditherPx;      // dither grid cell size in device pixels
 } fieldFx;
 `;
 
 export const fieldFxUniforms = {
-	name: 'fieldFx',
-	vs: uniformBlock,
-	fs: uniformBlock,
-	uniformTypes: {
-		time: 'f32',
-		dim: 'f32',
-		recalcStart: 'f32',
-		recalcDur: 'f32',
-		recalcOrigin: 'vec2<f32>',
-		aspect: 'f32',
-		scale: 'f32',
-		gridSize: 'vec2<f32>',
-		noise: 'f32',
-		idle: 'f32',
-		pathA: 'vec4<f32>',
-		pathB: 'vec4<f32>',
-		pathC: 'vec4<f32>',
-		pathD: 'vec4<f32>',
-		pathCount: 'f32',
-		blocky: 'f32',
-		steps: 'f32'
-	}
+  name: 'fieldFx',
+  vs: uniformBlock,
+  fs: uniformBlock,
+  uniformTypes: {
+    time: 'f32',
+    dim: 'f32',
+    recalcStart: 'f32',
+    recalcDur: 'f32',
+    recalcOrigin: 'vec2<f32>',
+    aspect: 'f32',
+    scale: 'f32',
+    gridSize: 'vec2<f32>',
+    noise: 'f32',
+    idle: 'f32',
+    pathA: 'vec4<f32>',
+    pathB: 'vec4<f32>',
+    pathC: 'vec4<f32>',
+    pathD: 'vec4<f32>',
+    pathCount: 'f32',
+    blocky: 'f32',
+    steps: 'f32',
+    dither: 'f32',
+    ditherType: 'f32',
+    ditherPx: 'f32'
+  }
 } as const;
 
 type V4 = [number, number, number, number];
 
 export type FieldFxProps = {
-	time: number;
-	dim: number;
-	recalcStart: number;
-	recalcDur: number;
-	recalcOrigin: [number, number];
-	aspect: number;
-	scale: number;
-	gridSize: [number, number];
-	noise: number;
-	idle: number;
-	pathA: V4;
-	pathB: V4;
-	pathC: V4;
-	pathD: V4;
-	pathCount: number;
-	blocky: number;
-	steps: number;
+  time: number;
+  dim: number;
+  recalcStart: number;
+  recalcDur: number;
+  recalcOrigin: [number, number];
+  aspect: number;
+  scale: number;
+  gridSize: [number, number];
+  noise: number;
+  idle: number;
+  pathA: V4;
+  pathB: V4;
+  pathC: V4;
+  pathD: V4;
+  pathCount: number;
+  blocky: number;
+  steps: number;
+  dither: number;
+  ditherType: number;
+  ditherPx: number;
 };
 
 const FIELDFX_DEFAULTS: FieldFxProps = {
-	time: 0,
-	dim: 1,
-	recalcStart: 0,
-	recalcDur: 0,
-	recalcOrigin: [0.5, 0.5],
-	aspect: 1,
-	scale: 1,
-	gridSize: [1, 1],
-	noise: 0,
-	idle: 2,
-	pathA: [0, 0, 0, 0],
-	pathB: [0, 0, 0, 0],
-	pathC: [0, 0, 0, 0],
-	pathD: [0, 0, 0, 0],
-	pathCount: 0,
-	blocky: 1,
-	steps: 0
+  time: 0,
+  dim: 1,
+  recalcStart: 0,
+  recalcDur: 0,
+  recalcOrigin: [0.5, 0.5],
+  aspect: 1,
+  scale: 1,
+  gridSize: [1, 1],
+  noise: 0,
+  idle: 2,
+  pathA: [0, 0, 0, 0],
+  pathB: [0, 0, 0, 0],
+  pathC: [0, 0, 0, 0],
+  pathD: [0, 0, 0, 0],
+  pathCount: 0,
+  blocky: 1,
+  steps: 0,
+  dither: 0,
+  ditherType: 4,
+  ditherPx: 3
 };
 
 
@@ -115,6 +127,26 @@ float fieldBayer(vec2 px) {
   float m[16] = float[16](0.,8.,2.,10., 12.,4.,14.,6., 3.,11.,1.,9., 15.,7.,13.,5.);
   int i = int(mod(px.x, 4.0)) + int(mod(px.y, 4.0)) * 4;
   return m[i] / 16.0;
+}
+
+// Ordered (Bayer) dither threshold in (0,1) at integer cell coords, for 2x2 / 4x4 / 8x8 matrices
+// (the paper-design dithering shader's matrices). +0.5 centres each threshold so a level never goes
+// fully on at 0; this is the per-pixel cutoff a continuous coverage is compared against to stipple it.
+float fieldDither(vec2 px, int size) {
+  if (size <= 2) {
+    int m2[4] = int[4](0, 2, 3, 1);
+    int i = int(mod(px.x, 2.0)) + int(mod(px.y, 2.0)) * 2;
+    return (float(m2[i]) + 0.5) / 4.0;
+  } else if (size <= 4) {
+    return (fieldBayer(px) * 16.0 + 0.5) / 16.0;
+  }
+  int m8[64] = int[64](
+    0, 32, 8, 40, 2, 34, 10, 42, 48, 16, 56, 24, 50, 18, 58, 26,
+    12, 44, 4, 36, 14, 46, 6, 38, 60, 28, 52, 20, 62, 30, 54, 22,
+    3, 35, 11, 43, 1, 33, 9, 41, 51, 19, 59, 27, 49, 17, 57, 25,
+    15, 47, 7, 39, 13, 45, 5, 37, 63, 31, 55, 23, 61, 29, 53, 21);
+  int i = int(mod(px.x, 8.0)) + int(mod(px.y, 8.0)) * 8;
+  return (float(m8[i]) + 0.5) / 64.0;
 }
 
 // Render-cell count: the native grid coarsened by the blocky factor so the heat reads as chunky
@@ -362,6 +394,15 @@ const FIELD_COMPOSE = /* glsl */ `
     a = max(a, clamp(fIgnite * 1.15, 0.0, 1.0));
   }
 
+  // ── Ordered-dither pass (the paper-design "dithering" look) ──
+
+  if (fieldFx.dither > 0.0) {
+    vec2 dcell = floor(gl_FragCoord.xy / max(fieldFx.ditherPx, 1.0));
+    float thr = fieldDither(dcell, int(fieldFx.ditherType + 0.5));
+    float aDither = step(thr, clamp(a, 0.0, 1.0));
+    a = mix(a, aDither, fieldFx.dither);
+  }
+
   // Grid lines LAST, so the dark lattice reads across the field, ambience and route.
   rgb *= 1.0 - 0.38 * fieldGrid(geometry.uv);
 
@@ -381,16 +422,16 @@ const FIELD_SAMPLE = /* glsl */ `
 export type FieldImage = { width: number; height: number; data: Uint8Array };
 
 type LumaTexture = {
-	width: number;
-	height: number;
-	destroy(): void;
-	copyImageData(opts: { data: Uint8Array }): void;
-	setSampler(s: Record<string, unknown>): void;
+  width: number;
+  height: number;
+  destroy(): void;
+  copyImageData(opts: { data: Uint8Array }): void;
+  setSampler(s: Record<string, unknown>): void;
 };
 
 const samplerFor = (smooth: boolean) => {
-	const f = smooth ? 'linear' : 'nearest';
-	return { minFilter: f, magFilter: f, addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' };
+  const f = smooth ? 'linear' : 'nearest';
+  return { minFilter: f, magFilter: f, addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' };
 };
 
 // Build the FieldLayer class from the runtime BitmapLayer (passed by loadDeck so the static
@@ -398,116 +439,119 @@ const samplerFor = (smooth: boolean) => {
 // prop — that path silently produced an empty texture; here `fieldData` (raw rgba8) uploads
 // straight to a device texture, bound as `bitmapTexture` in draw().
 export function makeFieldLayer(Base: typeof BitmapLayer) {
-	class FieldLayer extends (Base as new (...args: unknown[]) => BitmapLayer) {
-		static layerName = 'FieldLayer';
-		static defaultProps = {
-			...(Base as unknown as { defaultProps: object }).defaultProps,
-			fieldData: { type: 'object', value: null, compare: true },
-			smooth: true,
-			...FIELDFX_DEFAULTS
-		};
+  class FieldLayer extends (Base as new (...args: unknown[]) => BitmapLayer) {
+    static layerName = 'FieldLayer';
+    static defaultProps = {
+      ...(Base as unknown as { defaultProps: object }).defaultProps,
+      fieldData: { type: 'object', value: null, compare: true },
+      smooth: true,
+      ...FIELDFX_DEFAULTS
+    };
 
-		getShaders() {
-			const s = (super.getShaders as () => Record<string, unknown>)();
-			const inject = (s.inject ?? {}) as Record<string, string>;
-			return {
-				...s,
-				modules: [...((s.modules as unknown[]) ?? []), fieldFxUniforms],
-				inject: {
-					...inject,
-					'fs:#decl': (inject['fs:#decl'] ?? '') + FIELD_LIB,
-					'fs:#main-start': (inject['fs:#main-start'] ?? '') + FIELD_SAMPLE,
-					'fs:DECKGL_FILTER_COLOR': (inject['fs:DECKGL_FILTER_COLOR'] ?? '') + FIELD_COMPOSE
-				}
-			};
-		}
+    getShaders() {
+      const s = (super.getShaders as () => Record<string, unknown>)();
+      const inject = (s.inject ?? {}) as Record<string, string>;
+      return {
+        ...s,
+        modules: [...((s.modules as unknown[]) ?? []), fieldFxUniforms],
+        inject: {
+          ...inject,
+          'fs:#decl': (inject['fs:#decl'] ?? '') + FIELD_LIB,
+          'fs:#main-start': (inject['fs:#main-start'] ?? '') + FIELD_SAMPLE,
+          'fs:DECKGL_FILTER_COLOR': (inject['fs:DECKGL_FILTER_COLOR'] ?? '') + FIELD_COMPOSE
+        }
+      };
+    }
 
-		updateState(params: { props: Record<string, unknown>; oldProps: Record<string, unknown> }) {
-			(super.updateState as (p: unknown) => void)(params); // builds the quad mesh from `bounds`
-			const { props, oldProps } = params;
-			if (props.fieldData && props.fieldData !== oldProps.fieldData) {
-				this._updateFieldTexture(props.fieldData as FieldImage);
-			}
-		}
+    updateState(params: { props: Record<string, unknown>; oldProps: Record<string, unknown> }) {
+      (super.updateState as (p: unknown) => void)(params); // builds the quad mesh from `bounds`
+      const { props, oldProps } = params;
+      if (props.fieldData && props.fieldData !== oldProps.fieldData) {
+        this._updateFieldTexture(props.fieldData as FieldImage);
+      }
+    }
 
-		_updateFieldTexture(img: FieldImage) {
-			const ctx = this.context as { device: { createTexture(o: Record<string, unknown>): LumaTexture } };
-			const st = this.state as { fieldTexture?: LumaTexture };
-			const smooth = (this.props as unknown as { smooth: boolean }).smooth !== false;
-			let tex = st.fieldTexture;
-			if (!tex || tex.width !== img.width || tex.height !== img.height) {
-				tex?.destroy();
-				tex = ctx.device.createTexture({
-					width: img.width,
-					height: img.height,
-					format: 'rgba8unorm',
-					data: img.data,
-					mipmaps: false,
-					sampler: samplerFor(smooth)
-				});
-				this.setState({ fieldTexture: tex });
-			} else {
-				tex.copyImageData({ data: img.data });
-				tex.setSampler(samplerFor(smooth));
-			}
-		}
+    _updateFieldTexture(img: FieldImage) {
+      const ctx = this.context as { device: { createTexture(o: Record<string, unknown>): LumaTexture } };
+      const st = this.state as { fieldTexture?: LumaTexture };
+      const smooth = (this.props as unknown as { smooth: boolean }).smooth !== false;
+      let tex = st.fieldTexture;
+      if (!tex || tex.width !== img.width || tex.height !== img.height) {
+        tex?.destroy();
+        tex = ctx.device.createTexture({
+          width: img.width,
+          height: img.height,
+          format: 'rgba8unorm',
+          data: img.data,
+          mipmaps: false,
+          sampler: samplerFor(smooth)
+        });
+        this.setState({ fieldTexture: tex });
+      } else {
+        tex.copyImageData({ data: img.data });
+        tex.setSampler(samplerFor(smooth));
+      }
+    }
 
-		draw(opts: { shaderModuleProps?: { picking?: { isActive?: boolean } } }) {
-			const st = this.state as {
-				model?: { shaderInputs: { setProps: (p: object) => void }; draw: (rp: unknown) => void };
-				fieldTexture?: LumaTexture;
-				coordinateConversion?: number;
-				bounds?: number[];
-				disablePicking?: boolean;
-			};
-			const model = st.model;
-			const tex = st.fieldTexture;
-			if (!model || !tex) return;
-			if (opts.shaderModuleProps?.picking?.isActive && st.disablePicking) return;
+    draw(opts: { shaderModuleProps?: { picking?: { isActive?: boolean } } }) {
+      const st = this.state as {
+        model?: { shaderInputs: { setProps: (p: object) => void }; draw: (rp: unknown) => void };
+        fieldTexture?: LumaTexture;
+        coordinateConversion?: number;
+        bounds?: number[];
+        disablePicking?: boolean;
+      };
+      const model = st.model;
+      const tex = st.fieldTexture;
+      if (!model || !tex) return;
+      if (opts.shaderModuleProps?.picking?.isActive && st.disablePicking) return;
 
-			const p = this.props as unknown as FieldFxProps & {
-				desaturate: number;
-				transparentColor: number[];
-				tintColor: number[];
-			};
-			model.shaderInputs.setProps({
-				bitmap: {
-					bitmapTexture: tex,
-					bounds: st.bounds ?? [0, 0, 0, 0],
-					coordinateConversion: st.coordinateConversion ?? 0,
-					desaturate: p.desaturate,
-					tintColor: p.tintColor.slice(0, 3).map((x) => x / 255),
-					transparentColor: p.transparentColor.map((x) => x / 255)
-				},
-				fieldFx: {
-					time: p.time,
-					dim: p.dim,
-					recalcStart: p.recalcStart,
-					recalcDur: p.recalcDur,
-					recalcOrigin: p.recalcOrigin,
-					aspect: p.aspect,
-					scale: p.scale,
-					gridSize: p.gridSize,
-					noise: p.noise,
-					idle: p.idle,
-					pathA: p.pathA,
-					pathB: p.pathB,
-					pathC: p.pathC,
-					pathD: p.pathD,
-					pathCount: p.pathCount,
-					blocky: p.blocky,
-					steps: p.steps
-				}
-			});
-			model.draw((this.context as { renderPass: unknown }).renderPass);
-		}
+      const p = this.props as unknown as FieldFxProps & {
+        desaturate: number;
+        transparentColor: number[];
+        tintColor: number[];
+      };
+      model.shaderInputs.setProps({
+        bitmap: {
+          bitmapTexture: tex,
+          bounds: st.bounds ?? [0, 0, 0, 0],
+          coordinateConversion: st.coordinateConversion ?? 0,
+          desaturate: p.desaturate,
+          tintColor: p.tintColor.slice(0, 3).map((x) => x / 255),
+          transparentColor: p.transparentColor.map((x) => x / 255)
+        },
+        fieldFx: {
+          time: p.time,
+          dim: p.dim,
+          recalcStart: p.recalcStart,
+          recalcDur: p.recalcDur,
+          recalcOrigin: p.recalcOrigin,
+          aspect: p.aspect,
+          scale: p.scale,
+          gridSize: p.gridSize,
+          noise: p.noise,
+          idle: p.idle,
+          pathA: p.pathA,
+          pathB: p.pathB,
+          pathC: p.pathC,
+          pathD: p.pathD,
+          pathCount: p.pathCount,
+          blocky: p.blocky,
+          steps: p.steps,
+          dither: p.dither,
+          ditherType: p.ditherType,
+          ditherPx: p.ditherPx
+        }
+      });
+      model.draw((this.context as { renderPass: unknown }).renderPass);
+    }
 
-		finalizeState(context: unknown) {
-			(super.finalizeState as (c: unknown) => void)(context);
-			(this.state as { fieldTexture?: LumaTexture }).fieldTexture?.destroy();
-		}
-	}
-	return FieldLayer;
+    finalizeState(context: unknown) {
+      (super.finalizeState as (c: unknown) => void)(context);
+      (this.state as { fieldTexture?: LumaTexture }).fieldTexture?.destroy();
+    }
+  }
+  return FieldLayer;
 }
 
 export type FieldLayerClass = ReturnType<typeof makeFieldLayer>;

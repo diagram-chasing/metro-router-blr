@@ -18,6 +18,9 @@ export function buildFieldLayer(
 		beforeId?: string;
 		blocky?: number;
 		steps?: number;
+		dither?: number;
+		ditherType?: number;
+		ditherPx?: number;
 	}
 ): FieldLayerInstance | null {
 	const fieldData = field.textureImage();
@@ -49,7 +52,10 @@ export function buildFieldLayer(
 		pathD: [...pt(6), ...pt(7)],
 		pathCount: path.length / 2,
 		blocky: opts.blocky ?? 1, // heat super-cell size in grid cells (1 = native; >1 chunks it)
-		steps: opts.steps ?? 0 // posterize the heat into N discrete bands (0/<2 = continuous ramp)
+		steps: opts.steps ?? 0, // posterize the heat into N discrete bands (0/<2 = continuous ramp)
+		dither: opts.dither ?? 0, // ordered-dither stipple amount (0 = smooth; 1 = full 1-bit)
+		ditherType: opts.ditherType ?? 4, // Bayer matrix size: 2 | 4 | 8
+		ditherPx: opts.ditherPx ?? 3 // dither grid cell size in device pixels
 	};
 	const Ctor = deck.FieldLayer as unknown as new (p: Record<string, unknown>) => FieldLayerInstance;
 	return new Ctor(props);
