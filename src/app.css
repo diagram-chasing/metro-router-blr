@@ -44,6 +44,24 @@
 	}
 }
 
+/* Flying-papers sweep for the XP "sending to printer" dialog. */
+@keyframes xp-fly {
+	0% {
+		transform: translateX(0) scale(0.8);
+		opacity: 0;
+	}
+	15% {
+		opacity: 1;
+	}
+	85% {
+		opacity: 1;
+	}
+	100% {
+		transform: translateX(var(--xp-fly-x, 150px)) scale(0.8);
+		opacity: 0;
+	}
+}
+
 /* Wall overlay keyframes — referenced from components via Tailwind arbitrary animate-[…] classes
    (base Tailwind has no equivalent). Kept global here rather than in the config per project style. */
 @keyframes draw-in {

@@ -10,6 +10,7 @@
 	import { buildReceiptView, type Distribution, type Histogram } from '$lib/receipt/receipt';
 	import { downloadReceipt, openReceipt } from '$lib/receipt/rasterize';
 	import { printReceipt } from '$lib/receipt/printReceipt';
+	import { resetAnswers } from '$lib/exhibit/store.svelte';
 
 	type ReceiptResponse = StoredReceipt & {
 		distribution?: Distribution;
@@ -97,26 +98,29 @@
 	}
 
 	function startOver() {
+		// Wipe the previous visitor's answers (name included) so the welcome screen
+		// starts blank instead of prefilling the last name.
+		resetAnswers();
 		goto('/exhibit');
 	}
 </script>
 
 <XpWindow title="Your 2025 Receipt" icon="/xp/readme.ico">
 	<div class="flex min-h-0 flex-1 flex-col items-center gap-5 overflow-y-auto py-2">
-		<div class="flex flex-wrap justify-center gap-3">
-			<div class="h-[56px] w-[clamp(150px,20vw,200px)]">
+		<div class="flex w-full max-w-2xl justify-center gap-3">
+			<div class="h-[56px] w-full">
 				<TactileButton label="New visitor →" size="md" onclick={startOver} />
 			</div>
 			{#if view}
-				<div class="h-[56px] w-[clamp(120px,16vw,170px)]">
+				<div class="h-[56px] w-full">
 					<TactileButton label={busy ? 'Printing…' : 'Print'} size="md" onclick={printFast} />
 				</div>
-				<div class="h-[56px] w-[clamp(130px,17vw,180px)]">
+				<!-- <div class="h-[56px] w-[clamp(130px,17vw,180px)]">
 					<TactileButton label="Save image" size="md" onclick={save} />
 				</div>
 				<div class="h-[56px] w-[clamp(120px,16vw,170px)]">
 					<TactileButton label="Preview" size="md" onclick={preview} />
-				</div>
+				</div> -->
 			{/if}
 		</div>
 
@@ -148,7 +152,7 @@
 		{:else if view}
 			<!-- The receipt is a fixed 576px paper facsimile; frame it like a print preview. -->
 			<div
-				class="max-w-full overflow-x-auto border border-[#aca899] bg-white p-2 shadow-[4px_4px_14px_rgba(0,0,0,0.45)]"
+				class="max-w-2xl overflow-x-clip border border-[#aca899] bg-white shadow-[4px_4px_14px_rgba(0,0,0,0.45)]"
 			>
 				<ReceiptDoc {view} bind:node />
 			</div>

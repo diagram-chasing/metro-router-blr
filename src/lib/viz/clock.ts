@@ -25,6 +25,7 @@ export function createClock(onFrame: (t: number, dt: number) => void, opts: Cloc
 	let lastFrameWall = 0; // performance.now() of the last delivered frame
 	let watch = 0;
 	let stalled = false;
+	let onVisibility: (() => void) | null = null;
 
 	const loop = (now: number) => {
 		if (!running) return;
@@ -47,8 +48,23 @@ export function createClock(onFrame: (t: number, dt: number) => void, opts: Cloc
 			lastFrameWall = performance.now();
 			raf = requestAnimationFrame(loop);
 			if (opts.onStall) {
+				// A backgrounded tab pauses requestAnimationFrame (so lastFrameWall freezes) but NOT
+				// setInterval — so the watchdog must discount hidden time. Without this, any tab-away
+				// longer than stallMs looks like a stall and reloads the wall, dropping any commute that
+				// arrived while away (boot re-seeds past it). On return to the foreground, rebase the
+				// baseline so the first resumed frame isn't counted as overdue.
+				const hidden = () => typeof document !== 'undefined' && document.hidden;
+				onVisibility = () => {
+					if (!hidden()) lastFrameWall = performance.now();
+				};
+				if (typeof document !== 'undefined')
+					document.addEventListener('visibilitychange', onVisibility);
 				watch = setInterval(() => {
 					if (!running || stalled) return;
+					if (hidden()) {
+						lastFrameWall = performance.now(); // paused by the browser, not stalled
+						return;
+					}
 					if (performance.now() - lastFrameWall > stallMs) {
 						stalled = true; // fire once; onStall typically reloads the page
 						opts.onStall?.();
@@ -60,6 +76,8 @@ export function createClock(onFrame: (t: number, dt: number) => void, opts: Cloc
 			running = false;
 			if (raf) cancelAnimationFrame(raf);
 			if (watch) clearInterval(watch);
+			if (onVisibility && typeof document !== 'undefined')
+				document.removeEventListener('visibilitychange', onVisibility);
 		}
 	};
 }

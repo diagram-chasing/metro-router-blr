@@ -23,7 +23,7 @@
 	// Bumped to cancel any in-flight animation when a new one starts or on reset.
 	let animationToken = 0;
 
-	const BENGALURU_CENTER = { lng: 77.5946, lat: 12.9716, zoom: 11 };
+	const BENGALURU_CENTER = { lng: 77.5946, lat: 12.9716, zoom: 12.4 };
 
 	// Toner-inspired b&w base layer over OpenFreeMap vector tiles (OpenMapTiles schema).
 	// Black water, hairline-to-thin black roads, white parks. No labels — the metro
@@ -106,6 +106,53 @@
 					'line-dasharray': [3, 2],
 					'line-width': 0.7,
 					'line-opacity': 0.05
+				}
+			},
+			// Place labels from the local 'place' tiles (same source-layer the homepage map
+			// uses). Font must match a self-hosted stack in static/fonts exactly — IBM Plex
+			// Mono Medium — or labels render blank against PUBLIC_GLYPHS_URL=/fonts. Coloured
+			// dark-on-white for the toner base. Neighbourhood tier intentionally has no
+			// minzoom so the names show at the default zoom.
+			{
+				id: 'place-minor',
+				type: 'symbol',
+				source: 'openmaptiles',
+				'source-layer': 'place',
+				filter: ['in', 'class', 'suburb', 'neighbourhood', 'quarter', 'village'],
+				layout: {
+					'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name']],
+					'text-font': ['IBM Plex Mono Medium'],
+					'text-size': ['interpolate', ['linear'], ['zoom'], 10, 10, 14, 14],
+					'text-transform': 'uppercase',
+					'text-letter-spacing': 0.06,
+					'text-max-width': 7
+				},
+				paint: {
+					'text-color': '#3a3a32',
+					'text-halo-color': '#ffffff',
+					'text-halo-width': 1.6,
+					'text-halo-blur': 0.4
+				}
+			},
+			{
+				id: 'place-major',
+				type: 'symbol',
+				source: 'openmaptiles',
+				'source-layer': 'place',
+				filter: ['in', 'class', 'city', 'town'],
+				layout: {
+					'text-field': ['coalesce', ['get', 'name:latin'], ['get', 'name']],
+					'text-font': ['IBM Plex Mono Medium'],
+					'text-size': ['interpolate', ['linear'], ['zoom'], 9, 13, 14, 19],
+					'text-transform': 'uppercase',
+					'text-letter-spacing': 0.06,
+					'text-max-width': 7
+				},
+				paint: {
+					'text-color': '#111111',
+					'text-halo-color': '#ffffff',
+					'text-halo-width': 1.8,
+					'text-halo-blur': 0.4
 				}
 			}
 		]
@@ -279,15 +326,23 @@
 			style: TONER_STYLE,
 			center: [BENGALURU_CENTER.lng, BENGALURU_CENTER.lat],
 			zoom: BENGALURU_CENTER.zoom,
-			dragPan: false,
+			dragPan: true,
 			dragRotate: false,
-			scrollZoom: false,
-			doubleClickZoom: false,
-			touchZoomRotate: false,
+			scrollZoom: true,
+			doubleClickZoom: true,
+			touchZoomRotate: true,
 			touchPitch: false,
 			keyboard: false,
 			boxZoom: false
 		});
+
+		// Pinch-zoom yes, twist-to-rotate no — keep the map north-up.
+		map.touchZoomRotate.disableRotation();
+
+		map.addControl(
+			new maplibre.NavigationControl({ showCompass: false, showZoom: true, visualizePitch: false }),
+			'bottom-left'
+		);
 
 		map.on('click', (e) => {
 			dispatch('pick', { lng: e.lngLat.lng, lat: e.lngLat.lat });

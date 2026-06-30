@@ -5,6 +5,7 @@
 	import OnScreenKeyboard from '$lib/exhibit/OnScreenKeyboard.svelte';
 	import QuestionFrame from '$lib/exhibit/QuestionFrame.svelte';
 	import TactileButton from '$lib/exhibit/TactileButton.svelte';
+	import XpTransferDialog from '$lib/exhibit/XpTransferDialog.svelte';
 	import XpWindow from '$lib/exhibit/XpWindow.svelte';
 	import {
 		COPY,
@@ -48,10 +49,15 @@
 		step = step === 1 ? -1 : step - 1;
 	}
 
+	// Min time the XP "sending to printer" dialog stays up, regardless of how
+	// fast the request resolves.
+	const PRINT_ANIM_MS = 5000;
+
 	async function submit() {
 		if (submitting) return;
 		submitting = true;
 		error = null;
+		const hold = new Promise((r) => setTimeout(r, PRINT_ANIM_MS));
 		try {
 			const res = await fetch('/api/receipt', {
 				method: 'POST',
@@ -60,6 +66,7 @@
 			});
 			if (!res.ok) throw new Error(`server returned ${res.status}`);
 			const { id } = (await res.json()) as { id: string };
+			await hold;
 			await goto(`/receipt?id=${encodeURIComponent(id)}`);
 		} catch (e) {
 			submitting = false;
@@ -196,3 +203,5 @@
 		</QuestionFrame>
 	{/if}
 </XpWindow>
+
+<XpTransferDialog open={submitting} durationMs={PRINT_ANIM_MS} />

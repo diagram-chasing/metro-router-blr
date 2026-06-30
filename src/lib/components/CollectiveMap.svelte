@@ -168,11 +168,23 @@
 	let freezeMachine = $state(false);
 	let armHold = $state(false);
 	let fireDemoRef: (() => void) | null = null;
+	// Operator shortcut: re-queue the last submitted commute so a missed reveal can be replayed.
+	let replayLastRef: (() => void) | null = null;
 
 	// Persist on any change (deep-reads via stringify so every nested flag is tracked).
 	$effect(() => {
 		if (!DEV || typeof localStorage === 'undefined') return;
 		localStorage.setItem(DBG_KEY, JSON.stringify({ dbg, pin, dbgHelp, dbgWhich, freezeDrift }));
+	});
+
+	// Always-on operator shortcut (not dev-gated): R re-spotlights the last submitted commute, so an
+	// attendant can replay a reveal that was missed. No-op until a real route has come in.
+	onMount(() => {
+		const onKey = (e: KeyboardEvent) => {
+			if (e.code === 'KeyR' && !e.metaKey && !e.ctrlKey && !e.altKey) replayLastRef?.();
+		};
+		window.addEventListener('keydown', onKey);
+		return () => window.removeEventListener('keydown', onKey);
 	});
 
 	onMount(() => {
@@ -322,6 +334,8 @@
 			emissionScale: number;
 		};
 		const queue: Pending[] = [];
+		// Most recent REAL submission (demos excluded) — the operator "replay" (R) re-queues this.
+		let lastReal: Pending | null = null;
 
 		// Compress the two message phases when routes are waiting, so nobody waits too long for
 		// their spotlight; clamped to a 6s floor (below) so each message stays legible at distance.
@@ -438,7 +452,7 @@
 						// field bump reflect the mode actually chosen.
 						const pm = routePM25(l.segments);
 						const emissionScale = PM25_MAX_G_PER_PKM > 0 ? pm.gPerKm / PM25_MAX_G_PER_PKM : 0;
-						queue.push({
+						const pending: Pending = {
 							route: r,
 							isDemo: false,
 							label,
@@ -448,7 +462,9 @@
 							pm25PerPkm: pm.gPerKm,
 							tripsPerYear: l.tripsPerYear ?? 288,
 							emissionScale
-						}); // every route, not just the newest
+						};
+						queue.push(pending); // every route, not just the newest
+						lastReal = pending; // remember it for the operator replay shortcut
 					}
 					queued = queue.length;
 				} catch (err) {
@@ -1094,6 +1110,15 @@
 				queued = queue.length;
 			};
 			fireDemoRef = fireDemo; // bridge for the dev "summon highlight" (g) shortcut
+
+			// Re-queue the last submitted commute for another spotlight (operator R shortcut). The
+			// payload is read-only during a reveal, so re-pushing the same object is safe; it just takes
+			// its turn at the back of the queue and animates again like a fresh arrival.
+			replayLastRef = () => {
+				if (!lastReal) return;
+				queue.push(lastReal);
+				queued = queue.length;
+			};
 
 			// Boot resilience: a wall powers on before its local server is necessarily ready.
 			// Retry the critical loads with backoff until the field is live. The basemap is
