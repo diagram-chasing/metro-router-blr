@@ -8,10 +8,10 @@
 import type { RequestHandler } from '@sveltejs/kit';
 
 import type { Answers, Mode } from '$lib/exhibit/types';
-import { journeyBaseMode, journeyEmissions, legKindToMode, lengthKm } from '$lib/emissions';
+import { journeyBaseMode, legKindToMode, lengthKm } from '$lib/emissions';
 import { computeReceipt, distanceBand } from '$lib/receipt/receipt';
 import { lookupConnectivity } from '$lib/server/connectivity';
-import { allTripStats, insertLine, allPerKmStats } from '$lib/server/db';
+import { allTripStats, allPerKmStats } from '$lib/server/db';
 import { reverseGeocodeArea } from '$lib/server/reverseGeocode';
 import { getReceipt, putReceipt, type GeoSnapshot } from '$lib/server/receiptStore';
 import { swapSuggestion } from '$lib/utils/otp';
@@ -70,26 +70,10 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
 
 	putReceipt({ id, createdAt, answers: a, computed, geo });
 
-	// Add the visitor's chosen JOURNEY to the accumulation map, in its grey bucket.
-	// Emissions come from the picked journey (not the drawn geometry, which is just the
-	// canonical road path), so the wall map matches the receipt headline. The drawn
-	// segments still supply the line's shape.
-	if (a.mode && a.route?.segments?.length) {
-		const e = journeyEmissions(a.mode, computed.trip.distanceKm);
-		insertLine({
-			submissionId: id,
-			createdAt,
-			chosenMode: journeyBaseMode(a.mode),
-			distanceKm: computed.trip.distanceKm,
-			co2PerTripKg: e.kgPerTrip,
-			co2PerKmG: e.gPerKm,
-			greyBucket: e.bucket,
-			tripsPerYear: computed.tripsPerYear,
-			corridorPeoplePerDay: computed.corridor.peoplePerDay,
-			segments: a.route.segments
-		});
-	}
-
+	// Note: the visitor's route is NOT added to the accumulation (wall) map here.
+	// Adding to the map is now an explicit visitor action on the receipt screen
+	// (POST /api/lines) so the receipt can be seen/printed without polluting the
+	// wall, and so the "watch your commute turn to soot" moment is deliberate.
 	return json({ id }, 201);
 };
 

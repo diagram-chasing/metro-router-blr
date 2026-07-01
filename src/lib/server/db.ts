@@ -188,6 +188,16 @@ export function insertLine(line: LineInput): number {
 	return Number(info.lastInsertRowid);
 }
 
+// Guards the "add myself to the map" trigger against double-taps / reloads: the
+// route is now inserted on an explicit visitor action (see POST /api/lines), not
+// automatically at receipt time, so the same submission could arrive twice.
+export function hasLineForSubmission(submissionId: string): boolean {
+	const row = getDb()
+		.prepare('SELECT 1 FROM lines WHERE submission_id = ? LIMIT 1')
+		.get(submissionId);
+	return row !== undefined;
+}
+
 type RawLine = {
 	id: number;
 	created_at: number;

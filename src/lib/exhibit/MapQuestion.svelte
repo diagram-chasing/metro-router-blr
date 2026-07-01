@@ -129,85 +129,100 @@
 		<Map {originPick} {destinationPick} segments={mapSegments} on:pick={handlePick} />
 	</div>
 
-	<!-- ── HUD: ○━━○ schematic + distance readout + clear, XP group box ── -->
-	<div
-		class="font-xp absolute bottom-5 left-1/2 flex min-w-[480px] max-w-[92%] -translate-x-1/2 items-center gap-6 rounded-[4px] border-2 border-[#aca899] bg-[#ece9d8] px-7 py-4 shadow-[3px_3px_10px_rgba(0,0,0,0.45)] transition-opacity duration-200 {isLoading
-			? 'opacity-60'
-			: ''}"
-	>
-		<div class="flex shrink-0 items-center" aria-hidden="true">
-			<span
-				class="h-[14px] w-[14px] rounded-full border-2 transition-colors duration-200 {originPick
-					? 'border-black bg-black'
-					: 'border-[#9a9a8c] bg-transparent'}"
-			></span>
-			<span
-				class="h-[3px] w-9 transition-colors duration-200 {originPick && destinationPick
-					? 'bg-black'
-					: 'bg-[#9a9a8c]'}"
-			></span>
-			<span
-				class="h-[14px] w-[14px] rounded-full border-2 transition-colors duration-200 {destinationPick
-					? 'border-black bg-black'
-					: 'border-[#9a9a8c] bg-transparent'}"
-			></span>
-		</div>
-
-		<div class="flex min-w-0 flex-1 flex-col items-start gap-1">
-			<div class="flex items-baseline gap-2 leading-none [font-variant-numeric:tabular-nums]">
-				{#if answers.distanceKm}
-					<span class="text-[34px] font-bold text-black">{answers.distanceKm.toFixed(2)}</span>
-					<span class="text-[16px] text-[#6a6a5e]">km</span>
-				{:else}
-					<span class="text-[34px] font-bold text-[#b8b4a4]">--.--</span>
-					<span class="text-[16px] text-[#b8b4a4]">km</span>
-				{/if}
-			</div>
-			<span
-				class="text-[13px] font-semibold uppercase leading-none tracking-[0.12em] text-[#5a564a]"
-			>
-				{statusLabel}
+	<!-- Slim Luna title bar, reused by the HUD + the two overlays below. -->
+	{#snippet titlebar(text: string)}
+		<div
+			class="flex items-center border-b border-[#003ad6] bg-gradient-to-b from-[#0e6fff] via-[#1f60e5] to-[#0a53d6] px-2.5 py-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.45)]"
+		>
+			<img src="/xp/readme.ico" alt="" class="mr-1.5 h-4 w-4 shrink-0 drop-shadow-[0_1px_1px_rgba(0,0,0,0.4)]" />
+			<span class="truncate text-[13px] font-bold text-white drop-shadow-[1px_1px_1px_rgba(0,0,0,0.55)]">
+				{text}
 			</span>
 		</div>
+	{/snippet}
 
-		{#if originPick || destinationPick}
-			<button
-				type="button"
-				onclick={clear}
-				disabled={isLoading}
-				aria-label="Clear pins"
-				title="Clear pins"
-				class="flex h-12 shrink-0 items-center gap-2.5 rounded-[3px] border border-[#003c74] bg-[#f4f4f4] px-5 text-[15px] font-bold uppercase tracking-[0.06em] text-[#003366] shadow-[inset_0_1px_0_rgba(255,255,255,0.7)] hover:bg-[#e9e9e9] active:bg-[#d4d4d4] disabled:opacity-40"
+	<!-- ── HUD: XP window — ○━━○ schematic + sunken distance readout + clear ── -->
+	<div
+		class="font-xp absolute bottom-5 left-1/2 min-w-[440px] max-w-[92%] -translate-x-1/2 overflow-hidden rounded-[4px] border-[2px] border-[#0054e3] bg-[#ece9d8] shadow-[3px_3px_12px_rgba(0,0,0,0.4)] transition-opacity duration-200 {isLoading
+			? 'opacity-70'
+			: ''}"
+	>
+		{@render titlebar(statusLabel)}
+
+		<div class="flex items-center gap-5 px-5 py-3.5">
+			<div class="flex shrink-0 items-center" aria-hidden="true">
+				<span
+					class="h-[14px] w-[14px] rounded-full border-2 transition-colors duration-200 {originPick
+						? 'border-black bg-black'
+						: 'border-[#9a9a8c] bg-transparent'}"
+				></span>
+				<span
+					class="h-[3px] w-9 transition-colors duration-200 {originPick && destinationPick
+						? 'bg-black'
+						: 'bg-[#9a9a8c]'}"
+				></span>
+				<span
+					class="h-[14px] w-[14px] rounded-full border-2 transition-colors duration-200 {destinationPick
+						? 'border-black bg-black'
+						: 'border-[#9a9a8c] bg-transparent'}"
+				></span>
+			</div>
+
+			<div
+				class="flex min-w-0 flex-1 items-baseline justify-center gap-2 rounded-[3px] border border-[#7f9db9] bg-white px-4 py-2 leading-none shadow-[inset_1px_1px_2px_rgba(0,0,0,0.22)] [font-variant-numeric:tabular-nums]"
 			>
-				<svg width="16" height="16" viewBox="0 0 14 14" aria-hidden="true">
-					<path
-						d="M3 3 L11 11 M11 3 L3 11"
-						stroke="currentColor"
-						stroke-width="1.8"
-						stroke-linecap="round"
-					/>
-				</svg>
-				Clear pins
-			</button>
-		{/if}
+				{#if answers.distanceKm}
+					<span class="text-[32px] font-bold text-black">{answers.distanceKm.toFixed(2)}</span>
+					<span class="text-[15px] text-[#6a6a5e]">km</span>
+				{:else}
+					<span class="text-[32px] font-bold text-[#b8b4a4]">--.--</span>
+					<span class="text-[15px] text-[#b8b4a4]">km</span>
+				{/if}
+			</div>
+
+			{#if originPick || destinationPick}
+				<button
+					type="button"
+					onclick={clear}
+					disabled={isLoading}
+					aria-label="Clear pins"
+					title="Clear pins"
+					class="flex h-11 shrink-0 items-center gap-2 rounded-[3px] border border-[#003c74] bg-gradient-to-b from-white via-[#ecebe5] to-[#d8d0c4] px-4 text-[14px] font-bold text-[#003366] active:bg-gradient-to-b active:from-[#cdcac3] active:to-[#f2f2f1] disabled:opacity-40"
+				>
+					<svg width="15" height="15" viewBox="0 0 14 14" aria-hidden="true">
+						<path
+							d="M3 3 L11 11 M11 3 L3 11"
+							stroke="currentColor"
+							stroke-width="1.8"
+							stroke-linecap="round"
+						/>
+					</svg>
+					Clear
+				</button>
+			{/if}
+		</div>
 	</div>
 
 	{#if isLoading}
-		<div class="absolute inset-0 grid place-items-center bg-black/10">
+		<div class="absolute inset-0 grid place-items-center bg-black/25">
 			<div
-				class="font-xp flex w-[min(460px,80%)] flex-col gap-4 rounded-[4px] border-2 border-[#aca899] bg-[#ece9d8] px-8 py-7 shadow-[4px_4px_16px_rgba(0,0,0,0.5)]"
+				class="font-xp w-[min(460px,80%)] overflow-hidden rounded-[4px] border-[2px] border-[#0054e3] bg-[#ece9d8] shadow-[4px_4px_16px_rgba(0,0,0,0.5)]"
 			>
-				<span class="text-center text-[20px] font-bold text-[#003366]">{COPY.mapCrunching}</span>
-				<XpProgress indeterminate />
+				{@render titlebar('Please wait')}
+				<div class="flex flex-col gap-4 px-7 py-6">
+					<span class="text-center text-[18px] font-bold text-[#003366]">{COPY.mapCrunching}</span>
+					<XpProgress indeterminate />
+				</div>
 			</div>
 		</div>
 	{/if}
 
 	{#if lastError}
 		<div
-			class="font-xp absolute left-1/2 top-5 max-w-[320px] -translate-x-1/2 rounded-[3px] border border-[#aca899] bg-[#ece9d8] px-4 py-3 text-center text-[13px] font-semibold text-[#b52012] shadow-[2px_2px_6px_rgba(0,0,0,0.4)]"
+			class="font-xp absolute left-1/2 top-5 w-[min(340px,80%)] -translate-x-1/2 overflow-hidden rounded-[4px] border-[2px] border-[#0054e3] bg-[#ece9d8] shadow-[3px_3px_10px_rgba(0,0,0,0.45)]"
 		>
-			{lastError}
+			{@render titlebar('Problem')}
+			<div class="px-4 py-3 text-[13px] font-bold text-[#b52012]">{lastError}</div>
 		</div>
 	{/if}
 </div>

@@ -26,6 +26,9 @@ importers:
       '@fontsource/ibm-plex-sans':
         specifier: ^5.2.8
         version: 5.2.8
+      '@lucide/svelte':
+        specifier: ^1.23.0
+        version: 1.23.0(svelte@5.19.8)
       '@luma.gl/core':
         specifier: ^9.1
         version: 9.3.5
@@ -672,6 +675,11 @@ packages:
     resolution: {integrity: sha512-HH/JLulJJVyqmbQYp4e/9MPjaTnUFnWfhgza8sMGIBYZ/YuZXOc6Ad2vvmyFQHvNbVr+NLrRZODASEjNZQ5rfQ==}
     peerDependencies:
       '@loaders.gl/core': ~4.4.0
+
+  '@lucide/svelte@1.23.0':
+    resolution: {integrity: sha512-3LQbKXx9vId6Nx4E2Nu2qwgJfdmr5+CVeVJbxe5cy+HcnCRd9QVVtZXqvgBYAV1OJrPmQAf9/3gJWLCpASC/Ng==}
+    peerDependencies:
+      svelte: ^5
 
   '@luma.gl/core@9.3.5':
     resolution: {integrity: sha512-wWQNH9eZiaW4fYV8s30al8Ofe5S6UCyqdXC4qwIk0lAoz00jicWDVFW/EOU1Mu1lVUkPQaT5yfUgcy1gOSMprQ==}
@@ -4242,6 +4250,10 @@ snapshots:
       md5: 2.3.0
     transitivePeerDependencies:
       - '@75lb/nature'
+
+  '@lucide/svelte@1.23.0(svelte@5.19.8)':
+    dependencies:
+      svelte: 5.19.8
 
   '@luma.gl/core@9.3.5':
     dependencies:

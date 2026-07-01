@@ -51,7 +51,7 @@
 			{/if}
 		</div>
 
-		<span class="shrink-0 text-[13px] font-semibold text-[#5a564a]">
+		<span class="shrink-0 text-[13px] font-bold text-[#5a564a]">
 			Step {step} of {total}
 		</span>
 

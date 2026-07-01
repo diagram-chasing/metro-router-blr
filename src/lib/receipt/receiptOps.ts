@@ -44,7 +44,14 @@ export type PrintOp =
 	}
 	| { t: 'rule' }
 	| { t: 'gap'; n?: number }
-	| { t: 'img'; id: 'map' | 'stamp' | 'car' | 'slope' }
+	| {
+		t: 'img';
+		id: 'map' | 'stamp' | 'car' | 'slope' | 'audienceHead' | 'corridorHead' | 'parkingHead';
+		// section-heading images (audience/corridor/parking) carry their number + title so
+		// the icon can sit beside the wrapped heading text in a single captured node.
+		num?: string;
+		label?: string;
+	}
 	| { t: 'qr'; data: string }
 	| { t: 'cut' };
 
@@ -66,6 +73,10 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	let sec = 0;
 	const eyebrowOp = (label: string, stat = '') =>
 		T(eyebrow(String(++sec).padStart(2, '0'), label, stat), { bold: true });
+	// Same numbering, but the heading + its pictograph are captured as one image so the
+	// icon can sit beside the (wrapped) title.
+	const headingImg = (id: 'audienceHead' | 'corridorHead' | 'parkingHead', label: string) =>
+		ops.push({ t: 'img', id, num: String(++sec).padStart(2, '0'), label });
 
 	// masthead
 	T(ruleStr('═'));
@@ -95,7 +106,7 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	gap();
 
 	// 02 your mode
-	eyebrowOp("Comparing you to today's audience");
+	headingImg('audienceHead', "Comparing you to today's audience");
 	gap();
 	deck(view.modeRank.copy);
 
@@ -119,7 +130,7 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	// 03 your corridor — the headcount, the public-transport split and the emissions
 	// line come from nearby junction counts (traffic.json); the g/km bars below stay
 	// an illustrative mode model.
-	eyebrowOp('You are part of a larger crowd...');
+	headingImg('corridorHead', 'You are part of a larger crowd...');
 	gap();
 	const peopleApprox = Math.round(view.corridor.peoplePerDay / 1000) * 1000;
 	const estSuffix = view.corridor.isFallback ? ' (est)' : '';
@@ -179,7 +190,7 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 
 	// by the way — parking as real-estate: a to-scale footprint isotype (one ■ per m²
 	// of street the car sits on) + its land value, then the city's live car odometer.
-	eyebrowOp('A car costs the city even switched off.');
+	headingImg('parkingHead', 'A car costs the city even switched off.');
 	gap();
 	deck(view.parking.copy);
 	gap();

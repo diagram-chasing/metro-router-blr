@@ -27,13 +27,13 @@
 
 	{#if locked}
 		<div
-			class="rounded-[3px] border border-dashed border-[#b8b4a4] bg-white/40 px-4 py-5 text-center text-[12px] font-semibold uppercase tracking-[0.06em] text-[#7a7666]"
+			class="rounded-[3px] border border-dashed border-[#b8b4a4] bg-white/40 px-4 py-5 text-center text-[12px] font-bold uppercase tracking-[0.06em] text-[#7a7666]"
 		>
 			{COPY.routeDropPins}
 		</div>
 	{:else if candidates.length === 0}
 		<div
-			class="rounded-[3px] border border-dashed border-[#b8b4a4] bg-white/40 px-4 py-5 text-center text-[12px] font-semibold uppercase tracking-[0.06em] text-[#7a7666]"
+			class="rounded-[3px] border border-dashed border-[#b8b4a4] bg-white/40 px-4 py-5 text-center text-[12px] font-bold uppercase tracking-[0.06em] text-[#7a7666]"
 		>
 			{COPY.routeNoOptions}
 		</div>

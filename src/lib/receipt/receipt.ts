@@ -465,7 +465,7 @@ const CORRIDOR_CLEAN = [
 	'{youG} g/km, your {youLabel}. the car beside you spends {carG}.',
 	'the {youLabel} does it on {youG} g/km. the cars manage {carG}.',
 	'your {youLabel}: {youG} g/km. the car next to it: {carG}.',
-	'{youG} g/km on your {youLabel}; the car alongside burns {carG} for the same road.'
+	'{youG} g/km on your {youLabel}; the car alongside burns {carG}.'
 ];
 
 const CORRIDOR_DIRTY = [
@@ -519,7 +519,7 @@ function psCopy(c: ComputedReceipt, areaLabel: string, id: string): string {
 function parkingCopy(c: ComputedReceipt): string {
 	return c.trip.mode === 'car'
 		? 'Parked, a car holds public street for free. a strangely good deal, when you think about it.'
-		: `Even parked, a car nearby keeps prime ${c.parking.areaLabel} street at no rent. good gig if you can get it.`;
+		: `When parked, a car nearby holds prime land in ${c.parking.areaLabel} for no rent. good gig if you can get it.`;
 }
 
 // ── Helpers ──
@@ -873,7 +873,7 @@ export function buildReceiptView(
 	const avoidedVsCarKg = Math.max(0, carAnnualKg - c.annualCommuteKg);
 	const showVsCar = modeClean && avoidedVsCarKg >= 2;
 	const vsCarFun = showVsCar
-		? `not driving it keeps ~${comma(avoidedVsCarKg)} kg out of the air, about ${funEquivBanked(avoidedVsCarKg, id)}.`
+		? `not driving it keeps ~${comma(avoidedVsCarKg)} kg out of the air, same as ${funEquivBanked(avoidedVsCarKg, id)}.`
 		: '';
 
 	// One tone decision, reused for the tail budget (≤1 beat carries a sign-off) and for the

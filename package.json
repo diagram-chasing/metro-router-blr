@@ -60,6 +60,7 @@
 		"@deck.gl/mapbox": "^9.1",
 		"@fontsource/ibm-plex-mono": "^5.2.7",
 		"@fontsource/ibm-plex-sans": "^5.2.8",
+		"@lucide/svelte": "^1.23.0",
 		"@luma.gl/core": "^9.1",
 		"@mapbox/polyline": "^1.2.1",
 		"better-sqlite3": "^12.10.0",

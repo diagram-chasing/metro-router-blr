@@ -80,7 +80,7 @@
 							<rect x="5" y="7" width="22" height="13" fill="#cfe6ff" />
 							<path d="M11 25h10l1.5 3H9.5z" fill="#9bb0c4" stroke="#5a6b7d" stroke-width="0.8" />
 						</svg>
-						<span class="text-[12px] font-semibold text-[#3a3a32]">This computer</span>
+						<span class="text-[12px] font-bold text-[#3a3a32]">This computer</span>
 					</div>
 
 					<div class="absolute left-1/2 top-2 h-9 w-[42%] -translate-x-1/2 overflow-hidden">
@@ -111,7 +111,7 @@
 							<path d="M10 22h12M10 24.5h12" stroke="#b8b4a4" stroke-width="0.9" />
 							<circle cx="24" cy="16" r="1.2" fill="#2e8b2e" />
 						</svg>
-						<span class="text-[12px] font-semibold text-[#3a3a32]">Receipt printer</span>
+						<span class="text-[12px] font-bold text-[#3a3a32]">Receipt printer</span>
 					</div>
 				</div>
 

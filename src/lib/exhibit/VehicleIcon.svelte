@@ -25,10 +25,14 @@
 	const sprites = $derived(SPRITES[mode] ?? []);
 </script>
 
-<span class="flex h-full w-full items-center justify-center gap-[0.4em]">
+<!-- 4-way zero-blur black shadows trace the sprite alpha as a crisp XP outline;
+     the last soft offset shadow is the XP down-right depth drop. -->
+<span
+	class="flex h-full w-full items-center justify-center gap-[0.4em] [filter:drop-shadow(1px_0_0_#000)_drop-shadow(-1px_0_0_#000)_drop-shadow(0_1px_0_#000)_drop-shadow(0_-1px_0_#000)_drop-shadow(1px_1px_1px_rgba(0,0,0,0.45))]"
+>
 	{#each sprites as src, i (i)}
 		{#if i > 0}
-			<span class="text-[0.85em] font-black leading-none opacity-60" aria-hidden="true">+</span>
+			<span class="text-[0.85em] font-bold leading-none opacity-60" aria-hidden="true">+</span>
 		{/if}
 		<img {src} alt="" class="h-full max-h-[3vh] w-auto min-w-0 shrink object-contain" />
 	{/each}

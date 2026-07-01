@@ -116,7 +116,7 @@
 <XpWindow title="The Pollution That Wasn't" icon="/xp/readme.ico">
 	{#if step === -1}
 		<div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-7 text-center">
-			<p class="text-balance text-center text-[clamp(22px,2.8vw,40px)] font-black text-[#003399]">
+			<p class="text-balance text-center text-[clamp(22px,2.8vw,40px)] font-bold text-[#003399]">
 				{COPY.namePrompt}
 			</p>
 
@@ -133,7 +133,7 @@
 					readonly
 					placeholder={COPY.namePlaceholder}
 					aria-label={COPY.namePrompt}
-					class="font-xp !h-auto min-w-0 flex-1 !rounded-[3px] border border-[#7f9db9] bg-white !px-7 !py-5 text-center text-[clamp(28px,4vw,52px)] font-semibold !leading-none tracking-tight text-black caret-transparent shadow-[inset_1px_1px_3px_rgba(0,0,0,0.22)] outline-none placeholder:text-[#9a9a9a]"
+					class="font-xp !h-auto min-w-0 flex-1 !rounded-[3px] border border-[#7f9db9] bg-white !px-7 !py-5 text-center text-[clamp(28px,4vw,52px)] font-normal !leading-none tracking-tight text-black caret-transparent shadow-[inset_1px_1px_3px_rgba(0,0,0,0.22)] outline-none placeholder:text-[#9a9a9a]"
 				/>
 				<div class="flex w-[clamp(200px,24vw,300px)] shrink-0">
 					<TactileButton label={COPY.start} size="xl" disabled={!canStart} onclick={start} />
@@ -200,7 +200,7 @@
 				onSelect={(v) => setAnswer('funAnswer', v)}
 			/>
 			{#if error}
-				<p class="mt-3 text-[13px] font-semibold text-[#b52012]">
+				<p class="mt-3 text-[13px] font-bold text-[#b52012]">
 					{COPY.submitFailed}
 					{error}
 				</p>

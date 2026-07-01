@@ -7,6 +7,7 @@
 	import { buildReceiptOps, qrUrl } from './receiptOps';
 	import RouteMap from './viz/RouteMap.svelte';
 	import Stamp from './viz/Stamp.svelte';
+	import SectionHeading from './viz/SectionHeading.svelte';
 	import QR from './viz/QR.svelte';
 	import carPng from '$lib/assets/car.png';
 
@@ -14,6 +15,27 @@
 
 	const ops = $derived(buildReceiptOps(view));
 	const originX = (a?: string) => (a === 'center' ? 'center' : a === 'right' ? 'right' : 'left');
+
+	// Isotype repeat counts, and which unit is "you".
+	const AUDIENCE = 5;
+	const CORRIDOR = 4;
+	// Audience: the visitor's rank (clean→dirty) among all per-km values so far, bucketed
+	// across the row. No histogram → box the middle head.
+	const audienceYou = $derived.by(() => {
+		const h = view.modeRank.histogram;
+		if (!h) return Math.floor(AUDIENCE / 2);
+		const below = h.values.filter((v) => v < h.mine).length;
+		const pct = h.values.length ? below / h.values.length : 0.5;
+		return Math.min(AUDIENCE - 1, Math.floor(pct * AUDIENCE));
+	});
+	// Corridor: box the car for the visitor's mode, if it maps to a traffic row (walkers
+	// have no corridor row → no box).
+	const corridorYou = $derived.by(() => {
+		const rows = view.corridor.rows;
+		const idx = rows.findIndex((r) => r.isYou);
+		if (idx < 0) return -1;
+		return rows.length > 1 ? Math.round((idx / (rows.length - 1)) * (CORRIDOR - 1)) : 0;
+	});
 </script>
 
 <div class="paper" bind:this={node}>
@@ -47,6 +69,24 @@
 					/>
 				{:else if op.id === 'car'}
 					<img class="car" src={carPng} alt="" width="120" />
+				{:else if op.id === 'audienceHead'}
+					<SectionHeading
+						kind="audience"
+						num={op.num ?? ''}
+						label={op.label ?? ''}
+						count={AUDIENCE}
+						youIndex={audienceYou}
+					/>
+				{:else if op.id === 'corridorHead'}
+					<SectionHeading
+						kind="corridor"
+						num={op.num ?? ''}
+						label={op.label ?? ''}
+						count={CORRIDOR}
+						youIndex={corridorYou}
+					/>
+				{:else if op.id === 'parkingHead'}
+					<SectionHeading kind="parking" num={op.num ?? ''} label={op.label ?? ''} />
 				{:else}
 					<Stamp
 						n={view.archetype.figure.n}
