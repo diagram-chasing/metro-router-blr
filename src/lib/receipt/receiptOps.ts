@@ -94,7 +94,7 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 
 	if (view.modeRank.histogram) {
 		gap();
-		T('DIRTINESS PER KM (g C02/km)', { bold: true });
+		T('DIRTINESS PER KM (g CO2/km)', { bold: true });
 		gap();
 		asciiSpread(view.modeRank.histogram.values, view.modeRank.histogram.mine).forEach((l) => T(l));
 	}
@@ -140,35 +140,30 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	gap();
 	// T(panelRow('CO2', `${inr(view.oneTrip.co2G)} g`));
 	// T(panelRule(`x ${inr(view.item.tripsPerYear)} trips / year`));
-	if (view.year.isClean) {
-		const heroText = `${inr(view.year.co2Kg)} KG CO2`;
-		const w: 1 | 2 = heroText.length > PRINT_COLS / 2 ? 1 : 2;
-		T(' '.repeat(PRINT_COLS), { rev: true });
-		T(heroSrc(heroText, w === 2 ? PRINT_COLS / 2 : PRINT_COLS), { rev: true, w, h: 3 });
-		T(' '.repeat(PRINT_COLS), { rev: true });
-		gap();
+	const heroText = `${inr(view.year.co2Kg)} KG CO2`;
+	const heroW: 1 | 2 = heroText.length > PRINT_COLS / 2 ? 1 : 2;
+	T(' '.repeat(PRINT_COLS), { rev: true });
+	T(heroSrc(heroText, heroW === 2 ? PRINT_COLS / 2 : PRINT_COLS), { rev: true, w: heroW, h: 3 });
+	T(' '.repeat(PRINT_COLS), { rev: true });
+	gap();
+
+	if (view.year.modeClean) {
+		// A clean habit: the small footprint, then the fun WIN (what driving would cost).
 		if (view.year.copy) deck(view.year.copy);
+		if (view.year.vsCarFun) {
+			gap();
+			deck(view.year.vsCarFun);
+		}
 	} else {
-		const heroText = `${inr(view.year.co2Kg)} KG CO2`;
-		const w: 1 | 2 = heroText.length > PRINT_COLS / 2 ? 1 : 2;
-		T(' '.repeat(PRINT_COLS), { rev: true });
-		T(heroSrc(heroText, w === 2 ? PRINT_COLS / 2 : PRINT_COLS), { rev: true, w, h: 3 });
-		T(' '.repeat(PRINT_COLS), { rev: true });
+		// A dirty habit: the footprint in a currency that lands, then the trees. Shown
+		// even when the number is small, since the fun count still reads big.
+		deck('What does that mean? Think of it as');
 		gap();
-	}
-
-
-	if (!view.units.isClean) {
-		deck("What does that mean? You can think of it as");
-
-		gap();
-
-		const cyl = view.units.cylinders === 1 ? 'gas cylinder' : 'gas cylinders';
-		const tree = view.units.trees === 1 ? 'tree' : 'trees';
-
-		ind(`${view.units.cylinders}  ${cyl}, burned`);
-
-		ind(`${view.units.trees} ${tree}, a full year to undo it`);
+		deck(view.units.funLine + '.');
+		if (view.units.trees >= 1) {
+			const tree = view.units.trees === 1 ? 'tree' : 'trees';
+			deck(`or ${view.units.trees} ${tree} working a full year to soak it back up.`);
+		}
 	}
 	gap();
 	T(ruleStr('-'));
@@ -193,6 +188,13 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 				? `the gap: ${inr(c.savedKg)} kg/yr`
 				: `+${inr(c.savedKg)} kg/yr the way you drew it`
 		);
+		if (c.funBanked) {
+			gap();
+			deck(`that gap is ${c.funBanked}.`);
+		}
+		gap();
+		T(ruleStr('-'));
+		gap();
 	} else if (view.swap.show) {
 		eyebrowOp('Cleaner ways from here');
 		gap();
@@ -209,6 +211,10 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 		gap();
 		const trees = view.swap.treesSaved === 1 ? 'tree' : 'trees';
 		deck(`you save ${inr(view.swap.savedKg)} kg/yr  ~${view.swap.treesSaved} ${trees}`);
+		if (view.swap.funBanked) {
+			gap();
+			deck(`that is ${view.swap.funBanked}.`);
+		}
 		// the profile seal (Chladni resonance)
 		// ops.push({ t: 'img', id: 'stamp' });
 		// T(view.archetype.name.toUpperCase(), { align: 'center', bold: true });

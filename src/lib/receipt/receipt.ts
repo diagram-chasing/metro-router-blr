@@ -164,6 +164,8 @@ export type ReceiptView = {
 		pickedKg: number;
 		savedKg: number;
 		copy: string;
+		// Saving reframed as pleasure to blow it on; '' when the drawn route is dirtier.
+		funBanked: string;
 	};
 	modeRank: {
 		copy: string;
@@ -188,8 +190,20 @@ export type ReceiptView = {
 		modes: ConnectivityMode[];
 	} | null;
 	oneTrip: { co2G: number };
-	year: { co2Kg: number; kgPerBlock: number; copy: string; isClean: boolean };
-	units: { cylinders: number; trees: number; copy: string; isClean: boolean };
+	// modeClean: the habit itself is a clean mode (bus/metro/walk), regardless of how
+	// the annual figure lands. vsCarFun: carbon dodged by not driving the same trip, as
+	// a dumb-pleasure count ('' when the habit isn't cleaner than a car).
+	year: {
+		co2Kg: number;
+		kgPerBlock: number;
+		copy: string;
+		isClean: boolean;
+		modeClean: boolean;
+		vsCarKg: number;
+		vsCarFun: string;
+	};
+	// funLine: the annual figure as a dumb-pleasure count (the "spent" framing).
+	units: { cylinders: number; trees: number; copy: string; isClean: boolean; funLine: string };
 	swap: {
 		show: boolean;
 		nowKg: number;
@@ -197,6 +211,8 @@ export type ReceiptView = {
 		savedKg: number;
 		treesSaved: number;
 		copy: string;
+		// The saving as pleasure you can now afford.
+		funBanked: string;
 		// Concrete greener options within walking distance of the start, one
 		// formatted line each ([] when no nearby-transit data is available).
 		ideas: string[];
@@ -390,9 +406,9 @@ function frictionNudge(funId: FunQuestionId | undefined, id: string): string {
 
 // ── "Cleaner than you" note ──
 const CLEANER_NOTE = [
-	'about {x} in 10 commuters so far come in cleaner than you.',
-	'roughly {x} of every 10 logged here travel cleaner. you are not among them.',
-	'{x} in 10 so far beat you on this.'
+	'about {x} in 10 commuters logged here come in cleaner. the maths, not a verdict.',
+	'roughly {x} of every 10 here travel lighter. this road does that to people.',
+	'{x} in 10 so far land cleaner. it is a crowded club, no shame in it.'
 ];
 
 // Edges read wrong with the "{x} in 10" frame: x=0 references an empty set, x=10 is clunky.
@@ -401,8 +417,8 @@ const CLEANER_NOTE_NONE = [
 	'so far, nobody here beats you on this. rare.'
 ];
 const CLEANER_NOTE_ALL = [
-	'just about everyone logged here so far comes in cleaner than you.',
-	'so far, near enough everyone here beats you on this.'
+	'just about everyone logged here so far comes in a touch cleaner. heavy day for this road.',
+	'so far, near enough everyone here travels lighter. dense traffic, literally.'
 ];
 
 function cleanerNoteCopy(tenths: number, id: string): string {
@@ -495,20 +511,18 @@ function subtitleFor(funId: FunQuestionId | undefined, funAnswer: string | undef
 }
 
 const VERDICTS_DIRTY = [
-	'{ord} dirtiest of the {tot} ways to cross town.',
-	'{ord} from the bottom. the bottom being clean.',
-	'{cleaner} of the {tot} options were cleaner. you passed on them.',
-	'dirtier per km than all but {dirtier} of the {tot}.',
-	'{ord} place out of {tot}. we count from the worst.',
-	'the {ord} heaviest per km on offer here.',
-	'of {tot} ways to do this, you found the {ord} worst.',
-	"{ord} of {tot}. i'd give partial credit but there isn't a column."
+	'{ord} dirtiest of the {tot} ways to cross town. someone had to be.',
+	'{cleaner} of the {tot} ways run cleaner. this one does not, and the city keeps turning.',
+	'dirtier per km than all but {dirtier} of the {tot}. blame the traffic, mostly.',
+	'the {ord} heaviest per km on offer here. an oddly specific ranking.',
+	'{ord} of {tot} on carbon per km. we had to measure something.',
+	"{ord} of {tot}. i'd hand out partial credit, but the form has no column for it."
 ];
 
 const VERDICTS_DIRTIEST = [
-	'the single dirtiest of the {tot}. the actual worst, sorry.',
-	'dead last of {tot}, and last means dirtiest.',
-	'no mode here is worse per km. you found the floor.'
+	'the heaviest per km of all {tot}. a bold, expensive way to sit in traffic.',
+	'top of the {tot} for carbon per km. not the leaderboard anyone frames.',
+	'nothing here runs heavier per km. impressive, in a way nobody asked for.'
 ];
 
 const VERDICTS_CLEAN = [
@@ -518,7 +532,7 @@ const VERDICTS_CLEAN = [
 	'barely a smudge on the ledger.',
 	'i ran the maths and it came back boring.',
 	'nothing to roast. this is awkward for me, professionally.',
-	'the dirty column stayed empty. unlike most people here hmmph.',
+	'no big number to be snarky about. unlike for some people here hmmph.',
 	'you have left me machine with nothing to do.',
 	"clean enough that I don't have something smart to say."
 ];
@@ -682,11 +696,11 @@ function swapIdeas(geo: GeoSnapshot | undefined): string[] {
 }
 
 const PS_OWN = [
-	'PS: it is not only the air. your vehicle parks on about {areaM2} m2 of the city. at {areaLabel} rates, ~{rupees} of land, sitting there for free. funded by everyone who is not parked on it.',
-	'PS: the air is one thing. your parked vehicle also holds {areaM2} m2 which is roughly {rupees} of {areaLabel} at no charge. someone pays for that. not you though.'
+	'PS: it is not only the air. a parked car sits on about {areaM2} m2 of city, roughly {rupees} of {areaLabel} land, doing nothing but existing. wild rate for a nap.',
+	'PS: beyond the air, {areaM2} m2 of {areaLabel} goes under a parked car. that is about {rupees} of land, on a permanent tea break.'
 ];
 const PS_NONE = [
-	'PS: it is not only the air. while you parked nothing, the car beside you takes {areaM2} m2, ~{rupees} of {areaLabel} used for free.'
+	'PS: it is not only the air. a parked car nearby holds {areaM2} m2, about {rupees} of {areaLabel}, quietly out of circulation.'
 ];
 
 function psCopy(c: ComputedReceipt, areaLabel: string, id: string): string {
@@ -701,8 +715,8 @@ function psCopy(c: ComputedReceipt, areaLabel: string, id: string): string {
 // so the prose stays out of their way).
 function parkingCopy(c: ComputedReceipt): string {
 	return c.trip.mode === 'car'
-		? 'Parked, your car pays no rent for the public street it sits on.'
-		: `You parked nothing. A car beside you at ${c.parking.areaLabel} sits rent free, on land you help fund.`;
+		? 'Parked, a car holds public street for free. a strangely good deal, when you think about it.'
+		: `Even parked, a car nearby keeps prime ${c.parking.areaLabel} street at no rent. good gig if you can get it.`;
 }
 
 // ── Helpers ──
@@ -763,6 +777,78 @@ function co2EquivLabel(kg: number, id: string): string {
 	const c = CO2_CRITTERS[idx];
 	const n = Math.max(2, Math.round(kg / c.mass));
 	return `${n.toLocaleString('en-IN')} ${c.noun}`;
+}
+
+// Carbon as a budget of dumb pleasures. Same kg, two framings: spent (a heavy
+// commute already cashed out) and banked (a saving you get to blow on something
+// silly). {n} is the count. mass = kg CO2e per unit, web-verified July 2026 — the
+// two soft ones (delivery, chatbot) are flagged; the receipt carries a methodology link.
+const FUN_UNITS: { mass: number; spent: string; banked: string }[] = [
+	// WHO/ACS: ~14 g full lifecycle of one cigarette.
+	{
+		mass: 0.014,
+		spent: '{n} cigarettes, lit for no one',
+		banked: '{n} cigarettes you could light for no reason'
+	},
+	// ~300 g draught to ~900 g imported bottle; 0.5 kg is the middle.
+	{
+		mass: 0.5,
+		spent: '{n} pints of beer, and no party',
+		banked: '{n} pints of beer, on the house'
+	},
+	// BLR to Goa is ~600 km x ~0.22 kg CO2/pkm (ICAO/DEFRA short-haul).
+	{
+		mass: 130,
+		spent: '{n} weekend flights to Goa, and you did not even get a beach',
+		banked: '{n} weekend flights to Goa, guilt left at home'
+	},
+	// ~100-215 g CO2 last-mile per parcel (Statista/industry); dark stores shorten the
+	// hop. ~0.2 kg covers a short scooter round trip plus packaging.
+	{
+		mass: 0.2,
+		spent: '{n} ten-minute deliveries of things that were downstairs',
+		banked: '{n} ten-minute deliveries you can order without flinching'
+	},
+	// IEA 36 g, Carbon Trust 55 g per hour of streaming; 50 g mid.
+	{
+		mass: 0.05,
+		spent: '{n} hours of doomscrolling in 4K',
+		banked: '{n} hours of streaming you can pretend are fine'
+	},
+	// Contested: estimates run 0.16 to 23.7 g; ~3 g is the consensus mid.
+	{
+		mass: 0.003,
+		spent: '{n} pointless questions asked to a chatbot',
+		banked: '{n} more pointless questions for a chatbot'
+	},
+	// 1.5-ton AC over ~8 h is ~10-14 kWh x 0.70 kg/kWh India grid (CEA); ~8 kg.
+	{
+		mass: 8,
+		spent: '{n} nights of running the AC till morning',
+		banked: '{n} nights of AC, no notes'
+	}
+];
+
+// Pick a unit whose HONEST count is >= 3, so a small kg never gets floored up to a
+// misleading "2 weekend flights" (14 kg is not two Goa trips). Heavy units drop out
+// for small figures; the lightest unit is the floor for near-zero kg.
+function funUnit(kg: number, id: string): { u: (typeof FUN_UNITS)[number]; n: number } {
+	const eligible = FUN_UNITS.filter((u) => Math.round(kg / u.mass) >= 3);
+	const pool = eligible.length ? eligible : [FUN_UNITS.reduce((a, b) => (a.mass < b.mass ? a : b))];
+	const u = pool[Number(pick(id, 'fun-unit', pool.map((_, i) => String(i))))];
+	return { u, n: Math.max(2, Math.round(kg / u.mass)) };
+}
+
+// The dry annual figure, in a currency that lands: what the commute already spent.
+function funEquivSpent(kg: number, id: string): string {
+	const { u, n } = funUnit(kg, id);
+	return interp(u.spent, { n: n.toLocaleString('en-IN') });
+}
+
+// The saving, reframed as pleasure you can now afford.
+function funEquivBanked(kg: number, id: string): string {
+	const { u, n } = funUnit(kg, id);
+	return interp(u.banked, { n: n.toLocaleString('en-IN') });
 }
 
 export function comma(n: number): string {
@@ -1043,6 +1129,17 @@ export function buildReceiptView(
 	const areaLabel = geo?.destinationLabel ?? geo?.originLabel ?? c.parking.areaLabel;
 	const yearClean = c.annualCommuteKg < CLEAN_YEAR_KG;
 
+	// For a clean habit the interesting number isn't the (tiny) footprint, it's the
+	// footprint DODGED by not driving the same trip. Positive only when the habit beats
+	// a car; small trips still make big, fun counts via the lightest units.
+	const modeClean = c.modeRank.isClean;
+	const carAnnualKg = tripEmissions('car', c.trip.distanceKm).kgPerTrip * c.tripsPerYear;
+	const avoidedVsCarKg = Math.max(0, carAnnualKg - c.annualCommuteKg);
+	const showVsCar = modeClean && avoidedVsCarKg >= 2;
+	const vsCarFun = showVsCar
+		? `not driving it keeps ~${comma(avoidedVsCarKg)} kg out of the air, about ${funEquivBanked(avoidedVsCarKg, id)}.`
+		: '';
+
 	// One tone decision, reused for the tail budget (≤1 beat carries a sign-off) and for the
 	// clean-year copy (a criticised receipt shouldn't congratulate a tiny number).
 	const tailV = subjectValence(c.trip.mode);
@@ -1124,7 +1221,11 @@ export function buildReceiptView(
 			pickedLabel: c.comparison.picked.modeLabel,
 			pickedKg: c.comparison.picked.annualKg,
 			savedKg: c.comparison.deltaAnnualKg,
-			copy: gapCopy(c, id)
+			copy: gapCopy(c, id),
+			funBanked:
+				c.comparison.direction === 'dirtier'
+					? ''
+					: funEquivBanked(c.comparison.deltaAnnualKg, id)
 		},
 		modeRank: {
 			copy: modeRankCopy(c, id, tailedBeat === 'modeRank'),
@@ -1147,13 +1248,19 @@ export function buildReceiptView(
 			co2Kg: c.annualCommuteKg,
 			kgPerBlock: KG_PER_BLOCK,
 			isClean: yearClean,
+			modeClean,
+			vsCarKg: Math.round(avoidedVsCarKg),
+			vsCarFun,
 			copy: yearClean ? pick(id, 'year-clean', tailV === 'affirm' ? YEAR_CLEAN : YEAR_NEUTRAL) : ''
 		},
 		units: {
 			cylinders: c.cylindersYear,
 			trees: c.treesYear,
 			isClean: yearClean,
-			copy: yearClean ? pick(id, 'units-clean', tailV === 'affirm' ? UNITS_CLEAN : UNITS_NEUTRAL) : ''
+			copy: yearClean ? pick(id, 'units-clean', tailV === 'affirm' ? UNITS_CLEAN : UNITS_NEUTRAL) : '',
+			// The "spent" line: shown for dirty habits even when tiny (small kg still
+			// makes a big, fun count). Clean habits show the vs-car line instead.
+			funLine: modeClean ? '' : funEquivSpent(c.annualCommuteKg, id)
 		},
 		swap: {
 			show: c.halfSwap.savedKg > 0,
@@ -1162,6 +1269,7 @@ export function buildReceiptView(
 			savedKg: c.halfSwap.savedKg,
 			treesSaved: c.halfSwap.treesSaved,
 			copy: swapCopy(c, a, id),
+			funBanked: c.halfSwap.savedKg > 0 ? funEquivBanked(c.halfSwap.savedKg, id) : '',
 			ideas: swapIdeas(geo)
 		},
 		whatIf,

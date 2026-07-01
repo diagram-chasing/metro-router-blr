@@ -34,8 +34,8 @@ const BASIS: Record<string, string[]> = {
 		'low carbon per km, for a private vehicle. that is the kind reading. it is still petrol, still this traffic.'
 	],
 	default: [
-		"not a decision so much as an unbroken habit, about {mult}× heavier than the switch you haven't made.",
-		'you never chose this, you just never changed it. which is the part that can still change.'
+		'less a decision than an old habit, running about {mult}× heavier than the lightest way to do the same trip.',
+		'nobody sat down and picked this. it just never came up for review. most habits are like that.'
 	]
 };
 
