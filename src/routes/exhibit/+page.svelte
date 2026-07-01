@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 
+	import ChoiceGrid from '$lib/exhibit/ChoiceGrid.svelte';
 	import MapQuestion from '$lib/exhibit/MapQuestion.svelte';
 	import OnScreenKeyboard from '$lib/exhibit/OnScreenKeyboard.svelte';
 	import QuestionFrame from '$lib/exhibit/QuestionFrame.svelte';
@@ -17,7 +18,12 @@
 	} from '$lib/exhibit/questions';
 	import { playClick } from '$lib/exhibit/sound';
 	import { answers, resetAnswers, setAnswer } from '$lib/exhibit/store.svelte';
-	import type { FunQuestion } from '$lib/exhibit/types';
+	import type {
+		Frequency,
+		FunQuestion,
+		JourneyType,
+		Lifestyle
+	} from '$lib/exhibit/types';
 
 	// One delegated listener so every button (TactileButton, route cards, the
 	// clear-pins button) and on-screen keyboard key clicks, without threading a
@@ -152,42 +158,31 @@
 		</QuestionFrame>
 	{:else if step === 2}
 		<QuestionFrame step={2} prompt={PROMPTS[2]} {canAdvance} onBack={back} onNext={next}>
-			<div class="grid min-h-0 flex-1 auto-rows-fr grid-cols-3 gap-3">
-				{#each journeyOptions as opt (opt.value)}
-					<TactileButton
-						label={opt.label}
-						selected={answers.mode === opt.value}
-						size="lg"
-						onclick={() => setAnswer('mode', opt.value)}
-					/>
-				{/each}
-			</div>
+			<ChoiceGrid
+				options={journeyOptions}
+				value={answers.mode}
+				size="lg"
+				showSub
+				onSelect={(v) => setAnswer('mode', v as JourneyType)}
+			/>
 		</QuestionFrame>
 	{:else if step === 3}
 		<QuestionFrame step={3} prompt={PROMPTS[3]} {canAdvance} onBack={back} onNext={next}>
-			<div class="grid min-h-0 flex-1 grid-cols-2 grid-rows-2 gap-3">
-				{#each FREQUENCY_OPTIONS as opt (opt.value)}
-					<TactileButton
-						label={opt.label}
-						selected={answers.frequency === opt.value}
-						size="xl"
-						onclick={() => setAnswer('frequency', opt.value)}
-					/>
-				{/each}
-			</div>
+			<ChoiceGrid
+				options={FREQUENCY_OPTIONS}
+				value={answers.frequency}
+				showSub
+				onSelect={(v) => setAnswer('frequency', v as Frequency)}
+			/>
 		</QuestionFrame>
 	{:else if step === 4}
 		<QuestionFrame step={4} prompt={PROMPTS[4]} {canAdvance} onBack={back} onNext={next}>
-			<div class="grid min-h-0 flex-1 grid-cols-3 gap-3">
-				{#each LIFESTYLE_OPTIONS as opt (opt.value)}
-					<TactileButton
-						label={opt.label}
-						selected={answers.lifestyle === opt.value}
-						size="xl"
-						onclick={() => setAnswer('lifestyle', opt.value)}
-					/>
-				{/each}
-			</div>
+			<ChoiceGrid
+				options={LIFESTYLE_OPTIONS}
+				value={answers.lifestyle}
+				showSub
+				onSelect={(v) => setAnswer('lifestyle', v as Lifestyle)}
+			/>
 		</QuestionFrame>
 	{:else if step === 5}
 		<QuestionFrame
@@ -199,19 +194,11 @@
 			onBack={back}
 			onNext={submit}
 		>
-			<div
-				class="grid min-h-0 flex-1 gap-3"
-				style="grid-template-columns: repeat({funQuestion.options.length}, minmax(0, 1fr))"
-			>
-				{#each funQuestion.options as opt (opt.value)}
-					<TactileButton
-						label={opt.label}
-						selected={answers.funAnswer === opt.value}
-						size="xl"
-						onclick={() => setAnswer('funAnswer', opt.value)}
-					/>
-				{/each}
-			</div>
+			<ChoiceGrid
+				options={funQuestion.options}
+				value={answers.funAnswer}
+				onSelect={(v) => setAnswer('funAnswer', v)}
+			/>
 			{#if error}
 				<p class="mt-3 text-[13px] font-semibold text-[#b52012]">
 					{COPY.submitFailed}
