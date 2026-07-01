@@ -91,11 +91,12 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 
 	if (view.modeRank.histogram) {
 		gap();
-		T('DIRTINESS PER KM (g CO2/km)', { bold: true });
+		T('HOW DIRTY WAS YOUR KM?  (g CO2/km)', { bold: true });
 		gap();
 		asciiSpread(view.modeRank.histogram.values, view.modeRank.histogram.mine).forEach((l) => T(l));
-	}
-	if (view.modeRank.cleanerNote) {
+	} else if (view.modeRank.cleanerNote) {
+		// No histogram to plot -> the crowd comparison falls back to the prose note. When the
+		// chart IS shown, its own percentile footer carries this, so the two never double up.
 		gap();
 		deck(view.modeRank.cleanerNote);
 	}

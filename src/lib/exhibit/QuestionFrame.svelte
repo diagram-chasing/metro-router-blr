@@ -34,7 +34,7 @@
 		class="-mx-4 -mt-4 mb-1 border-b border-[#aca899] bg-white px-5 py-4 sm:-mx-6 sm:-mt-6 sm:px-7 sm:py-5"
 	>
 		<h1
-			class="max-w-[46ch] text-balance text-[clamp(20px,2.6vw,34px)] font-bold leading-tight text-[#003399]"
+			class=" text-balance text-center text-[clamp(20px,2.6vw,34px)] font-bold leading-tight text-[#003399]"
 		>
 			{prompt}
 		</h1>

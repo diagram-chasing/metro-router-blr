@@ -2,7 +2,7 @@
 // column grid (80mm Font A = 48 cols). DOM-free; dirtiness bands come from the
 // carbon model so they can't drift from the wall-map grey buckets.
 
-import { bucket, BUCKET_MAX } from '$lib/emissions';
+import { BUCKET_MAX } from '$lib/emissions';
 
 export const PRINT_COLS = 48; // 80mm, Font A (12-dot glyphs)
 export const PRINT_COLS_B = 64; // 80mm, Font B (9-dot glyphs) — the "fine print" grid
@@ -60,75 +60,65 @@ export function blockBars(
 	});
 }
 
-// Per-km dirtiness band labels (g CO2/km), cleanest -> dirtiest. Derived from the
-// carbon model's BUCKET_MAX so the printed ranges always match the grey buckets:
-//   [0-(b0-1)] [b0-(b1-1)] ... [b3+]
-const SPREAD_LABELS = [
-	`0-${BUCKET_MAX[0] - 1}`,
-	...BUCKET_MAX.slice(1).map((hi, i) => `${BUCKET_MAX[i]}-${hi - 1}`),
-	`${BUCKET_MAX[BUCKET_MAX.length - 1]}+`
-];
+// Per-km dirtiness axis, capped at the top bucket threshold (`N+`). Derived from the
+// carbon model's BUCKET_MAX so the printed scale can't drift from the wall-map grey buckets.
+const AXIS_CAP = BUCKET_MAX[BUCKET_MAX.length - 1];
 
-/** A Marimekko strip of per-km dirtiness: one band per grey-bucket, segment WIDTH = how
- *  many people sit there (no counts shown — only the proportion reads). Bands are `█`
- *  runs split by `│`; the visitor's band carries a `▲ YOU` caret. Ranges sit on top. */
+/** An honest linear number line of per-km dirtiness (g CO2/km): 0 -> the top bucket
+ *  threshold (capped `N+`), ticked at each BUCKET_MAX, with a `▲` marker under the axis at
+ *  the visitor's exact value and a one-line percentile of where they land in the crowd.
+ *  Bar length is deliberately gone — the axis is the only spatial variable, so distance
+ *  finally means dirtiness and nothing else. */
 export function asciiSpread(values: number[], mine: number, cols = PRINT_COLS): string[] {
-	const counts = [0, 0, 0, 0, 0];
-	for (const v of values) counts[bucket(v)]++;
-	const total = values.length || 1;
-	const youB = bucket(mine);
+	// Linear map a g/km value to a column, clamped to the axis.
+	const posOf = (v: number) =>
+		Math.max(0, Math.min(cols - 1, Math.round((Math.min(v, AXIS_CAP) / AXIS_CAP) * (cols - 1))));
 
-	// Bands with anyone in them (YOU's band always shows), cleanest -> dirtiest.
-	const vis = counts
-		.map((count, band) => ({ band, count }))
-		.filter((b) => b.count > 0 || b.band === youB);
-	const k = vis.length;
+	// Drop a label into a `cols`-wide row at `col`, shifted left if it would run off the
+	// right edge (keeps the top `N+` tick and a right-pinned YOU value on the paper).
+	const place = (row: string[], col: number, label: string) => {
+		const start = Math.max(0, Math.min(col, cols - label.length));
+		for (let i = 0; i < label.length && start + i < cols; i++) row[start + i] = label[i];
+	};
 
-	// Widths ∝ share, floored at 2 so a lone commuter stays visible, then the rounding
-	// remainder handed to the largest fractions so the runs + dividers fill `cols` exactly.
-	const fillTotal = cols - (k - 1); // one column per `│` divider
-	const raw = vis.map((b) => (b.count / total) * fillTotal);
-	const w = raw.map((x) => Math.max(2, Math.floor(x)));
-	let leftover = fillTotal - w.reduce((a, b) => a + b, 0);
-	const byFrac = raw.map((x, i) => ({ i, frac: x - Math.floor(x) })).sort((a, b) => b.frac - a.frac);
-	for (let j = 0; leftover > 0 && byFrac.length; j++, leftover--) w[byFrac[j % byFrac.length].i]++;
-	while (leftover < 0) {
-		const mi = w.indexOf(Math.max(...w));
-		if (w[mi] <= 2) break;
-		w[mi]--;
-		leftover++;
-	}
+	// Tick numbers above the axis: 0, each interior threshold, then the capped top (`N+`).
+	const tickRow = Array(cols).fill(' ');
+	place(tickRow, 0, '0');
+	for (const t of BUCKET_MAX.slice(0, -1)) place(tickRow, posOf(t), String(t));
+	place(tickRow, cols - 1, `${AXIS_CAP}+`);
 
-	// YOU's band prints solid; everyone else is a light, perforated fill. Shade means
-	// "is this you", not dirtiness — that's carried by the cleanest -> dirtiest order.
-	const strip = vis.map((b, i) => (b.band === youB ? '█' : '░').repeat(w[i])).join('│');
+	// The axis itself: ├───┬───…───┤, a ┬ at every interior threshold (box-drawing prints
+	// cleanly; half-blocks don't).
+	const axis = Array(cols).fill('─');
+	axis[0] = '├';
+	axis[cols - 1] = '┤';
+	for (const t of BUCKET_MAX.slice(0, -1)) axis[posOf(t)] = '┬';
 
-	// First column of each band's run (account for the `│` between runs).
-	const starts: number[] = [];
-	for (let i = 0, c = 0; i < k; i++) {
-		starts.push(c);
-		c += w[i] + 1;
-	}
+	// YOU marker below the axis, pointing up (▲ is the printer-safe caret), the exact value
+	// centered under it.
+	const caret = posOf(mine);
+	const markRow = Array(cols).fill(' ');
+	markRow[caret] = '▲';
+	const youLabel = `YOU ${Math.round(mine)}`;
+	const youRow = Array(cols).fill(' ');
+	place(youRow, caret - Math.floor(youLabel.length / 2), youLabel);
 
-	// Ranges on top, each left-aligned over its band; nudge right on a collision.
-	const labelRow = Array(cols).fill(' ');
-	for (let i = 0, cursor = 0; i < k; i++) {
-		const lab = SPREAD_LABELS[vis[i].band];
-		const pos = Math.max(starts[i], cursor);
-		for (let c = 0; c < lab.length && pos + c < cols; c++) labelRow[pos + c] = lab[c];
-		cursor = pos + lab.length + 1;
-	}
+	const ends = 'clean'.padEnd(cols - 'dirty'.length) + 'dirty';
 
-	const youI = vis.findIndex((b) => b.band === youB);
-	const caretPos = Math.min(cols - 1, starts[youI] + Math.floor(w[youI] / 2));
-	const ends = 'cleaner'.padEnd(cols - 'dirtier'.length) + 'dirtier';
+	// Where the visitor lands: share of the logged audience dirtier than them.
+	const n = values.length || 1;
+	const dirtier = values.filter((v) => v > mine).length;
+	const pct = Math.round((dirtier / n) * 100);
 
+	const trim = (a: string[]) => a.join('').replace(/\s+$/, '');
 	return [
-		labelRow.join('').replace(/\s+$/, ''),
-
-		strip,
-		(' '.repeat(caretPos) + '▲ YOU').slice(0, cols),
-		ends
+		trim(tickRow),
+		axis.join(''),
+		trim(markRow),
+		trim(youRow),
+		ends,
+		'',
+		`Cleaner than ${pct}% of today's travellers.`
 	];
 }
 

@@ -47,7 +47,7 @@
 	]}"
 >
 	{#if children}
-		<span class="flex min-h-0 flex-1 items-center justify-center">
+		<span class="flex h-12 items-center justify-center gap-10">
 			{@render children()}
 		</span>
 	{/if}

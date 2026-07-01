@@ -6,6 +6,8 @@
 	import OnScreenKeyboard from '$lib/exhibit/OnScreenKeyboard.svelte';
 	import QuestionFrame from '$lib/exhibit/QuestionFrame.svelte';
 	import TactileButton from '$lib/exhibit/TactileButton.svelte';
+	import TimerIcon from '$lib/exhibit/TimerIcon.svelte';
+	import VehicleIcon from '$lib/exhibit/VehicleIcon.svelte';
 	import XpTransferDialog from '$lib/exhibit/XpTransferDialog.svelte';
 	import XpWindow from '$lib/exhibit/XpWindow.svelte';
 	import {
@@ -18,12 +20,7 @@
 	} from '$lib/exhibit/questions';
 	import { playClick } from '$lib/exhibit/sound';
 	import { answers, resetAnswers, setAnswer } from '$lib/exhibit/store.svelte';
-	import type {
-		Frequency,
-		FunQuestion,
-		JourneyType,
-		Lifestyle
-	} from '$lib/exhibit/types';
+	import type { Frequency, FunQuestion, JourneyType, Lifestyle } from '$lib/exhibit/types';
 
 	// One delegated listener so every button (TactileButton, route cards, the
 	// clear-pins button) and on-screen keyboard key clicks, without threading a
@@ -119,7 +116,7 @@
 <XpWindow title="The Pollution That Wasn't" icon="/xp/readme.ico">
 	{#if step === -1}
 		<div class="flex min-h-0 flex-1 flex-col items-center justify-center gap-7 text-center">
-			<p class="text-balance text-[clamp(22px,2.8vw,40px)] font-bold text-[#003399]">
+			<p class="text-balance text-center text-[clamp(22px,2.8vw,40px)] font-black text-[#003399]">
 				{COPY.namePrompt}
 			</p>
 
@@ -139,12 +136,7 @@
 					class="font-xp !h-auto min-w-0 flex-1 !rounded-[3px] border border-[#7f9db9] bg-white !px-7 !py-5 text-center text-[clamp(28px,4vw,52px)] font-semibold !leading-none tracking-tight text-black caret-transparent shadow-[inset_1px_1px_3px_rgba(0,0,0,0.22)] outline-none placeholder:text-[#9a9a9a]"
 				/>
 				<div class="flex w-[clamp(200px,24vw,300px)] shrink-0">
-					<TactileButton
-						label={COPY.start}
-						size="xl"
-						disabled={!canStart}
-						onclick={start}
-					/>
+					<TactileButton label={COPY.start} size="xl" disabled={!canStart} onclick={start} />
 				</div>
 			</div>
 
@@ -164,7 +156,11 @@
 				size="lg"
 				showSub
 				onSelect={(v) => setAnswer('mode', v as JourneyType)}
-			/>
+			>
+				{#snippet icon(value)}
+					<VehicleIcon mode={value as JourneyType} />
+				{/snippet}
+			</ChoiceGrid>
 		</QuestionFrame>
 	{:else if step === 3}
 		<QuestionFrame step={3} prompt={PROMPTS[3]} {canAdvance} onBack={back} onNext={next}>
@@ -173,7 +169,11 @@
 				value={answers.frequency}
 				showSub
 				onSelect={(v) => setAnswer('frequency', v as Frequency)}
-			/>
+			>
+				{#snippet icon(value)}
+					<TimerIcon frequency={value as Frequency} />
+				{/snippet}
+			</ChoiceGrid>
 		</QuestionFrame>
 	{:else if step === 4}
 		<QuestionFrame step={4} prompt={PROMPTS[4]} {canAdvance} onBack={back} onNext={next}>
