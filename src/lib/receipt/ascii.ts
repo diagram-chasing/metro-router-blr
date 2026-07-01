@@ -201,14 +201,17 @@ export function heroSrc(text: string, srcCols = PRINT_COLS / 2): string {
 	return ' '.repeat(l) + t + ' '.repeat(pad - l);
 }
 
-/** A boxed-digit odometer: count -> 3 lines (border, digits, border). */
-export function asciiOdometer(count: number, digits = 6): string[] {
+/** A split-flap odometer: count -> 3 lines, each digit in its own double-ruled cell
+ *  (`╔═╦═╗ / ║d║d║ / ╚═╩═╝`) for a mechanical counter look. Caps at `digits` (default 4). */
+export function asciiOdometer(count: number, digits = 4): string[] {
 	const s = String(Math.max(0, Math.floor(count)))
 		.padStart(digits, '0')
 		.slice(-digits);
-	const border = '+' + '---+'.repeat(s.length);
-	const cells = '|' + [...s].map((d) => ` ${d} |`).join('');
-	return [border, cells, border];
+	const n = s.length;
+	const top = '╔' + Array(n).fill('═══').join('╦') + '╗';
+	const mid = '║' + [...s].map((d) => ` ${d} `).join('║') + '║';
+	const bot = '╚' + Array(n).fill('═══').join('╩') + '╝';
+	return [top, mid, bot];
 }
 
 /** A to-scale footprint isotype: `areaM2` unit squares (`■` = 1 m²) laid out `perRow`

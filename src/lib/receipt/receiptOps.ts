@@ -22,6 +22,13 @@ import {
 
 const inr = (n: number) => n.toLocaleString('en-IN');
 
+// One hierarchy cue: body copy AND charts share a single left margin, so the only
+// things that bleed to the paper edge are the masthead, the numbered section headers,
+// the divider rules and the reverse hero band. Everything else is inset by INDENT.
+const INDENT = 3;
+const PAD = ' '.repeat(INDENT);
+const BODY_COLS = PRINT_COLS - INDENT;
+
 type Align = 'left' | 'center' | 'right';
 
 export type PrintOp =
@@ -52,7 +59,10 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	const T = (s: string, o: Omit<Extract<PrintOp, { t: 'text' }>, 't' | 's'> = {}) =>
 		ops.push({ t: 'text', s, ...o });
 	const gap = (n = 1) => ops.push({ t: 'gap', n });
-	const deck = (s: string) => wrapText(s, PRINT_COLS - 3).forEach((l) => T('   ' + l));
+	// Inset body line (copy, labels, chart rows) — the receipt's default altitude.
+	const body = (s: string, o: Omit<Extract<PrintOp, { t: 'text' }>, 't' | 's'> = {}) =>
+		T(PAD + s, o);
+	const deck = (s: string) => wrapText(s, BODY_COLS).forEach((l) => body(l));
 	let sec = 0;
 	const eyebrowOp = (label: string, stat = '') =>
 		T(eyebrow(String(++sec).padStart(2, '0'), label, stat), { bold: true });
@@ -91,9 +101,11 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 
 	if (view.modeRank.histogram) {
 		gap();
-		T('HOW DIRTY WAS YOUR KM?  (g CO2/km)', { bold: true });
+		body('HOW DIRTY WAS YOUR KM?  (g CO2/km)', { bold: true });
 		gap();
-		asciiSpread(view.modeRank.histogram.values, view.modeRank.histogram.mine).forEach((l) => T(l));
+		asciiSpread(view.modeRank.histogram.values, view.modeRank.histogram.mine, BODY_COLS).forEach(
+			(l) => body(l)
+		);
 	} else if (view.modeRank.cleanerNote) {
 		// No histogram to plot -> the crowd comparison falls back to the prose note. When the
 		// chart IS shown, its own percentile footer carries this, so the two never double up.
@@ -114,16 +126,17 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	deck(`${inr(peopleApprox)} people travel through here every day${estSuffix}`);
 	deck(view.corridor.copy);
 	gap();
-	T('   '.padEnd(PRINT_COLS - 'g/km'.length) + 'g/km');
+	body(''.padEnd(BODY_COLS - 'g/km'.length) + 'g/km');
 	blockBars(
 		view.corridor.rows.map((r) => ({
 			label: r.label,
 			value: r.gPerKm,
 			right: `${r.gPerKm}`,
 			mark: r.isYou
-		}))
+		})),
+		{ cols: BODY_COLS }
 	).forEach((l) => {
-		T(l.text, { bold: l.mark });
+		body(l.text, { bold: l.mark });
 	});
 	gap();
 
@@ -177,7 +190,7 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	T(`${view.parking.areaM2} m², worth ~${view.parking.valueLabel}`, { align: 'center' });
 	if (view.counter.carsToday > 0) {
 		gap();
-		T(`cars Bangalore has added today, as of ${view.meta.timeLabel}`, { align: 'center' });
+		deck(`cars BLR has added today, as of ${view.meta.timeLabel}`);
 		asciiOdometer(view.counter.carsToday).forEach((l) => T(l, { align: 'center' }));
 		// T('each one needs somewhere to park', { align: 'center' });
 	}
