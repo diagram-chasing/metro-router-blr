@@ -165,21 +165,32 @@ export function panelPair(
 	return panelRow(left, unit, cols);
 }
 
-/** Transit-mode rows for the swap panel: each `│ label  hint … trips │`, aligned on the
- *  label column and clamped so a long route can never push out the right-hand count. */
-export function transitRows(
-	rows: { label: string; trips: string; hint: string }[],
+/** A boxed "cleaner ways" timetable: one ruled row per transit mode with its daily
+ *  frequency and route numbers, columns aligned and routes clamped with a trailing `+`
+ *  when they overflow. Fills `cols` as a full-width box. */
+export function transitTable(
+	modes: { label: string; trips: number; routes: string[] }[],
 	cols = PRINT_COLS
 ): string[] {
-	if (!rows.length) return [];
-	const labelW = Math.max(...rows.map((r) => r.label.length));
-	const inner = cols - 4; // matches panelRow's '│ ' … ' │'
-	return rows.map((r) => {
-		const leftBudget = inner - r.trips.length - 2;
-		let left = (r.hint ? `${r.label.padEnd(labelW)}  ${r.hint}` : r.label).trimEnd();
-		if (left.length > leftBudget) left = left.slice(0, Math.max(0, leftBudget)).trimEnd();
-		return panelRow(left, r.trips, cols);
-	});
+	if (!modes.length) return [];
+	const rows = modes.map((m) => ({
+		mode: m.label.toUpperCase(),
+		freq: `${m.trips}/day`,
+		routes: m.routes.join(' ')
+	}));
+	const w1 = Math.max(...rows.map((r) => r.mode.length));
+	const w2 = Math.max(...rows.map((r) => r.freq.length));
+	const w3 = Math.max(6, cols - 10 - w1 - w2); // total = w1 + w2 + w3 + 10 = cols
+	const seg = (n: number) => '─'.repeat(n + 2);
+	const clamp = (s: string) =>
+		s.length > w3 ? s.slice(0, Math.max(0, w3 - 1)).trimEnd() + '+' : s;
+	return [
+		`┌${seg(w1)}┬${seg(w2)}┬${seg(w3)}┐`,
+		...rows.map(
+			(r) => `│ ${r.mode.padEnd(w1)} │ ${r.freq.padStart(w2)} │ ${clamp(r.routes).padEnd(w3)} │`
+		),
+		`└${seg(w1)}┴${seg(w2)}┴${seg(w3)}┘`
+	];
 }
 
 /** A double-rule "subtotal" line, optionally with embedded text: `═══ mid ═══`. */
@@ -208,4 +219,16 @@ export function asciiOdometer(count: number, digits = 6): string[] {
 	const border = '+' + '---+'.repeat(s.length);
 	const cells = '|' + [...s].map((d) => ` ${d} |`).join('');
 	return [border, cells, border];
+}
+
+/** A to-scale footprint isotype: `areaM2` unit squares (`■` = 1 m²) laid out `perRow`
+ *  wide, one glyph per square, space-separated. Returns the rows ready to center
+ *  (18 m² -> a 3x6 block). */
+export function footprintGrid(areaM2: number, perRow = 6): string[] {
+	const n = Math.max(0, Math.round(areaM2));
+	const rows: string[] = [];
+	for (let i = 0; i < n; i += perRow) {
+		rows.push(Array(Math.min(perRow, n - i)).fill('■').join(' '));
+	}
+	return rows;
 }

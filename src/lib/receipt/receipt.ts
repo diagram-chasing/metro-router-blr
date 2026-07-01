@@ -282,10 +282,11 @@ const CORRIDOR_KEY_MODE: Record<string, Mode> = {
 	auto: 'auto',
 	metro: 'metro'
 };
-// Real-estate beat (10): a parked car occupies ~13 m² of street. ratePerM2 is the
+// Real-estate beat (10): a parked car occupies ~18 m² of street; its value is that
+// area x ratePerM2 (the capital land value it squats on, not rent). ratePerM2 is the
 // state guidance value (₹/m²) for the zone the destination sits in (guidance_value.json),
 // a conservative stand-in for market land value. PARKING_RATE_PER_M2 is the fallback
-// when the destination is unknown or falls outside the dataset (~₹2.15 lakh/m²).
+// when the destination is unknown or falls outside the dataset (~₹2 lakh/m²).
 const PARKING_AREA_M2 = 18;
 const PARKING_RATE_PER_M2 = 200000;
 
@@ -336,7 +337,7 @@ const OPENERS = [
 	'so. {lc}.'
 ];
 
-type TailBeat = 'modeRank' | 'corridor' | 'swap' | 'parking';
+type TailBeat = 'modeRank' | 'corridor' | 'swap';
 
 const TAILS: Record<Valence, string[]> = {
 	affirm: ['credit where due.', "i'll allow it.", 'good for you.', 'no notes.'],
@@ -350,19 +351,15 @@ const TAILS: Record<Valence, string[]> = {
 	]
 };
 
-// Tails that only make sense after a numeric verdict — never on the parking (land-use) beat.
-const NUMBER_VERDICT_TAILS = new Set(['i checked twice.', "i'd hoped to be wrong."]);
-
 function beatTail(id: string, beat: TailBeat, v: Valence, want: boolean): string {
 	if (!want) return '';
-	const pool = beat === 'parking' ? TAILS[v].filter((t) => !NUMBER_VERDICT_TAILS.has(t)) : TAILS[v];
-	return pick(id, `${beat}-tail`, pool);
+	return pick(id, `${beat}-tail`, TAILS[v]);
 }
 
 // Pick at most one beat to carry a tail this receipt. The empty slots give a real chance of
 // a tail-free receipt.
 function chooseTailedBeat(id: string): TailBeat | '' {
-	const candidates: string[] = ['modeRank', 'corridor', 'parking', '', ''];
+	const candidates: string[] = ['modeRank', 'corridor', '', ''];
 	return pick(id, 'tail-beat', candidates) as TailBeat | '';
 }
 
@@ -481,7 +478,7 @@ function transitModePhrase(conn: Connectivity | null): string {
 }
 
 const DISCLAIMER =
-	'Estimates use India-specific operational emission factors; actual figures vary with vehicle, occupancy and traffic conditions. For a full methodology, see https://diagramchasing.fun/2026/emissions';
+	'Estimates use India-specific operational emission factors; actual figures vary with vehicle, occupancy and traffic conditions. For a full methodology, see https://diagramchasing.fun/2026/emissions. Also, in the larger scheme of things, this is a small thing. A war burns more carbon, and more lives, than any commute ever will.';
 
 function multiplierPhrase(m: number): string {
 	if (!isFinite(m) || m <= 1.2) return 'about the same';
@@ -699,27 +696,13 @@ function psCopy(c: ComputedReceipt, areaLabel: string, id: string): string {
 	return interp(pick(id, 'ps', pool), vars);
 }
 
-// A short, branch-aware deck for the parking real-estate graphic (numbers live in
-// the footprint box + panel, so the prose stays out of their way).
-const PARK_OWN = [
-	'that was all emissions. a car also takes something the air does not: it parks on public street it never pays rent for.',
-	'emissions aside, your parked vehicle squats on public kerb all day and pays nothing for the privilege.',
-	'and that is just the air. parked, that car still holds down public ground, rent-free.'
-];
-const PARK_NONE = [
-	'you parked nothing today. the car beside you sits free, on land you help fund.',
-	'nothing of yours is parked. the car next to it pays nothing for the spot. you do.',
-	'no spot taken by you. the car alongside holds public ground for free, the ground you help pay for.'
-];
-
-function parkingCopy(c: ComputedReceipt, id: string, wantTail: boolean): string {
-	const mode = c.trip.mode;
-	const v = subjectValence(mode);
-	const line =
-		mode === 'car' || mode === 'two_wheeler'
-			? pick(id, 'park-verdict', PARK_OWN)
-			: pick(id, 'park-verdict', PARK_NONE);
-	return `${line} ${beatTail(id, 'parking', v, wantTail)}`.trim();
+// One short generic line for the parking real-estate graphic, branching only on
+// whether the visitor drove a car (the numbers live in the footprint block below,
+// so the prose stays out of their way).
+function parkingCopy(c: ComputedReceipt): string {
+	return c.trip.mode === 'car'
+		? 'Parked, your car pays no rent for the public street it sits on.'
+		: `You parked nothing. A car beside you at ${c.parking.areaLabel} sits rent free, on land you help fund.`;
 }
 
 // ── Helpers ──
@@ -925,7 +908,7 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 	// guidance value when we have a drop pin; the city-wide constant otherwise.
 	const destRate = a.destination ? landValueAtPoint(a.destination) : null;
 	const parkingRatePerM2 = destRate && destRate > 0 ? destRate : PARKING_RATE_PER_M2;
-	const parkingRupees = PARKING_AREA_M2 * parkingRatePerM2 * 2;
+	const parkingRupees = PARKING_AREA_M2 * parkingRatePerM2;
 	const parkingAreaLabel = a.destinationStation ?? a.originStation ?? 'this part of the city';
 
 	const isClean = tripMode === 'bus' || tripMode === 'metro' || tripMode === 'active';
@@ -1194,7 +1177,7 @@ export function buildReceiptView(
 		parking: {
 			areaM2: c.parking.areaM2,
 			valueLabel: rupeesLakh(c.parking.rupees),
-			copy: parkingCopy(c, id, tailedBeat === 'parking')
+			copy: parkingCopy(c)
 		},
 		finePrint: {
 			psCopy: psCopy(c, areaLabel, id),

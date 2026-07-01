@@ -5,21 +5,17 @@
 // Pure (DOM-free) on purpose: the harness and any server context can build the ops
 // without pulling the browser-only capture path that lives in printReceipt.ts.
 
-import type { Connectivity, ReceiptView } from './receipt';
-
-type CleanerWayInput = Pick<Connectivity, 'total' | 'modes'>;
+import type { ReceiptView } from './receipt';
 import {
 	PRINT_COLS,
 	PRINT_COLS_B,
 	blockBars,
 	eyebrow,
-	panelRow,
-	panelRule,
-	panelPair,
-	transitRows,
+	transitTable,
 	heroSrc,
 	asciiSpread,
 	asciiOdometer,
+	footprintGrid,
 	wrapText,
 	ledger,
 	rule as ruleStr
@@ -50,19 +46,6 @@ export function qrUrl(view: ReceiptView): string {
 	return typeof location !== 'undefined'
 		? `${location.origin}/receipt?id=${view.finePrint.barcodeSeed}`
 		: `https://pollution.receipt/${view.finePrint.barcodeSeed}`;
-}
-
-// The "A cleaner way to make this trip" block, as plain receipt lines (header
-// flush-left, the rest indented like deck() copy).
-export function cleanerWayLines(conn: CleanerWayInput): string[] {
-	const lines: string[] = [];
-	const deck = (s: string) => wrapText(s, PRINT_COLS - 3).forEach((l) => lines.push('   ' + l));
-	deck(`Make your commute cleaner by using one of the ${inr(conn.total)} daily transit connections`);
-	conn.modes.forEach((m) => {
-		const routes = m.routes.length ? ` (${m.routes.join(', ')})` : '';
-		deck(`${inr(m.trips)}x ${m.label}${routes}`);
-	});
-	return lines;
 }
 
 export function buildReceiptOps(view: ReceiptView): PrintOp[] {
@@ -200,26 +183,32 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 		gap();
 		deck(c.copy);
 		gap();
-		T(panelPair(c.usualLabel, inr(c.usualKg), c.pickedLabel, inr(c.pickedKg), 'kg/yr'));
-		T(
-			panelRule(
-				c.direction === 'cleaner'
-					? `the gap: ${inr(c.savedKg)} kg/yr`
-					: `+${inr(c.savedKg)} kg/yr the way you drew it`
-			)
+		blockBars([
+			{ label: c.usualLabel, value: c.usualKg, right: `${inr(c.usualKg)} kg` },
+			{ label: c.pickedLabel, value: c.pickedKg, right: `${inr(c.pickedKg)} kg` }
+		]).forEach((l) => T(l.text));
+		gap();
+		deck(
+			c.direction === 'cleaner'
+				? `the gap: ${inr(c.savedKg)} kg/yr`
+				: `+${inr(c.savedKg)} kg/yr the way you drew it`
 		);
 	} else if (view.swap.show) {
-		eyebrowOp('What if...', `-${inr(view.swap.savedKg)} kg/yr`);
+		eyebrowOp('Cleaner ways from here');
 		gap();
-		deck(view.swap.copy);
 		if (view.connectivity && view.connectivity.modes.length) {
+			transitTable(view.connectivity.modes).forEach((l) => T(l));
 			gap();
-			cleanerWayLines(view.connectivity).forEach((l) => T(l));
 		}
+		deck(view.swap.copy);
 		gap();
-		T(panelPair('Today', `${inr(view.swap.nowKg)}`, 'Better', `${inr(view.swap.swapKg)}`, 'kg'));
+		blockBars([
+			{ label: 'Today', value: view.swap.nowKg, right: `${inr(view.swap.nowKg)} kg` },
+			{ label: 'Better', value: view.swap.swapKg, right: `${inr(view.swap.swapKg)} kg` }
+		]).forEach((l) => T(l.text));
+		gap();
 		const trees = view.swap.treesSaved === 1 ? 'tree' : 'trees';
-		T(panelRule(`saves ${inr(view.swap.savedKg)} kg/yr  ~${view.swap.treesSaved} ${trees}`));
+		deck(`you save ${inr(view.swap.savedKg)} kg/yr  ~${view.swap.treesSaved} ${trees}`);
 		// the profile seal (Chladni resonance)
 		// ops.push({ t: 'img', id: 'stamp' });
 		// T(view.archetype.name.toUpperCase(), { align: 'center', bold: true });
@@ -230,21 +219,17 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	}
 
 
-	// by the way — parking as real-estate: a footprint diagram + an itemized
-	// "land you use free" panel, then the city's live car-registration odometer.
+	// by the way — parking as real-estate: a to-scale footprint isotype (one ■ per m²
+	// of street the car sits on) + its land value, then the city's live car odometer.
 	eyebrowOp('A car costs the city even switched off.');
 	gap();
 	deck(view.parking.copy);
 	gap();
-	ops.push({ t: 'img', id: 'car' });
-	T(`one car = ${view.parking.areaM2} m² wasted public space`, { align: 'center' });
+	T('ONE CAR TAKES', { align: 'center', bold: true });
 	gap();
-	T(panelRow(`Land ~${view.parking.valueLabel}`));
-	// T(panelRule('Paid for by everyone else!'));
+	footprintGrid(view.parking.areaM2).forEach((l) => T(l, { align: 'center' }));
 	gap();
-	deck(
-		`The city keeps adding more everyday. The more we add, the more crowded and expensive the city gets for everyone.`
-	);
+	T(`${view.parking.areaM2} m², worth ~${view.parking.valueLabel}`, { align: 'center' });
 	if (view.counter.carsToday > 0) {
 		gap();
 		T(`cars Bangalore has added today, as of ${view.meta.timeLabel}`, { align: 'center' });
@@ -259,7 +244,7 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	T(ruleStr('*'));
 	gap();
 	T('An experiment by Diagram Chasing', { align: 'center' });
-	T('https://diagramchasing.fun', { align: 'center' });
+	T('diagramchasing.fun', { align: 'center' });
 	gap();
 	ops.push({ t: 'cut' });
 	return ops;
