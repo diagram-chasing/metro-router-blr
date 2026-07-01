@@ -7,11 +7,13 @@ import type {
 	Answers,
 	Frequency,
 	FunQuestionId,
+	JourneyType,
 	Lifestyle,
 	Mode,
 	RouteGeometry,
 	RouteSegmentGeo
 } from '$lib/exhibit/types';
+import { journeyBaseMode } from '$lib/emissions';
 import type { CandidateKind, LegKind } from '$lib/exhibit/routeCandidates';
 import type { GeoSnapshot } from '$lib/server/receiptStore';
 import type { SwapSuggestion } from '$lib/utils/otp';
@@ -30,8 +32,8 @@ export type DataState = 'empty' | 'sparse' | 'populated';
 export type PickedChoice = CandidateKind | 'none';
 
 export type Combo = {
-	usualMode: Mode;
-	pickedKind: PickedChoice;
+	usualMode: JourneyType; // the picked journey (the field name predates the redesign)
+	pickedKind: PickedChoice; // drawn-path geometry only (no longer an emissions input)
 	distanceKm: number;
 	tripName: string;
 	frequency: Frequency;
@@ -119,7 +121,7 @@ function makeGeo(c: Combo): GeoSnapshot {
 			else segments.push({ mode, lengthM });
 		}
 	} else {
-		segments = [{ mode: c.usualMode, lengthM: Math.round(c.distanceKm * 1000) }];
+		segments = [{ mode: journeyBaseMode(c.usualMode), lengthM: Math.round(c.distanceKm * 1000) }];
 	}
 	return {
 		originLabel: 'Majestic',
@@ -182,7 +184,7 @@ export function buildCase(c: Combo): Case {
 	const answers = makeAnswers(c);
 	const computed = computeReceipt(answers);
 	const geo = makeGeo(c);
-	const mine = computed.comparison.usual.gPerKm; // histogram marker = the habit
+	const mine = computed.trip.gPerKm; // histogram marker = this journey's effective g/pkm
 	const { hist, dist } = makeData(c.dataState, mine, computed.perTripKg);
 	const view = buildReceiptView(computed, answers, geo, dist, hist, c.seedId, CREATED_AT);
 	const valence = subjectValence(computed.trip.mode);
@@ -191,7 +193,14 @@ export function buildCase(c: Combo): Case {
 
 // ── Dimension sets ──
 
-export const USUAL_MODES: Mode[] = ['auto', 'car', 'two_wheeler', 'bus', 'metro'];
+export const USUAL_MODES: JourneyType[] = [
+	'two_wheeler',
+	'car',
+	'car_ev',
+	'bus',
+	'metro_auto',
+	'metro_walk'
+];
 export const PICKED: PickedChoice[] = ['cab', 'auto', 'metro', 'bus', 'walk', 'none'];
 export const FREQUENCIES: Frequency[] = ['daily', 'few_weekly', 'weekly', 'occasional'];
 export const LIFESTYLES: Lifestyle[] = ['homebody', 'moderate', 'always_out'];

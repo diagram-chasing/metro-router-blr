@@ -10,8 +10,8 @@
 	import {
 		COPY,
 		FREQUENCY_OPTIONS,
+		JOURNEY_OPTIONS,
 		LIFESTYLE_OPTIONS,
-		MODE_OPTIONS,
 		PROMPTS,
 		pickRandomFunQuestion
 	} from '$lib/exhibit/questions';
@@ -39,6 +39,14 @@
 	let error = $state<string | null>(null);
 
 	const canStart = $derived(nameInput.trim().length > 0);
+
+	// Only offer journeys OTP found feasible for the drawn trip (falls back to the full
+	// list if availability wasn't recorded, e.g. a stale session).
+	const journeyOptions = $derived(
+		answers.availableModes
+			? JOURNEY_OPTIONS.filter((o) => answers.availableModes!.includes(o.value))
+			: JOURNEY_OPTIONS
+	);
 
 	$effect(() => {
 		if (step === 5) setAnswer('funQuestionId', funQuestion.id);
@@ -89,14 +97,11 @@
 
 	const canAdvance = $derived(
 		step === 1
-			? !!answers.mode
+			? !!answers.origin && !!answers.destination && !!answers.distanceKm
 			: step === 2
-				? !!answers.frequency
+				? !!answers.mode
 				: step === 3
-					? !!answers.origin &&
-						!!answers.destination &&
-						!!answers.distanceKm &&
-						!!answers.chosenRouteId
+					? !!answers.frequency
 					: step === 4
 						? !!answers.lifestyle
 						: step === 5
@@ -141,8 +146,14 @@
 		</div>
 	{:else if step === 1}
 		<QuestionFrame step={1} prompt={PROMPTS[1]} {canAdvance} onBack={back} onNext={next}>
-			<div class="grid min-h-0 flex-1 grid-cols-3 grid-rows-2 gap-3">
-				{#each MODE_OPTIONS as opt (opt.value)}
+			<div class="flex min-h-0 flex-1">
+				<MapQuestion />
+			</div>
+		</QuestionFrame>
+	{:else if step === 2}
+		<QuestionFrame step={2} prompt={PROMPTS[2]} {canAdvance} onBack={back} onNext={next}>
+			<div class="grid min-h-0 flex-1 auto-rows-fr grid-cols-3 gap-3">
+				{#each journeyOptions as opt (opt.value)}
 					<TactileButton
 						label={opt.label}
 						selected={answers.mode === opt.value}
@@ -152,8 +163,8 @@
 				{/each}
 			</div>
 		</QuestionFrame>
-	{:else if step === 2}
-		<QuestionFrame step={2} prompt={PROMPTS[2]} {canAdvance} onBack={back} onNext={next}>
+	{:else if step === 3}
+		<QuestionFrame step={3} prompt={PROMPTS[3]} {canAdvance} onBack={back} onNext={next}>
 			<div class="grid min-h-0 flex-1 grid-cols-2 grid-rows-2 gap-3">
 				{#each FREQUENCY_OPTIONS as opt (opt.value)}
 					<TactileButton
@@ -163,12 +174,6 @@
 						onclick={() => setAnswer('frequency', opt.value)}
 					/>
 				{/each}
-			</div>
-		</QuestionFrame>
-	{:else if step === 3}
-		<QuestionFrame step={3} prompt={PROMPTS[3]} {canAdvance} onBack={back} onNext={next}>
-			<div class="flex min-h-0 flex-1">
-				<MapQuestion />
 			</div>
 		</QuestionFrame>
 	{:else if step === 4}

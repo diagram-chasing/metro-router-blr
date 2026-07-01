@@ -79,8 +79,8 @@ interface TransportMode {
 }
 
 const PLAN_QUERY = `
-query Plan($from: InputCoordinates!, $to: InputCoordinates!, $modes: [TransportMode!], $num: Int) {
-  plan(from: $from, to: $to, numItineraries: $num, transportModes: $modes) {
+query Plan($from: InputCoordinates!, $to: InputCoordinates!, $modes: [TransportMode!], $num: Int, $date: String, $time: String) {
+  plan(from: $from, to: $to, numItineraries: $num, transportModes: $modes, date: $date, time: $time) {
     itineraries {
       duration
       walkDistance
@@ -180,6 +180,19 @@ export interface PlanOptions {
 	fetcher?: typeof fetch;
 }
 
+// A representative weekday morning (09:00), so mode feasibility and swap suggestions
+// don't depend on when the kiosk is used: a bus/metro route that serves the trip during
+// normal commuting hours counts even if the visitor queries at 2am on a Sunday. OTP
+// anchors its schedule search to this date/time (past-relative-to-now is fine).
+function peakWeekdayQuery(): { date: string; time: string } {
+	const d = new Date();
+	while (d.getDay() === 0 || d.getDay() === 6) d.setDate(d.getDate() + 1);
+	const yyyy = d.getFullYear();
+	const mm = String(d.getMonth() + 1).padStart(2, '0');
+	const dd = String(d.getDate()).padStart(2, '0');
+	return { date: `${yyyy}-${mm}-${dd}`, time: '09:00:00' };
+}
+
 /**
  * Plan a trip from `from` to `to`. Coordinates are [lng, lat] (the app's
  * convention); they're swapped to OTP's {lat, lon} internally.
@@ -191,11 +204,14 @@ export async function planTrip(
 	opts: PlanOptions
 ): Promise<OtpItinerary[]> {
 	const doFetch = opts.fetcher ?? fetch;
+	const when = peakWeekdayQuery();
 	const variables = {
 		from: { lat: from[1], lon: from[0] },
 		to: { lat: to[1], lon: to[0] },
 		modes: opts.modes,
-		num: opts.numItineraries ?? 3
+		num: opts.numItineraries ?? 3,
+		date: when.date,
+		time: when.time
 	};
 
 	try {

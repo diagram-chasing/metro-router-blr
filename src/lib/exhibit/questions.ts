@@ -1,10 +1,10 @@
-import type { Frequency, FunQuestion, Lifestyle, Mode } from './types';
+import type { Frequency, FunQuestion, JourneyType, Lifestyle } from './types';
 
-// Step prompts
+// Step prompts (map first, then the single journey choice)
 export const PROMPTS: Record<number, string> = {
-	1: 'When you make your most regular trip across the city, how do you usually get there?',
-	2: 'How often is that trip?',
-	3: "Drop two pins. Then pick how you'd make this trip.",
+	1: 'Drop two pins to trace your most regular trip across the city.',
+	2: 'How do you usually make this trip?',
+	3: 'How often is that trip?',
 	4: 'Apart from that trip, how much are you out in a normal week?'
 };
 
@@ -28,12 +28,15 @@ export const COPY = {
 	routeNoOptions: 'NO USABLE OPTIONS FOR THIS ROUTE'
 };
 
-export const MODE_OPTIONS: { value: Mode; label: string; sub: string }[] = [
-	{ value: 'auto', label: 'AUTO', sub: 'three-wheeler' },
-	{ value: 'car', label: 'CAR', sub: 'car or cab' },
+// The single journey the visitor picks — realistic door-to-door options, not abstract
+// single modes. The two metro options carry their access leg (see journeyEmissions).
+export const JOURNEY_OPTIONS: { value: JourneyType; label: string; sub: string }[] = [
 	{ value: 'two_wheeler', label: 'TWO WHEELER', sub: 'bike / scooter' },
+	{ value: 'car', label: 'CAR', sub: 'car or cab' },
+	{ value: 'car_ev', label: 'EV CAR', sub: 'electric' },
 	{ value: 'bus', label: 'BUS', sub: 'bmtc' },
-	{ value: 'metro', label: 'METRO', sub: 'namma metro' }
+	{ value: 'metro_auto', label: 'METRO + AUTO', sub: 'auto to the station' },
+	{ value: 'metro_walk', label: 'METRO + WALK', sub: 'walk to the station' }
 ];
 
 export const FREQUENCY_OPTIONS: { value: Frequency; label: string; sub: string }[] = [

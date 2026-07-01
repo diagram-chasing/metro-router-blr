@@ -6,6 +6,17 @@ export type Mode =
 	| 'metro'
 	| 'active';
 
+// What the visitor actually picks: a door-to-door journey, not a single vehicle.
+// The two metro options carry a realistic access leg (auto or walk) over the first/
+// last mile, so their per-km intensity is distance-dependent (see journeyEmissions).
+export type JourneyType =
+	| 'two_wheeler'
+	| 'car'
+	| 'car_ev'
+	| 'bus'
+	| 'metro_auto'
+	| 'metro_walk';
+
 export type Frequency = 'daily' | 'few_weekly' | 'weekly' | 'occasional';
 export type Lifestyle = 'homebody' | 'moderate' | 'always_out';
 export type FunQuestionId = 'walking' | 'crowd_tolerance' | 'last_mile';
@@ -31,7 +42,11 @@ export type RouteGeometry = {
 
 export type Answers = {
 	name?: string;
-	mode?: Mode;
+	mode?: JourneyType;
+	// Which journeys OTP actually found for this origin→destination, so the mode step
+	// only offers feasible options (no metro where no metro serves the trip). Set on the
+	// map step from the OTP plan bundle.
+	availableModes?: JourneyType[];
 	frequency?: Frequency;
 	origin?: [number, number];
 	destination?: [number, number];

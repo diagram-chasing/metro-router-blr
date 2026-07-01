@@ -11,7 +11,6 @@ import {
 	PRINT_COLS_B,
 	blockBars,
 	eyebrow,
-	transitTable,
 	heroSrc,
 	asciiSpread,
 	asciiOdometer,
@@ -54,7 +53,6 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 		ops.push({ t: 'text', s, ...o });
 	const gap = (n = 1) => ops.push({ t: 'gap', n });
 	const deck = (s: string) => wrapText(s, PRINT_COLS - 3).forEach((l) => T('   ' + l));
-	const ind = (s: string) => T('   ' + s);
 	let sec = 0;
 	const eyebrowOp = (label: string, stat = '') =>
 		T(eyebrow(String(++sec).padStart(2, '0'), label, stat), { bold: true });
@@ -73,9 +71,8 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	}
 	gap();
 
-	// 01 your route — the map is the route the visitor DREW (Q3); the Mode line is
-	// their stated habit (Q1, the receipt's subject). When they differ, name the
-	// drawn route so the map and the verdict can't be mistaken for the same thing.
+	// 01 your route — the map draws the trip's geometry; the line below names the
+	// journey the visitor picked, which drives every figure on the receipt.
 	eyebrowOp("Let's start your travel");
 	if (view.route.geo.some((g) => g.coords?.length >= 2)) {
 		ops.push({ t: 'img', id: 'map' });
@@ -113,7 +110,6 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	gap();
 	const peopleApprox = Math.round(view.corridor.peoplePerDay / 1000) * 1000;
 	const estSuffix = view.corridor.isFallback ? ' (est)' : '';
-	const ptPct = Math.round(view.corridor.ptShare * 100);
 	deck(`${inr(peopleApprox)} people travel through here every day${estSuffix}`);
 	deck(view.corridor.copy);
 	gap();
@@ -135,11 +131,9 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	T(ruleStr('-'));
 	gap();
 
-	// 04 the damage -> annual total (the centerpiece). The headline is the HABIT.
+	// 04 the damage -> annual total (the centerpiece), for the chosen journey.
 	eyebrowOp('Over one year, this adds up to...');
 	gap();
-	// T(panelRow('CO2', `${inr(view.oneTrip.co2G)} g`));
-	// T(panelRule(`x ${inr(view.item.tripsPerYear)} trips / year`));
 	const heroText = `${inr(view.year.co2Kg)} KG CO2`;
 	const heroW: 1 | 2 = heroText.length > PRINT_COLS / 2 ? 1 : 2;
 	T(' '.repeat(PRINT_COLS), { rev: true });
@@ -168,62 +162,6 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	gap();
 	T(ruleStr('-'));
 	gap();
-
-	// 06 what if — the gap between the stated habit (Q1) and the drawn route (Q3)
-	// when they diverge, else the generic half-swap. comparison.show is true exactly
-	// when the gap variant applies; render one or the other, never mix their figures.
-	if (view.comparison.show) {
-		const c = view.comparison;
-		eyebrowOp('Can you do better?');
-		gap();
-		deck(c.copy);
-		gap();
-		blockBars([
-			{ label: c.usualLabel, value: c.usualKg, right: `${inr(c.usualKg)} kg` },
-			{ label: c.pickedLabel, value: c.pickedKg, right: `${inr(c.pickedKg)} kg` }
-		]).forEach((l) => T(l.text));
-		gap();
-		deck(
-			c.direction === 'cleaner'
-				? `the gap: ${inr(c.savedKg)} kg/yr`
-				: `+${inr(c.savedKg)} kg/yr the way you drew it`
-		);
-		if (c.funBanked) {
-			gap();
-			deck(`that gap is ${c.funBanked}.`);
-		}
-		gap();
-		T(ruleStr('-'));
-		gap();
-	} else if (view.swap.show) {
-		eyebrowOp('Cleaner ways from here');
-		gap();
-		if (view.connectivity && view.connectivity.modes.length) {
-			transitTable(view.connectivity.modes).forEach((l) => T(l));
-			gap();
-		}
-		deck(view.swap.copy);
-		gap();
-		blockBars([
-			{ label: 'Today', value: view.swap.nowKg, right: `${inr(view.swap.nowKg)} kg` },
-			{ label: 'Better', value: view.swap.swapKg, right: `${inr(view.swap.swapKg)} kg` }
-		]).forEach((l) => T(l.text));
-		gap();
-		const trees = view.swap.treesSaved === 1 ? 'tree' : 'trees';
-		deck(`you save ${inr(view.swap.savedKg)} kg/yr  ~${view.swap.treesSaved} ${trees}`);
-		if (view.swap.funBanked) {
-			gap();
-			deck(`that is ${view.swap.funBanked}.`);
-		}
-		// the profile seal (Chladni resonance)
-		// ops.push({ t: 'img', id: 'stamp' });
-		// T(view.archetype.name.toUpperCase(), { align: 'center', bold: true });
-		// if (view.archetype.subtitle) T(view.archetype.subtitle, { align: 'center' });
-		gap();
-		T(ruleStr('-'));
-		gap();
-	}
-
 
 	// by the way — parking as real-estate: a to-scale footprint isotype (one ■ per m²
 	// of street the car sits on) + its land value, then the city's live car odometer.

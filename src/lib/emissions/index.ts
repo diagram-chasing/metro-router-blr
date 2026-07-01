@@ -4,27 +4,24 @@
 // "years of life lost" field). Canonical rule — blend over the actual legs (a walk-access leg
 // counts as 0). Everything downstream reads from here, so the views cannot diverge.
 
-// [1] Aryan, Shinde & Dikshit (2025), "Evaluating the emission reduction
-//     potential of first underground metro rail in Mumbai", Discover
-//     Sustainability, doi:10.1007/s43621-025-01994-0. Tables 2 & 3 — India
-//     BS-IV/BS-VI fleet-weighted tailpipe CO2 factors and occupancies.
+// [1] CSTEP (2023), "Bengaluru 2030: Impact of EVs on Vehicular Emissions"
+//     (CSTEP-RR-2023-7). Table 3 — Bengaluru tailpipe CO2 factors (g CO2/vehicle-km),
+//     from real-world fleet mileage × fuel carbon. Table 14 — EV fleet energy use.
+//     Same source as the PM2.5 model below, so carbon and air-quality now agree.
 // [2] CEA CO2 Baseline Database v20.0 (Dec 2024), FY2023-24 — all-India grid
-//     emission factor (weighted average 0.727 kg CO2/kWh).
-// [3] TERI (2017), "Estimating vehicular emissions" (Bengaluru) — LPG auto.
-// [4] CPCB (2015) / ARAI (2011) road-transport six-cities study — bus factors.
+//     emission factor (weighted average 0.71 kg CO2/kWh).
 
-import type { Mode } from '$lib/exhibit/types';
+import type { JourneyType, Mode } from '$lib/exhibit/types';
 import type { LegKind } from '$lib/exhibit/routeCandidates';
 
 // ── Per-mode factor model ──
 
-// road tailpipe CO2 (g per VEHICLE-km), India fleet-weighted
-// Source [1] Table 2, except auto (LPG, Bengaluru) from [3] and bus from [4].
+// road tailpipe CO2 (g per VEHICLE-km), Bengaluru fleet — CSTEP [1] Table 3.
 const TAILPIPE_CO2_G_PER_VKM: Record<Mode, number> = {
-	car: 130, // own-car tailpipe; the selectable "car / cab" mode is a blend — see CAR_CAB below
-	auto: 92, // LPG three-wheeler, Bengaluru [3]
-	two_wheeler: 40, // real-world petrol 2W (between [1] 24.8 and ICCT new-fleet 38.2)
-	bus: 602, // BMTC diesel, BS-III/IV [4]
+	car: 225, // 4W cars + taxis, 10.1 km/L real-world Bengaluru mileage [1]
+	auto: 125, // three-wheeler, 21.5 km/L [1]
+	two_wheeler: 47, // petrol 2W, 48.8 km/L [1]
+	bus: 755, // diesel city bus, 3.5 km/L [1]
 	metro: 0, // electric — handled by the grid model below
 	active: 0
 };
@@ -75,22 +72,22 @@ function derive<T extends Record<Mode, number>>(
 	return out;
 }
 
-// Merged "car / cab": one private four-wheeler mode, owned or hailed. Set to the mean
-// of the former own-car (120) and solo-cab (172) per-pkm figures — the two single-
-// occupant 4-wheeler values this option now spans. (Cab-pool, 69, folds in here too;
-// pooling was never separately selectable.) Special-cased like metro/active because it
-// represents a behaviour blend, not one vehicle-occupancy pair.
-const CAR_CAB_CO2E_G_PER_PKM = 145;
+// EV car: no tailpipe, charged off the same all-India grid [2]. Energy use from CSTEP [1]
+// Table 14 (electric car 6.8 kWh/day over a 45 km commute = 0.151 kWh/km). Occupancy as a
+// private car (1.3); the grid factor is generation-based, so no separate WTW uplift (as
+// with metro). Result ~82 g/pkm: well under a petrol car, still above bus/metro.
+const EV_KWH_PER_KM = 0.151;
+export const CAR_EV_CO2E_G_PER_PKM = (EV_KWH_PER_KM * GRID_CO2_G_PER_KWH) / OCCUPANCY.car;
 
-/** Grams CO2e per passenger-km, well-to-wheel. */
+/** Grams CO2e per passenger-km, well-to-wheel (CSTEP tailpipe [1] ÷ occupancy × WTW). */
 export const MODE_CO2E_G_PER_PKM: Record<Mode, number> = derive(
-	{ metro: METRO_CO2E_G_PER_PKM, active: 0, car: CAR_CAB_CO2E_G_PER_PKM },
+	{ metro: METRO_CO2E_G_PER_PKM, active: 0 },
 	TAILPIPE_CO2_G_PER_VKM,
 	WTW_UPLIFT
 );
 
 // Resulting central values (for reference):
-//   CO2e g/pkm : car/cab 145 · auto 74 · metro 40 · two_wheeler 40 · bus 18 · active 0
+//   CO2e g/pkm : car/cab 208 · auto 100 · EV car 82 · two_wheeler 47 · metro 40 · bus 23 · active 0
 
 // ── Local air-quality (PM2.5) model ──
 // The wall is an AIR-QUALITY map: health.ts turns PM2.5 concentration into "years of life lost".
@@ -228,7 +225,7 @@ export function lengthKm(coords: [number, number][]): number {
 // ── Grey bucket ──
 
 // Thresholds anchored to the per-passenger-km values above:
-//   walk 0 · bus 18 · metro 40 · two_wheeler 40 · auto 74 · car/cab 145.
+//   walk 0 · bus 23 · metro 40 · two_wheeler 47 · EV car 82 · auto 100 · car/cab 208.
 // bucket i is gPerKm < BUCKET_MAX[i]; values at/above the last threshold are the top bucket.
 export const BUCKET_MAX = [15, 45, 80, 130] as const;
 
@@ -296,6 +293,54 @@ export function routeEmissions(legs: Leg[]): Emissions {
 export function tripEmissions(mode: Mode, km: number): Emissions {
 	const gPerKm = MODE_CO2E_G_PER_PKM[mode];
 	return { km, gPerKm, kgPerTrip: (km * gPerKm) / 1000, bucket: bucket(gPerKm) };
+}
+
+// ── Journeys (what the visitor picks) ──
+
+export const JOURNEY_LABEL: Record<JourneyType, string> = {
+	two_wheeler: 'Two-wheeler',
+	car: 'Car / cab',
+	car_ev: 'EV car',
+	bus: 'Bus',
+	metro_auto: 'Metro + auto',
+	metro_walk: 'Metro + walk'
+};
+
+// The base emissions Mode a journey stands in for wherever the receipt keys off a single
+// Mode (corridor row, archetype, clean/dirty valence): the metro combos read as their
+// metro trunk, an EV as a private car. Emissions themselves come from journeyEmissions.
+export function journeyBaseMode(jt: JourneyType): Mode {
+	switch (jt) {
+		case 'metro_auto':
+		case 'metro_walk':
+			return 'metro';
+		case 'car_ev':
+			return 'car';
+		default:
+			return jt; // two_wheeler | car | bus
+	}
+}
+
+// Door-to-door emissions for a chosen journey. Single modes cost the whole distance at
+// their flat per-pkm rate; the metro combos put a short access leg (auto or walk) on
+// each end and the metro trunk in the middle, so their effective g/pkm falls with
+// distance as the fixed access legs dilute.
+export function journeyEmissions(jt: JourneyType, distanceKm: number): Emissions & { label: string } {
+	const label = JOURNEY_LABEL[jt];
+	if (jt === 'car_ev') {
+		const gPerKm = CAR_EV_CO2E_G_PER_PKM;
+		return { km: distanceKm, gPerKm, kgPerTrip: (distanceKm * gPerKm) / 1000, bucket: bucket(gPerKm), label };
+	}
+	if (jt === 'metro_auto' || jt === 'metro_walk') {
+		const { firstMile, main, lastMile } = firstLastMileKm(distanceKm);
+		const accessKm = firstMile + lastMile;
+		const accessG = jt === 'metro_auto' ? MODE_CO2E_G_PER_PKM.auto : MODE_CO2E_G_PER_PKM.active;
+		const grams = accessKm * accessG + main * MODE_CO2E_G_PER_PKM.metro;
+		const gPerKm = distanceKm > 0 ? grams / distanceKm : 0;
+		return { km: distanceKm, gPerKm, kgPerTrip: grams / 1000, bucket: bucket(gPerKm), label };
+	}
+	// two_wheeler | car | bus — one mode over the whole distance
+	return { ...tripEmissions(jt, distanceKm), label };
 }
 
 // ── Journey PM2.5 (local air quality) ──

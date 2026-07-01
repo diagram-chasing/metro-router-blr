@@ -99,21 +99,14 @@ function paperRows(ops: PrintOp[]): number {
 
 function flagsFor(cse: Case, text: string, rows: number): string[] {
 	const f: string[] = [];
-	const { computed, view, valence } = cse;
-	if (computed.comparison.divergent) f.push('Q1!=Q3');
+	const { view, valence } = cse;
 	if (cse.combo.dataState === 'empty') f.push('EMPTY_DATA');
 	if (cse.combo.dataState === 'sparse') f.push('SPARSE_DATA');
-	if (!view.comparison.show && !view.swap.show) f.push('NO_SWAP');
 	if (/\{[a-zA-Z]+\}/.test(text)) f.push('MISSING_INTERP');
 	if (rows > LEN_BUDGET) f.push('LEN');
 	if (valence === 'affirm') {
-		const verdict = [view.modeRank.copy, view.corridor.copy, view.swap.copy].join(' ').toLowerCase();
+		const verdict = [view.modeRank.copy, view.corridor.copy].join(' ').toLowerCase();
 		if (CRITICAL_PHRASES.some((p) => verdict.includes(p))) f.push('TONE?');
-	}
-	if (view.comparison.show && view.comparison.direction === 'dirtier') {
-		const t = view.comparison.copy.toLowerCase();
-		if (t.includes('the choice you have') || t.includes('below your habit') || t.includes('cleaner one is the one you just'))
-			f.push('REL?');
 	}
 	return f;
 }
@@ -131,10 +124,9 @@ function signature(cse: Case): string {
 			: 'dirty';
 	return [
 		valence,
-		view.comparison.show ? view.comparison.direction : 'no-gap',
+		cse.combo.usualMode,
 		cse.combo.dataState,
 		view.modeRank.histogram ? 'H' : '-',
-		view.swap.show ? 'S' : '-',
 		rankTier
 	].join(' | ');
 }
@@ -181,16 +173,15 @@ for (const s of scored) for (const fl of s.flags) flagCounts[fl] = (flagCounts[f
 const offenders = (flag: string) => scored.filter((s) => s.flags.includes(flag));
 const missingInterp = offenders('MISSING_INTERP');
 const toneLeaks = offenders('TONE?');
-const relLeaks = offenders('REL?');
 const overLen = [...scored].sort((a, b) => b.rows - a.rows);
 const maxRows = overLen[0]?.rows ?? 0;
 const overBudget = scored.filter((s) => s.rows > LEN_BUDGET);
 
-// valence × gap-direction matrix
+// valence × journey matrix
 const vmatrix: Record<string, Record<string, number>> = {};
 for (const s of scored) {
 	const v = s.cse.valence;
-	const d = s.cse.view.comparison.show ? s.cse.view.comparison.direction : 'no-gap';
+	const d = s.cse.combo.usualMode;
 	(vmatrix[v] ??= {})[d] = ((vmatrix[v] ??= {})[d] ?? 0) + 1;
 }
 
@@ -210,9 +201,7 @@ for (const rep of reps.values()) {
 		const v = c.valence;
 		addAudit(`modeRank · ${v}`, c.view.modeRank.copy);
 		addAudit(`corridor · ${v}`, c.view.corridor.copy);
-		addAudit(`swap · ${v}`, c.view.swap.copy);
 		addAudit(`parking · ${v}`, c.view.parking.copy);
-		if (c.view.comparison.show) addAudit(`gap · ${c.view.comparison.direction}`, c.view.comparison.copy);
 		addAudit('cleanerNote', c.view.modeRank.cleanerNote);
 		addAudit('year (clean)', c.view.year.copy || null);
 		addAudit('units (clean)', c.view.units.copy || null);
@@ -234,14 +223,11 @@ h('## Flag counts\n');
 h('| Flag | Count | Meaning |');
 h('| --- | --- | --- |');
 const FLAG_DOC: Record<string, string> = {
-	'Q1!=Q3': 'habit differs from drawn route (comparison block shown)',
 	EMPTY_DATA: 'no comparison population (<5) — histogram + distribution hidden',
 	SPARSE_DATA: 'distribution-only fallback (no histogram)',
-	NO_SWAP: 'nothing cleaner to suggest — the benchmark case',
 	MISSING_INTERP: '⚠ leftover {token} in output — a real bug',
 	LEN: `receipt exceeds ${LEN_BUDGET} rows`,
-	'TONE?': '⚠ heuristic: affirm receipt carrying a critical phrase',
-	'REL?': '⚠ heuristic: gap copy disagrees with the direction'
+	'TONE?': '⚠ heuristic: affirm receipt carrying a critical phrase'
 };
 for (const [fl, n] of Object.entries(flagCounts).sort((a, b) => b[1] - a[1]))
 	h(`| \`${fl}\` | ${n} | ${FLAG_DOC[fl] ?? ''} |`);
@@ -252,15 +238,13 @@ h(`- **MISSING_INTERP:** ${missingInterp.length === 0 ? '✅ none' : `❌ ${miss
 for (const s of missingInterp.slice(0, 20)) h(`  - ${comboLabel(s.cse.combo)}`);
 h(`- **TONE? leaks:** ${toneLeaks.length === 0 ? '✅ none' : `⚠ ${toneLeaks.length}`}`);
 for (const s of toneLeaks.slice(0, 20)) h(`  - ${comboLabel(s.cse.combo)} — "${s.cse.view.modeRank.copy}"`);
-h(`- **REL? leaks:** ${relLeaks.length === 0 ? '✅ none' : `⚠ ${relLeaks.length}`}`);
-for (const s of relLeaks.slice(0, 20)) h(`  - ${comboLabel(s.cse.combo)} — "${s.cse.view.comparison.copy}"`);
 h('');
 h('### Longest receipts');
 for (const s of overLen.slice(0, 8)) h(`- ${s.rows} rows — ${comboLabel(s.cse.combo)}`);
 h('');
 
-h('## Valence × gap matrix\n');
-const dirs = ['no-gap', 'cleaner', 'dirtier'];
+h('## Valence × journey matrix\n');
+const dirs = USUAL_MODES as string[];
 h(`| valence | ${dirs.join(' | ')} |`);
 h(`| --- | ${dirs.map(() => '---').join(' | ')} |`);
 for (const v of ['affirm', 'critical'])

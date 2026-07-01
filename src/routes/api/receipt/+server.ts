@@ -8,7 +8,7 @@
 import type { RequestHandler } from '@sveltejs/kit';
 
 import type { Answers, Mode } from '$lib/exhibit/types';
-import { routeEmissions, legKindToMode, lengthKm } from '$lib/emissions';
+import { journeyBaseMode, journeyEmissions, legKindToMode, lengthKm } from '$lib/emissions';
 import { computeReceipt, distanceBand } from '$lib/receipt/receipt';
 import { lookupConnectivity } from '$lib/server/connectivity';
 import { allTripStats, insertLine, allPerKmStats } from '$lib/server/db';
@@ -70,16 +70,17 @@ export const POST: RequestHandler = async ({ request, fetch }) => {
 
 	putReceipt({ id, createdAt, answers: a, computed, geo });
 
-	// Add the visitor's chosen route to the accumulation map, in its grey bucket.
-	// One carbon-model call drives distance, intensity, bucket and per-trip kg — the
-	// same figures the receipt headline shows, so paper and wall map cannot diverge.
-	if (a.route?.segments?.length) {
-		const e = routeEmissions(a.route.segments);
+	// Add the visitor's chosen JOURNEY to the accumulation map, in its grey bucket.
+	// Emissions come from the picked journey (not the drawn geometry, which is just the
+	// canonical road path), so the wall map matches the receipt headline. The drawn
+	// segments still supply the line's shape.
+	if (a.mode && a.route?.segments?.length) {
+		const e = journeyEmissions(a.mode, computed.trip.distanceKm);
 		insertLine({
 			submissionId: id,
 			createdAt,
-			chosenMode: a.route.chosenKind,
-			distanceKm: e.km,
+			chosenMode: journeyBaseMode(a.mode),
+			distanceKm: computed.trip.distanceKm,
 			co2PerTripKg: e.kgPerTrip,
 			co2PerKmG: e.gPerKm,
 			greyBucket: e.bucket,
@@ -122,7 +123,7 @@ function pickSegments(a: Answers): GeoSnapshot['segments'] {
 	}
 	// Single mode: synthesize a one-segment breakdown so the strip still renders.
 	if (a.mode && a.distanceKm) {
-		return [{ mode: a.mode, lengthM: Math.round(a.distanceKm * 1000) }];
+		return [{ mode: journeyBaseMode(a.mode), lengthM: Math.round(a.distanceKm * 1000) }];
 	}
 	return undefined;
 }

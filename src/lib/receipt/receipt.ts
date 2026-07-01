@@ -1,13 +1,13 @@
 import {
 	CORRIDOR_SHARE,
 	MODE_CO2E_G_PER_PKM,
-	MODE_LABEL,
-	firstLastMileKm,
+	journeyBaseMode,
+	journeyEmissions,
 	legKindToMode,
 	routeEmissions,
 	tripEmissions
 } from '$lib/emissions';
-import type { Answers, Frequency, FunQuestionId, Lifestyle, Mode } from '$lib/exhibit/types';
+import type { Answers, Frequency, FunQuestionId, JourneyType, Lifestyle, Mode } from '$lib/exhibit/types';
 import type { GeoSnapshot } from '$lib/server/receiptStore';
 import { assignArchetype, archetypeBasis } from './archetype';
 import { estimateCorridorTraffic } from './corridorTraffic';
@@ -33,8 +33,10 @@ export type Connectivity = {
 export type ComputedReceipt = {
 	// Inputs echoed back in readable form
 	trip: {
-		mode: Mode;
-		modeLabel: string;
+		mode: Mode; // base mode the journey stands in for (corridor/archetype/valence)
+		journey: JourneyType; // the door-to-door choice actually picked
+		modeLabel: string; // journey label ("Metro + auto")
+		gPerKm: number; // effective CO2e per pkm for this journey at this distance
 		frequency: Frequency;
 		frequencyLabel: string;
 		distanceKm: number;
@@ -44,26 +46,14 @@ export type ComputedReceipt = {
 		lifestyleLabel: string;
 	};
 
-	// Per-trip emissions (their mode vs the best transit-led alternative)
+	// Per-trip / per-year emissions for the chosen journey
 	perTripKg: number; // CO2e, kg
-	bestComboPerTripKg: number; // CO2e, kg
-	multiplier: number; // CO2 perTripKg / bestComboPerTripKg
-	multiplierPhrase: string; // human ("about 3×")
-	comboLabel: string; // the recommended alternative
+	multiplier: number; // perTripKg / the cleanest journey (metro + walk) — for the archetype basis
 
 	// Yearly CO2e (kg)
 	tripsPerYear: number;
 	annualCommuteKg: number; // perTripKg × tripsPerYear
 	annualAllInKg: number; // annualCommuteKg × lifestyle scaler
-	annualSwitchedKg: number;
-	annualSavingKg: number;
-	twoYearSavingKg: number;
-	treeYearsEquivalent: number; // annualSavingKg / 21
-
-	// Recommendation
-	recommendation: {
-		recommendedCombo: string;
-	};
 
 	// Archetype
 	archetype: {
@@ -98,13 +88,6 @@ export type ComputedReceipt = {
 	cylindersYear: number; // annualCommuteKg / 42
 	treesYear: number; // annualCommuteKg / 21
 
-	// Beat 8 — moving HALF the trips onto metro+auto (the spec swaps half, not all)
-	halfSwap: {
-		annualKg: number;
-		savedKg: number;
-		treesSaved: number;
-	};
-
 	// Beat 10 — the real estate a parked car sits on
 	parking: {
 		areaM2: number;
@@ -113,20 +96,7 @@ export type ComputedReceipt = {
 		areaLabel: string;
 	};
 
-	// Usual (Q1 habit) vs this-trip (Q3 route), costed over the same distance. The
-	// habit is the receipt's subject; `picked` is the route the visitor drew on the
-	// map. `divergent` is false (direction 'same') when they match or there's no route.
-	comparison: {
-		divergent: boolean;
-		direction: 'same' | 'cleaner' | 'dirtier';
-		usual: { mode: Mode; modeLabel: string; perTripKg: number; annualKg: number; gPerKm: number };
-		picked: { mode: Mode; modeLabel: string; perTripKg: number; annualKg: number; gPerKm: number };
-		deltaAnnualKg: number;
-		multiplier: number;
-	};
-
 	distanceBand: string; // e.g. "6-10 km"
-	personalNudge: string;
 	disclaimer: string;
 };
 
@@ -152,20 +122,6 @@ export type ReceiptView = {
 		distanceKm: number;
 		segments: RouteSeg[];
 		geo: RouteGeoLeg[]; // drawn per-leg geometry; empty when no route was traced
-	};
-	// Compact "usual vs this trip" gap, shown only when the drawn route (Q3) differs
-	// from the stated habit (Q1). Both figures are annual kg for the same trip.
-	comparison: {
-		show: boolean;
-		direction: 'cleaner' | 'dirtier';
-		usualLabel: string;
-		usualKg: number;
-		pickedLabel: string;
-		pickedKg: number;
-		savedKg: number;
-		copy: string;
-		// Saving reframed as pleasure to blow it on; '' when the drawn route is dirtier.
-		funBanked: string;
 	};
 	modeRank: {
 		copy: string;
@@ -204,29 +160,6 @@ export type ReceiptView = {
 	};
 	// funLine: the annual figure as a dumb-pleasure count (the "spent" framing).
 	units: { cylinders: number; trees: number; copy: string; isClean: boolean; funLine: string };
-	swap: {
-		show: boolean;
-		nowKg: number;
-		swapKg: number;
-		savedKg: number;
-		treesSaved: number;
-		copy: string;
-		// The saving as pleasure you can now afford.
-		funBanked: string;
-		// Concrete greener options within walking distance of the start, one
-		// formatted line each ([] when no nearby-transit data is available).
-		ideas: string[];
-	};
-	// The "can you do better / what if" comparison, rendered as a slope chart
-	// (viz/SlopeChart): 'gap' = the habit vs the route drawn (Q1 vs Q3); 'swap' = now vs
-	// the half-swap. points carry annual kg; a downward slope reads cleaner, upward heavier.
-	whatIf: {
-		show: boolean;
-		variant: 'gap' | 'swap';
-		direction: 'cleaner' | 'dirtier';
-		points: { label: string; value: number }[];
-		caption: string;
-	};
 	archetype: {
 		name: string;
 		subtitle: string;
@@ -379,31 +312,6 @@ function chooseTailedBeat(id: string): TailBeat | '' {
 	return pick(id, 'tail-beat', candidates) as TailBeat | '';
 }
 
-// ── Personal nudge · friction overlay ──
-const FRICTION_POOLS: Record<FunQuestionId, string[]> = {
-	walking: [
-		'a short auto covers the walking legs, so the swap is realistic. you keep your feet dry.',
-		'the walking bits become a quick auto. nobody is asking you to hike.'
-	],
-	crowd_tolerance: [
-		'crowds do not bother you, you said, so the only thing left to want is comfort. the metro has ac.',
-		'you can handle a crowd, so this comes down to comfort, and the ac side wins.'
-	],
-	last_mile: [
-		'the metro takes the long middle; a short auto or a few minutes on foot closes each end. you already do this.',
-		"the ends are a quick auto or a short walk, the part you've never minded. the metro handles the rest."
-	]
-};
-
-const NUDGE_FALLBACK = [
-	'one switch on the heaviest leg is the easiest place to start. start there.',
-	'swap the worst leg first. the rest can wait, or not happen.'
-];
-
-function frictionNudge(funId: FunQuestionId | undefined, id: string): string {
-	return funId ? pick(id, 'friction', FRICTION_POOLS[funId]) : pick(id, 'friction', NUDGE_FALLBACK);
-}
-
 // ── "Cleaner than you" note ──
 const CLEANER_NOTE = [
 	'about {x} in 10 commuters logged here come in cleaner. the maths, not a verdict.',
@@ -472,35 +380,8 @@ const LIFESTYLE_LABEL: Record<Lifestyle, string> = {
 	always_out: 'always on the move'
 };
 
-// The "you told us …" premise for the swap beat, drawn from the friction answer.
-const PREMISE: Record<FunQuestionId, string> = {
-	walking: "you'd happily walk for a good coffee",
-	crowd_tolerance: "crowds don't faze you",
-	last_mile: 'the last stretch is no trouble to you'
-};
-
-// Name the transit mode(s) actually running on this corridor (connectivity.json),
-// busiest first — so the swap copy says "the bus" where there's no metro. Generic
-// fallback when the area pair has no recorded transit.
-function transitModePhrase(conn: Connectivity | null): string {
-	if (!conn || !conn.modes.length) return 'public transport';
-	const NAMES: Record<ConnectivityMode['key'], string> = {
-		metro: 'the metro',
-		ac_bus: 'an AC bus',
-		bus: 'the bus'
-	};
-	const names = conn.modes.slice(0, 2).map((m) => NAMES[m.key]);
-	return names.length > 1 ? `${names[0]} or ${names[1]}` : names[0];
-}
-
 const DISCLAIMER =
-	'Estimates use India-specific operational emission factors; actual figures vary with vehicle, occupancy and traffic conditions. For a full methodology, see https://diagramchasing.fun/2026/emissions. Also, in the larger scheme of things, this is a small thing. A war burns more carbon, and more lives, than any commute ever will.';
-
-function multiplierPhrase(m: number): string {
-	if (!isFinite(m) || m <= 1.2) return 'about the same';
-	const rounded = Math.round(m);
-	return `about ${rounded}×`;
-}
+	'Estimates use India-specific operational emission factors; actual figures vary with vehicle, occupancy and traffic conditions. For a full methodology, see https://diagramchasing.fun/2026/emissions. Also, in the grand scheme of things, this is minor. A single war burns more carbon, and lives, than any commute ever will.';
 
 function subtitleFor(funId: FunQuestionId | undefined, funAnswer: string | undefined): string {
 	if (!funId) return '';
@@ -600,99 +481,21 @@ function corridorCopy(c: ComputedReceipt, id: string, wantTail: boolean): string
 	const carG = String(rows.find((r) => r.key === 'car')?.gPerKm ?? 0);
 	const busG = String(rows.find((r) => r.key === 'bus')?.gPerKm ?? 18);
 	const you = rows.find((r) => r.isYou);
+	// The visitor's own figures come from the chosen journey, not the corridor row it
+	// highlights: an EV or a metro combo has no exact bar, so quote its real effective
+	// per-km and full label instead of the nearest base mode's.
+	const youG = String(c.trip.gPerKm);
+	const youLabel = c.trip.modeLabel.toLowerCase();
 
 	let line: string;
 	if (!you) {
 		line = interp(pick(id, 'cor-verdict', CORRIDOR_NOYOU), { carG });
 	} else if (v === 'affirm') {
-		line = interp(pick(id, 'cor-verdict', CORRIDOR_CLEAN), {
-			youLabel: you.label,
-			youG: String(you.gPerKm),
-			carG
-		});
+		line = interp(pick(id, 'cor-verdict', CORRIDOR_CLEAN), { youLabel, youG, carG });
 	} else {
-		line = interp(pick(id, 'cor-verdict', CORRIDOR_DIRTY), { busG, youG: String(you.gPerKm) });
+		line = interp(pick(id, 'cor-verdict', CORRIDOR_DIRTY), { busG, youG });
 	}
 	return `${line} ${beatTail(id, 'corridor', v, wantTail)}`.trim();
-}
-
-const SWAP_NONE = [
-	"nothing to swap. you're the cleaner option other receipts get told to switch to.",
-	"no downgrade available. you're already where i'd send everyone else.",
-	"skip this part. you're the version of this trip i wish more people picked.",
-	"there's nothing greener to suggest. you're it. enjoy that.",
-	'the advice section has nothing for you. it is a little annoyed about that, frankly.',
-	"no swap. you're the benchmark."
-];
-
-// The whole swap nudge in one line: the friction premise + the concrete action,
-// naming the transit mode(s) actually on this corridor. The before/after numbers and
-// the tree saving live in the panel below, so the copy never restates them.
-const SWAP_LEAD = [
-	'you told me {premise}, so half these trips could be {swap}.',
-	'{premise}, so half of these could be {swap}.',
-	'half these trips could be {swap}. {premise}, after all.'
-];
-
-function swapCopy(c: ComputedReceipt, a: Answers, id: string): string {
-	if (c.halfSwap.savedKg <= 0) {
-		return pick(id, 'swap-none', SWAP_NONE);
-	}
-
-	// No tail here: a forward-looking nudge shouldn't end on a verdict sign-off.
-	const premise = (a.funQuestionId && PREMISE[a.funQuestionId]) || 'comfort is what you optimise for';
-	// Honor bestCombo's label: a short trip reads as a walk (no phantom auto), and
-	// where it's transit, name the mode(s) actually on this corridor instead of the
-	// generic "public transport". When the premise is that they'd happily walk, the
-	// access leg reads as a walk too, so the "so..." never contradicts itself.
-	const accessWord = a.funQuestionId === 'walking' ? 'a short walk' : 'a short auto';
-	const swap = c.comboLabel
-		.replace('public transport', transitModePhrase(c.connectivity))
-		.replace('a short auto', accessWord);
-	return interp(pick(id, 'swap-lead', SWAP_LEAD), { premise, swap }).replace(/\s+/g, ' ').trim();
-}
-
-// ── Usual vs this-trip gap (the comparison block) ──
-// Shown only when the route drawn on the map (Q3) differs from the stated habit
-// (Q1). Direction is the trip relative to the habit, so the copy never congratulates
-// a downgrade or scolds an upgrade.
-const GAP_CLEANER = [
-	'the gap is the choice you have every morning.',
-	'you drew the lighter trip yourself, {savedKg} kg/yr below your habit.',
-	'same trip, {savedKg} kg/yr apart. the cleaner one is the one you just sketched.',
-	'one of these you do; the other you drew. {savedKg} kg/yr sits between them.'
-];
-
-const GAP_DIRTIER = [
-	'you usually travel lighter than the route you just drew.',
-	'the trip you sketched is the heavier one, by {savedKg} kg/yr.',
-	'your habit is the cleaner of the two. this particular route, less so, {savedKg} kg/yr more.'
-];
-
-function gapCopy(c: ComputedReceipt, id: string): string {
-	const pool = c.comparison.direction === 'dirtier' ? GAP_DIRTIER : GAP_CLEANER;
-	return interp(pick(id, 'gap', pool), { savedKg: comma(c.comparison.deltaAnnualKg) });
-}
-
-// Compact lines describing the single best cleaner alternative for this trip,
-// from the OTP swap suggestion. Kept under the 48-col Font A budget (plain ASCII).
-function fmtDist(m: number): string {
-	return m < 1000 ? `${m} m` : `${(m / 1000).toFixed(1)} km`;
-}
-
-function swapIdeas(geo: GeoSnapshot | undefined): string[] {
-	const s = geo?.swap;
-	if (!s) return [];
-	const head = s.mode === 'SUBWAY' ? `Metro ${s.routeName} Line` : `Bus ${s.routeName}`;
-	const freq = s.headwayMin ? `, ~every ${s.headwayMin} min` : '';
-	const board = s.boardName.length > 36 ? s.boardName.slice(0, 33) + '...' : s.boardName;
-	const leg = (l: { meters: number; auto: boolean }) =>
-		`${fmtDist(l.meters)} ${l.auto ? 'auto' : 'walk'}`;
-	return [
-		`  ${head}${freq}`,
-		`  Board: ${board}`,
-		`  ${leg(s.access)} in, ${leg(s.egress)} out`
-	];
 }
 
 const PS_OWN = [
@@ -882,27 +685,11 @@ function rupeesLakh(r: number): string {
 	return `₹${Math.round(lakh)} lakh`;
 }
 
-// Best realistic alternative for the same route: a short auto for the first/last
-// mile + public transport for the trunk. The trunk uses a bus-and-metro blend
-// (mirrors publicTransitFactor in emissionsGrid.ts) rather than the metro alone, since
-// the realistic transit option is a mix of the two. Very short trips just walk.
-function bestCombo(distanceKm: number): { co2Kg: number; comboLabel: string } {
-	if (distanceKm < 2) {
-		return { co2Kg: 0, comboLabel: 'a 15-min walk' };
-	}
-	const { firstMile, main, lastMile } = firstLastMileKm(distanceKm);
-	const accessKm = firstMile + lastMile;
-	const transitCo2 = (MODE_CO2E_G_PER_PKM.bus + MODE_CO2E_G_PER_PKM.metro) / 2;
-	const co2Kg = (accessKm * MODE_CO2E_G_PER_PKM.auto + main * transitCo2) / 1000;
-	return { co2Kg, comboLabel: 'public transport + a short auto' };
-}
-
 export function computeReceipt(a: Answers): ComputedReceipt {
-	// Two readings of the SAME trip. The HABIT (Q1) is the receipt's subject — it
-	// drives the headline, the rank, the corridor row, the seal and the archetype.
-	// The route drawn on the map (Q3) is the comparison: it provides the geometry
-	// and, when it differs from the habit, the gap shown in the "what if" block.
-	// Both are costed over the same distance so the comparison is apples-to-apples.
+	// One reading of one trip. The visitor picks a single JOURNEY (Q2) — it drives the
+	// headline, the rank, the corridor row, the seal and the archetype. The map (Q1) is
+	// GEOMETRY ONLY: it supplies the distance, the drawn line and the corridor location,
+	// never a second mode to compare against.
 	const legs = a.route?.segments;
 	const hasRoute = !!(legs && legs.length);
 	const frequency: Frequency = a.frequency ?? 'few_weekly';
@@ -910,85 +697,68 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 	const tripsPerYear = TRIPS_PER_YEAR[frequency];
 	const lifestyleMul = LIFESTYLE_MULTIPLIER[lifestyle];
 
-	const usualMode: Mode = a.mode ?? 'car';
-	const pickedMode: Mode = hasRoute ? legKindToMode(a.route!.chosenKind) : usualMode;
-	const pickedEmissions = hasRoute ? routeEmissions(legs!) : null;
-	const distanceKm =
-		pickedEmissions && pickedEmissions.km > 0 ? pickedEmissions.km : (a.distanceKm ?? 0);
-	const usualEmissions = tripEmissions(usualMode, distanceKm);
-	const picked = pickedEmissions ?? usualEmissions;
+	const journey: JourneyType = a.mode ?? 'car';
+	// Distance comes from the drawn geometry when present (its great-circle length),
+	// falling back to the OTP-reported distance.
+	const routeKm = hasRoute ? routeEmissions(legs!).km : 0;
+	const distanceKm = routeKm > 0 ? routeKm : (a.distanceKm ?? 0);
 
-	// The habit is the subject; keep the old names so the rest of the function reads
-	// against it unchanged.
-	const tripMode: Mode = usualMode;
-	const emissions = usualEmissions;
+	// The base Mode the journey stands in for (corridor row, archetype, valence).
+	const tripMode: Mode = journeyBaseMode(journey);
+	const emissions = journeyEmissions(journey, distanceKm);
 
 	// Per-trip
 	const perTripKg = emissions.kgPerTrip;
-	const combo = bestCombo(distanceKm);
-	const multiplier = combo.co2Kg > 0 ? perTripKg / combo.co2Kg : 0;
-
-	// Usual (habit) vs this-trip (drawn route), annual. Direction is the drawn route
-	// relative to the habit. 'same' when modes match, there's no route, or the gap
-	// rounds to nothing — in which case the comparison block is suppressed.
-	const usualAnnualKg = usualEmissions.kgPerTrip * tripsPerYear;
-	const pickedAnnualKg = picked.kgPerTrip * tripsPerYear;
-	const deltaAnnualKg = Math.abs(usualAnnualKg - pickedAnnualKg);
-	const divergent = hasRoute && pickedMode !== usualMode;
-	const direction: 'same' | 'cleaner' | 'dirtier' =
-		!divergent || deltaAnnualKg < 1
-			? 'same'
-			: pickedAnnualKg < usualAnnualKg
-				? 'cleaner'
-				: 'dirtier';
-	const cmpMult =
-		usualEmissions.kgPerTrip > 0 && picked.kgPerTrip > 0
-			? Math.max(usualEmissions.kgPerTrip, picked.kgPerTrip) /
-			Math.min(usualEmissions.kgPerTrip, picked.kgPerTrip)
-			: 0;
+	// How much heavier than the cleanest realistic journey (metro + walk), for the
+	// archetype basis line. ~1 for a clean journey; large for a private car.
+	const cleanestKg = journeyEmissions('metro_walk', distanceKm).kgPerTrip;
+	const multiplier = cleanestKg > 0 ? perTripKg / cleanestKg : 0;
 
 	// Annual CO2e (kg)
 	const annualCommuteKg = perTripKg * tripsPerYear;
 	const annualAllInKg = annualCommuteKg * lifestyleMul;
-	const annualSwitchedKg = combo.co2Kg * tripsPerYear;
-	const annualSavingKg = Math.max(0, annualCommuteKg - annualSwitchedKg);
-	const twoYearSavingKg = annualSavingKg * 2;
-	const treeYearsEquivalent = annualSavingKg / KG_CO2_PER_TREE_YEAR;
 
 	const arch = assignArchetype(tripMode);
 	const subtitle = subtitleFor(a.funQuestionId, a.funAnswer);
 
-	// No receipt id at compute time; key the pick on the answer so it stays
-	// deterministic per friction (these two fields aren't surfaced in ReceiptView).
-	const personalNudge = frictionNudge(a.funQuestionId, a.funQuestionId ?? 'nudge');
-
-	// Beat 3 — mode ranking among all 8 ways to move
+	// Beat 3 — mode ranking: where this journey's effective g/pkm sits among the base modes
 	const carbonValues = ALL_MODES.map((m) => MODE_CO2E_G_PER_PKM[m]);
-	const carbonRankFromDirtiest = rankFromDirtiest(MODE_CO2E_G_PER_PKM[tripMode], carbonValues);
+	const carbonRankFromDirtiest = rankFromDirtiest(emissions.gPerKm, carbonValues);
 
 	// Beat 4 — corridor traffic, grounded in nearby junction counts (traffic.json).
 	// The per-mode g/km bars stay modeled (CORRIDOR_SHARE); only the headcount, the
 	// public-transport split and the emissions line come from the real data.
 	const corridorTraffic = estimateCorridorTraffic(a.route?.segments, distanceKm);
 	const totalPerDay = corridorTraffic.peoplePerDay;
-	const youKey = corridorKeyFor(tripMode);
-	const corridorRows = Object.keys(CORRIDOR_SHARE)
-		.map((key) => ({
-			key,
-			label: CORRIDOR_KEY_LABEL[key],
-			countPerDay: Math.round(totalPerDay * CORRIDOR_SHARE[key]),
-			gPerKm: Math.round(MODE_CO2E_G_PER_PKM[CORRIDOR_KEY_MODE[key]]),
-			isYou: key === youKey
-		}))
-		.sort((x, y) => y.gPerKm - x.gPerKm); // dirtiest first — bar length encodes g/km
+	// Pure single-mode journeys sit exactly on a traffic bar, so highlight it. Journeys
+	// with no traffic slice (EV, the metro combos) get their OWN bar at their real
+	// effective g/km instead of being dumped onto the nearest generic mode's bar.
+	const YOU_BAR: Partial<Record<JourneyType, string>> = {
+		car_ev: 'ev',
+		metro_auto: 'm+auto',
+		metro_walk: 'm+walk'
+	};
+	const ownBarLabel = YOU_BAR[journey];
+	const youKey = ownBarLabel ? null : corridorKeyFor(tripMode);
+	const trafficRows = Object.keys(CORRIDOR_SHARE).map((key) => ({
+		key,
+		label: CORRIDOR_KEY_LABEL[key],
+		countPerDay: Math.round(totalPerDay * CORRIDOR_SHARE[key]),
+		gPerKm: Math.round(MODE_CO2E_G_PER_PKM[CORRIDOR_KEY_MODE[key]]),
+		isYou: key === youKey
+	}));
+	const corridorRows = (
+		ownBarLabel
+			? [
+				...trafficRows,
+				{ key: 'you', label: ownBarLabel, countPerDay: 0, gPerKm: Math.round(emissions.gPerKm), isYou: true }
+			]
+			: trafficRows
+	).sort((x, y) => y.gPerKm - x.gPerKm); // dirtiest first — bar length encodes g/km
 
 	// Beat 7 — year-total equivalences
 	const cylindersYear = annualCommuteKg / KG_CO2_PER_LPG_CYLINDER;
 	const treesYear = annualCommuteKg / KG_CO2_PER_TREE_YEAR;
-
-	// Beat 8 — move HALF the trips onto metro+auto
-	const halfAnnualKg = 0.5 * annualCommuteKg + 0.5 * annualSwitchedKg;
-	const halfSavedKg = Math.max(0, annualCommuteKg - halfAnnualKg);
 
 	// Beat 10 — parking footprint as real estate, priced at the destination's
 	// guidance value when we have a drop pin; the city-wide constant otherwise.
@@ -1002,7 +772,9 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 	return {
 		trip: {
 			mode: tripMode,
-			modeLabel: MODE_LABEL[tripMode],
+			journey,
+			modeLabel: emissions.label,
+			gPerKm: round(emissions.gPerKm, 0),
 			frequency,
 			frequencyLabel: FREQUENCY_LABEL[frequency],
 			distanceKm: round(distanceKm, 2),
@@ -1012,20 +784,10 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 			lifestyleLabel: LIFESTYLE_LABEL[lifestyle]
 		},
 		perTripKg: round(perTripKg, 2),
-		bestComboPerTripKg: round(combo.co2Kg, 2),
 		multiplier: round(multiplier, 1),
-		multiplierPhrase: multiplierPhrase(multiplier),
-		comboLabel: combo.comboLabel,
 		tripsPerYear,
 		annualCommuteKg: round(annualCommuteKg, 0),
 		annualAllInKg: round(annualAllInKg, 0),
-		annualSwitchedKg: round(annualSwitchedKg, 0),
-		annualSavingKg: round(annualSavingKg, 0),
-		twoYearSavingKg: round(twoYearSavingKg, 0),
-		treeYearsEquivalent: round(treeYearsEquivalent, 0),
-		recommendation: {
-			recommendedCombo: combo.comboLabel
-		},
 		archetype: {
 			name: arch.name,
 			subtitle
@@ -1048,39 +810,13 @@ export function computeReceipt(a: Answers): ComputedReceipt {
 		connectivity: null,
 		cylindersYear: round(cylindersYear, 0),
 		treesYear: round(treesYear, 0),
-		halfSwap: {
-			annualKg: round(halfAnnualKg, 0),
-			savedKg: round(halfSavedKg, 0),
-			treesSaved: round(halfSavedKg / KG_CO2_PER_TREE_YEAR, 0)
-		},
 		parking: {
 			areaM2: PARKING_AREA_M2,
 			ratePerM2: parkingRatePerM2,
 			rupees: parkingRupees,
 			areaLabel: parkingAreaLabel
 		},
-		comparison: {
-			divergent,
-			direction,
-			usual: {
-				mode: usualMode,
-				modeLabel: MODE_LABEL[usualMode],
-				perTripKg: round(usualEmissions.kgPerTrip, 2),
-				annualKg: round(usualAnnualKg, 0),
-				gPerKm: Math.round(usualEmissions.gPerKm)
-			},
-			picked: {
-				mode: pickedMode,
-				modeLabel: MODE_LABEL[pickedMode],
-				perTripKg: round(picked.kgPerTrip, 2),
-				annualKg: round(pickedAnnualKg, 0),
-				gPerKm: Math.round(picked.gPerKm)
-			},
-			deltaAnnualKg: round(deltaAnnualKg, 0),
-			multiplier: round(cmpMult, 1)
-		},
 		distanceBand: distanceBand(distanceKm),
-		personalNudge,
 		disclaimer: DISCLAIMER
 	};
 }
@@ -1145,38 +881,6 @@ export function buildReceiptView(
 	const tailV = subjectValence(c.trip.mode);
 	const tailedBeat = chooseTailedBeat(id);
 
-	// What-if slope chart: the habit-vs-drawn gap when the route diverges, else the
-	// half-swap. Same branch order the section renders in (gap takes precedence).
-	const compShow = c.comparison.divergent && c.comparison.direction !== 'same';
-	const swapShow = c.halfSwap.savedKg > 0;
-	const treesWord = c.halfSwap.treesSaved === 1 ? 'tree' : 'trees';
-	const whatIf: ReceiptView['whatIf'] = compShow
-		? {
-			show: true,
-			variant: 'gap',
-			direction: c.comparison.direction === 'dirtier' ? 'dirtier' : 'cleaner',
-			points: [
-				{ label: c.comparison.usual.modeLabel, value: Math.round(c.comparison.usual.annualKg) },
-				{ label: c.comparison.picked.modeLabel, value: Math.round(c.comparison.picked.annualKg) }
-			],
-			caption:
-				c.comparison.direction === 'dirtier'
-					? `+${comma(c.comparison.deltaAnnualKg)} kg/yr the way you drew it`
-					: `the gap: ${comma(c.comparison.deltaAnnualKg)} kg/yr`
-		}
-		: swapShow
-			? {
-				show: true,
-				variant: 'swap',
-				direction: 'cleaner',
-				points: [
-					{ label: 'Now', value: Math.round(c.annualCommuteKg) },
-					{ label: 'If you swap', value: Math.round(c.halfSwap.annualKg) }
-				],
-				caption: `saves ${comma(c.halfSwap.savedKg)} kg/yr  ~${c.halfSwap.treesSaved} ${treesWord}`
-			}
-			: { show: false, variant: 'swap', direction: 'cleaner', points: [], caption: '' };
-
 	// Emissions "resonance": the profile seal is a Chladni standing-wave figure.
 	// n (a low→high mode) tracks how dirty the trip is per km; m tracks the total
 	// annual burden. Clean, light commutes ring calm figures; heavy ones get busy,
@@ -1184,7 +888,7 @@ export function buildReceiptView(
 	const co2Vals = Object.values(MODE_CO2E_G_PER_PKM);
 	const cMin = Math.min(...co2Vals);
 	const cMax = Math.max(...co2Vals);
-	const co2PerKm = MODE_CO2E_G_PER_PKM[c.trip.mode] ?? 0;
+	const co2PerKm = c.trip.gPerKm;
 	const nNorm = cMax > cMin ? (co2PerKm - cMin) / (cMax - cMin) : 0;
 	const figN = SEAL.modeMin + Math.round(nNorm * SEAL.modeRange); // 2..8
 	const mNorm = Math.min(1, Math.sqrt(c.annualCommuteKg / SEAL.annualNormKg));
@@ -1212,20 +916,6 @@ export function buildReceiptView(
 				coords: s.coords,
 				gPerKm: MODE_CO2E_G_PER_PKM[legKindToMode(s.legKind)]
 			}))
-		},
-		comparison: {
-			show: c.comparison.divergent && c.comparison.direction !== 'same',
-			direction: c.comparison.direction === 'dirtier' ? 'dirtier' : 'cleaner',
-			usualLabel: c.comparison.usual.modeLabel,
-			usualKg: c.comparison.usual.annualKg,
-			pickedLabel: c.comparison.picked.modeLabel,
-			pickedKg: c.comparison.picked.annualKg,
-			savedKg: c.comparison.deltaAnnualKg,
-			copy: gapCopy(c, id),
-			funBanked:
-				c.comparison.direction === 'dirtier'
-					? ''
-					: funEquivBanked(c.comparison.deltaAnnualKg, id)
 		},
 		modeRank: {
 			copy: modeRankCopy(c, id, tailedBeat === 'modeRank'),
@@ -1262,17 +952,6 @@ export function buildReceiptView(
 			// makes a big, fun count). Clean habits show the vs-car line instead.
 			funLine: modeClean ? '' : funEquivSpent(c.annualCommuteKg, id)
 		},
-		swap: {
-			show: c.halfSwap.savedKg > 0,
-			nowKg: c.annualCommuteKg,
-			swapKg: c.halfSwap.annualKg,
-			savedKg: c.halfSwap.savedKg,
-			treesSaved: c.halfSwap.treesSaved,
-			copy: swapCopy(c, a, id),
-			funBanked: c.halfSwap.savedKg > 0 ? funEquivBanked(c.halfSwap.savedKg, id) : '',
-			ideas: swapIdeas(geo)
-		},
-		whatIf,
 		archetype: {
 			name: c.archetype.name.toUpperCase(),
 			subtitle: c.archetype.subtitle,

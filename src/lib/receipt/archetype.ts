@@ -46,8 +46,7 @@ export function archetypeBasis(c: ComputedReceipt, id: string): string {
 		mult: String(Math.round(mult)),
 		cRank: String(c.modeRank.carbonRankFromDirtiest),
 		tot: String(c.modeRank.totalModes),
-		kg: comma(c.annualCommuteKg),
-		savedKg: comma(c.halfSwap.savedKg)
+		kg: comma(c.annualCommuteKg)
 	};
 
 	let pool = BASIS[key];

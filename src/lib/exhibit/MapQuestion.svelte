@@ -4,11 +4,11 @@
 	import { browser } from '$app/environment';
 
 	import Map from '$lib/components/Map.svelte';
-	import { planAllModes, type PlanBundle } from '$lib/utils/otp';
+	import { firstWithMode, planAllModes, type PlanBundle } from '$lib/utils/otp';
 
 	import { COPY } from './questions';
 	import { buildOtpCandidates, stationNames, tripDistanceKm } from './routeCandidates';
-	import RouteOptions from './RouteOptions.svelte';
+	import type { JourneyType } from './types';
 	import XpProgress from './XpProgress.svelte';
 	import { answers, setAnswer } from './store.svelte';
 
@@ -18,39 +18,17 @@
 	let isLoading = $state(false);
 	let lastError = $state<string | null>(null);
 
-	const routeReady = $derived(!!originPick && !!destinationPick && !!bundle);
-
 	const statusLabel = $derived(
 		!originPick ? COPY.mapSetOrigin : !destinationPick ? COPY.mapSetDestination : COPY.mapDistance
 	);
 
+	// The visitor no longer picks a route: the map just needs geometry. Draw the same
+	// canonical path we store for the receipt (auto-set in calculate()).
 	const candidates = $derived(bundle ? buildOtpCandidates(answers, bundle) : []);
-
-	const selectedCandidate = $derived(
-		candidates.find((c) => c.id === answers.chosenRouteId) ?? null
+	const drawnCandidate = $derived(
+		candidates.find((c) => c.id === answers.chosenRouteId) ?? candidates[0] ?? null
 	);
-	// When the user hasn't picked yet, preview the top candidate so the map
-	// isn't blank between dropping pins and tapping a card. Selection state in
-	// the panel UI stays driven by chosenRouteId only.
-	const previewCandidate = $derived(selectedCandidate ?? candidates[0] ?? null);
-
-	// The map renders the previewed candidate's real OTP geometry, leg by leg.
-	const mapSegments = $derived(previewCandidate?.segments ?? null);
-
-	// Record the picked card AND its drawable geometry in one go. The geometry
-	// travels with the submission and becomes the grey line on the home-page map.
-	// Done in the click handler (not an $effect) so writing answers.route can't
-	// feed back into the candidate derivation and loop.
-	function selectRoute(id: string) {
-		setAnswer('chosenRouteId', id);
-		const c = candidates.find((x) => x.id === id);
-		if (c?.segments) {
-			setAnswer('route', {
-				chosenKind: c.kind,
-				segments: c.segments.map((s) => ({ coords: s.coords, legKind: s.kind }))
-			});
-		}
-	}
+	const mapSegments = $derived(drawnCandidate?.segments ?? null);
 
 	async function handlePick(e: CustomEvent<{ lng: number; lat: number }>) {
 		if (isLoading) return;
@@ -90,6 +68,30 @@
 			const stns = stationNames(b);
 			setAnswer('originStation', stns.origin);
 			setAnswer('destinationStation', stns.destination);
+
+			// Which journeys are actually feasible here, from what OTP found. Road modes
+			// are always possible; bus and the metro combos only when an itinerary really
+			// contains that transit leg. OTP returns a walk-only fallback when no transit
+			// serves the trip, so a non-empty array is NOT enough — check for the leg.
+			const avail: JourneyType[] = ['two_wheeler', 'car', 'car_ev'];
+			if (firstWithMode(b.bus, 'BUS')) avail.push('bus');
+			if (firstWithMode(b.metro, 'SUBWAY')) avail.push('metro_auto', 'metro_walk');
+			setAnswer('availableModes', avail);
+			// Drop a previously chosen mode that this trip can't actually support.
+			if (answers.mode && !avail.includes(answers.mode)) setAnswer('mode', undefined);
+
+			// Geometry only: keep one canonical path (prefer the full road route) to draw
+			// the map and ground the corridor. The chosen JOURNEY (Q2) drives emissions;
+			// this route's mode is never treated as a second choice to compare against.
+			const cands = buildOtpCandidates(answers, b);
+			const canon = cands.find((c) => c.kind === 'cab' || c.kind === 'auto') ?? cands[0];
+			if (canon?.segments) {
+				setAnswer('chosenRouteId', canon.id);
+				setAnswer('route', {
+					chosenKind: canon.kind,
+					segments: canon.segments.map((s) => ({ coords: s.coords, legKind: s.kind }))
+				});
+			}
 		} catch (err) {
 			console.error('Journey calculation failed:', err);
 			lastError = err instanceof Error ? err.message : COPY.mapFailed;
@@ -116,6 +118,7 @@
 		setAnswer('destinationStation', undefined);
 		setAnswer('chosenRouteId', undefined);
 		setAnswer('route', undefined);
+		setAnswer('availableModes', undefined);
 	}
 </script>
 
@@ -205,19 +208,6 @@
 			class="font-xp absolute left-1/2 top-5 max-w-[320px] -translate-x-1/2 rounded-[3px] border border-[#aca899] bg-[#ece9d8] px-4 py-3 text-center text-[13px] font-semibold text-[#b52012] shadow-[2px_2px_6px_rgba(0,0,0,0.4)]"
 		>
 			{lastError}
-		</div>
-	{/if}
-
-	<!-- Route options float over the right edge once routes are ready, so the map
-	     stays clean and full-bleed while the visitor is still dropping pins. -->
-	{#if candidates.length > 0}
-		<div class="absolute bottom-4 right-4 top-4 flex w-[250px]">
-			<RouteOptions
-				{candidates}
-				selectedId={answers.chosenRouteId}
-				locked={!routeReady}
-				onSelect={selectRoute}
-			/>
 		</div>
 	{/if}
 </div>
