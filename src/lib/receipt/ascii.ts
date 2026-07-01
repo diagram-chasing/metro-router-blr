@@ -87,12 +87,12 @@ export function asciiSpread(values: number[], mine: number, cols = PRINT_COLS): 
 	for (const t of BUCKET_MAX.slice(0, -1)) place(tickRow, posOf(t), String(t));
 	place(tickRow, cols - 1, `${AXIS_CAP}+`);
 
-	// The axis itself: ├───┬───…───┤, a ┬ at every interior threshold (box-drawing prints
-	// cleanly; half-blocks don't).
-	const axis = Array(cols).fill('─');
-	axis[0] = '├';
-	axis[cols - 1] = '┤';
-	for (const t of BUCKET_MAX.slice(0, -1)) axis[posOf(t)] = '┬';
+	// The axis itself: ╠═══╦═══…═══╣, a ╦ at every interior threshold. Double box-drawing
+	// reads bolder than the single rule and prints just as cleanly (half-blocks don't).
+	const axis = Array(cols).fill('═');
+	axis[0] = '╠';
+	axis[cols - 1] = '╣';
+	for (const t of BUCKET_MAX.slice(0, -1)) axis[posOf(t)] = '╦';
 
 	// YOU marker below the axis, pointing up (▲ is the printer-safe caret), the exact value
 	// centered under it.
