@@ -416,11 +416,11 @@ function cleanerNoteCopy(tenths: number, id: string): string {
 
 // ── Clean-branch year / units (nothing to show) ──
 const YEAR_CLEAN = [
-	'barely a mark. this grid stays empty.',
-	'hardly a smudge. this grid does not notice you.',
+	'barely a mark. awesome i guess.',
+	'hardly a smudge. you are a legend.',
 	"a rounding error, in the city's favour.",
-	'the tally cannot be drawn. let\'s keep it that way.',
-	'negligible. i left this grid blank on purpose.'
+	'number\'s too teeny-tiny. let\'s keep it that way.',
+	'negligible. you are a legend.'
 ];
 
 const UNITS_CLEAN = [
@@ -481,7 +481,7 @@ function transitModePhrase(conn: Connectivity | null): string {
 }
 
 const DISCLAIMER =
-	'Estimates use India-specific operational (well-to-wheel) emission factors; actual figures vary with vehicle, occupancy and traffic.';
+	'Estimates use India-specific operational emission factors; actual figures vary with vehicle, occupancy and traffic conditions. For a full methodology, see https://diagramchasing.fun/2026/emissions';
 
 function multiplierPhrase(m: number): string {
 	if (!isFinite(m) || m <= 1.2) return 'about the same';
@@ -523,7 +523,7 @@ const VERDICTS_CLEAN = [
 	'nothing to roast. this is awkward for me, professionally.',
 	'the dirty column stayed empty. unlike most people here hmmph.',
 	'you have left me machine with nothing to do.',
-	"clean enough that the verdict won't load."
+	"clean enough that I don't have something smart to say."
 ];
 
 function modeRankCopy(c: ComputedReceipt, id: string, wantTail: boolean): string {
@@ -618,9 +618,9 @@ const SWAP_NONE = [
 // naming the transit mode(s) actually on this corridor. The before/after numbers and
 // the tree saving live in the panel below, so the copy never restates them.
 const SWAP_LEAD = [
-	'you told me {premise}, so put half these trips on {mode} + a short auto.',
-	'{premise}, so half of these could be {mode} + a short auto.',
-	'put half these trips on {mode} + a short auto. {premise}, after all.'
+	'you told me {premise}, so half these trips could be {swap}.',
+	'{premise}, so half of these could be {swap}.',
+	'half these trips could be {swap}. {premise}, after all.'
 ];
 
 function swapCopy(c: ComputedReceipt, a: Answers, id: string): string {
@@ -630,8 +630,15 @@ function swapCopy(c: ComputedReceipt, a: Answers, id: string): string {
 
 	// No tail here: a forward-looking nudge shouldn't end on a verdict sign-off.
 	const premise = (a.funQuestionId && PREMISE[a.funQuestionId]) || 'comfort is what you optimise for';
-	const mode = transitModePhrase(c.connectivity);
-	return interp(pick(id, 'swap-lead', SWAP_LEAD), { premise, mode }).replace(/\s+/g, ' ').trim();
+	// Honor bestCombo's label: a short trip reads as a walk (no phantom auto), and
+	// where it's transit, name the mode(s) actually on this corridor instead of the
+	// generic "public transport". When the premise is that they'd happily walk, the
+	// access leg reads as a walk too, so the "so..." never contradicts itself.
+	const accessWord = a.funQuestionId === 'walking' ? 'a short walk' : 'a short auto';
+	const swap = c.comboLabel
+		.replace('public transport', transitModePhrase(c.connectivity))
+		.replace('a short auto', accessWord);
+	return interp(pick(id, 'swap-lead', SWAP_LEAD), { premise, swap }).replace(/\s+/g, ' ').trim();
 }
 
 // ── Usual vs this-trip gap (the comparison block) ──

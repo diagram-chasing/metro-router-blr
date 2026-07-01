@@ -11,6 +11,7 @@
 	import { downloadReceipt, openReceipt } from '$lib/receipt/rasterize';
 	import { printReceipt } from '$lib/receipt/printReceipt';
 	import { resetAnswers } from '$lib/exhibit/store.svelte';
+	import { playDing } from '$lib/exhibit/sound';
 
 	type ReceiptResponse = StoredReceipt & {
 		distribution?: Distribution;
@@ -37,6 +38,15 @@
 				)
 			: null
 	);
+
+	let dinged = false;
+	// Ring once the moment the finished receipt first renders.
+	$effect(() => {
+		if (view && !dinged) {
+			dinged = true;
+			playDing();
+		}
+	});
 
 	$effect(() => {
 		const id = $page.url.searchParams.get('id');

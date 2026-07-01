@@ -15,6 +15,7 @@ import {
 	eyebrow,
 	panelRow,
 	panelRule,
+	panelPair,
 	transitRows,
 	heroSrc,
 	asciiSpread,
@@ -98,19 +99,20 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	}
 	gap();
 	const yearKm = Math.round(view.item.distanceKm * view.item.tripsPerYear);
-	deck(`~${inr(yearKm)} km a year by ${view.item.modeLabel.toLowerCase()}, ${view.item.freqLabel}`);
+	deck(`~${inr(yearKm)} km a year by ${view.item.modeLabel.toLowerCase()}, every ${view.item.freqLabel}`);
 	gap();
 	T(ruleStr('-'));
 	gap();
 
 	// 02 your mode
-	eyebrowOp("Compared to today's audience?");
+	eyebrowOp("Comparing you to today's audience");
 	gap();
 	deck(view.modeRank.copy);
 
 	if (view.modeRank.histogram) {
 		gap();
 		T('DIRTINESS PER KM (g C02/km)', { bold: true });
+		gap();
 		asciiSpread(view.modeRank.histogram.values, view.modeRank.histogram.mine).forEach((l) => T(l));
 	}
 	if (view.modeRank.cleanerNote) {
@@ -124,8 +126,12 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	// 03 your corridor — the headcount, the public-transport split and the emissions
 	// line come from nearby junction counts (traffic.json); the g/km bars below stay
 	// an illustrative mode model.
-	eyebrowOp('But more people also use this route...');
+	eyebrowOp('You are part of a larger crowd...');
 	gap();
+	const peopleApprox = Math.round(view.corridor.peoplePerDay / 1000) * 1000;
+	const estSuffix = view.corridor.isFallback ? ' (est)' : '';
+	const ptPct = Math.round(view.corridor.ptShare * 100);
+	deck(`${inr(peopleApprox)} people travel through here every day${estSuffix}`);
 	deck(view.corridor.copy);
 	gap();
 	T('   '.padEnd(PRINT_COLS - 'g/km'.length) + 'g/km');
@@ -140,22 +146,24 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 		T(l.text, { bold: l.mark });
 	});
 	gap();
-	const peopleApprox = Math.round(view.corridor.peoplePerDay / 1000) * 1000;
-	const estSuffix = view.corridor.isFallback ? ' (est)' : '';
-	const ptPct = Math.round(view.corridor.ptShare * 100);
-	T(`${inr(peopleApprox)}/day here${estSuffix} · ${ptPct}% on transit`);
-	T(`${view.corridor.co2Label} CO2/day  (${view.corridor.co2Equiv})`);
+
+	deck(`Total: ${view.corridor.co2Label} CO2/day  or ${view.corridor.co2Equiv}`);
 	gap();
 	T(ruleStr('-'));
 	gap();
 
 	// 04 the damage -> annual total (the centerpiece). The headline is the HABIT.
-	eyebrowOp('Over one year, this adds up.');
+	eyebrowOp('Over one year, this adds up to...');
 	gap();
 	// T(panelRow('CO2', `${inr(view.oneTrip.co2G)} g`));
 	// T(panelRule(`x ${inr(view.item.tripsPerYear)} trips / year`));
 	if (view.year.isClean) {
-		T(panelRow('ANNUAL', `${inr(view.year.co2Kg)} kg CO2`));
+		const heroText = `${inr(view.year.co2Kg)} KG CO2`;
+		const w: 1 | 2 = heroText.length > PRINT_COLS / 2 ? 1 : 2;
+		T(' '.repeat(PRINT_COLS), { rev: true });
+		T(heroSrc(heroText, w === 2 ? PRINT_COLS / 2 : PRINT_COLS), { rev: true, w, h: 3 });
+		T(' '.repeat(PRINT_COLS), { rev: true });
+		gap();
 		if (view.year.copy) deck(view.year.copy);
 	} else {
 		const heroText = `${inr(view.year.co2Kg)} KG CO2`;
@@ -163,13 +171,13 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 		T(' '.repeat(PRINT_COLS), { rev: true });
 		T(heroSrc(heroText, w === 2 ? PRINT_COLS / 2 : PRINT_COLS), { rev: true, w, h: 3 });
 		T(' '.repeat(PRINT_COLS), { rev: true });
+		gap();
 	}
-	gap();
-	deck("What does that mean? You can think of it as");
 
-	if (view.units.isClean) {
-		deck(view.units.copy);
-	} else {
+
+	if (!view.units.isClean) {
+		deck("What does that mean? You can think of it as");
+
 		gap();
 
 		const cyl = view.units.cylinders === 1 ? 'gas cylinder' : 'gas cylinders';
@@ -183,49 +191,44 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	T(ruleStr('-'));
 	gap();
 
-	// 06 what if — a slope chart (viz/SlopeChart) of the comparison (habit vs the route
-	// drawn, Q1 vs Q3) or, when those match, the generic half-swap. The before/after numbers
-	// live inside the chart image; the deck carries the line and the caption the saving.
-	const wi = view.whatIf;
-	eyebrowOp(
-		view.comparison.show ? 'Can you do better?' : 'What if...',
-		wi.show && wi.variant === 'swap' ? `-${inr(view.swap.savedKg)} kg/yr` : ''
-	);
-	gap();
-	deck(view.comparison.show ? view.comparison.copy : view.swap.copy);
-	if (wi.variant === 'swap' && view.swap.show && view.connectivity && view.connectivity.modes.length) {
-		const conn = view.connectivity;
+	// 06 what if — the gap between the stated habit (Q1) and the drawn route (Q3)
+	// when they diverge, else the generic half-swap. comparison.show is true exactly
+	// when the gap variant applies; render one or the other, never mix their figures.
+	if (view.comparison.show) {
+		const c = view.comparison;
+		eyebrowOp('Can you do better?');
+		gap();
+		deck(c.copy);
 		gap();
 		T(panelPair(c.usualLabel, inr(c.usualKg), c.pickedLabel, inr(c.pickedKg), 'kg/yr'));
-		// T(
-		// 	panelRule(
-		// 		c.direction === 'cleaner'
-		// 			? `the gap: ${inr(c.savedKg)} kg/yr`
-		// 			: `+${inr(c.savedKg)} kg/yr the way you drew it`
-		// 	)
-		// );
-	} else {
-		eyebrowOp('What if...', view.swap.show ? `-${inr(view.swap.savedKg)} kg/yr` : '');
+		T(
+			panelRule(
+				c.direction === 'cleaner'
+					? `the gap: ${inr(c.savedKg)} kg/yr`
+					: `+${inr(c.savedKg)} kg/yr the way you drew it`
+			)
+		);
+	} else if (view.swap.show) {
+		eyebrowOp('What if...', `-${inr(view.swap.savedKg)} kg/yr`);
+		gap();
 		deck(view.swap.copy);
-		if (view.swap.show) {
-			if (view.connectivity && view.connectivity.modes.length) {
-				gap();
-				cleanerWayLines(view.connectivity).forEach((l) => T(l));
-			}
+		if (view.connectivity && view.connectivity.modes.length) {
 			gap();
-
-			T(panelPair('Today', `${inr(view.swap.nowKg)}`, 'Better', `${inr(view.swap.swapKg)}`, 'kg'));
-			const trees = view.swap.treesSaved === 1 ? 'tree' : 'trees';
-			T(panelRule(`saves ${inr(view.swap.savedKg)} kg/yr  ~${view.swap.treesSaved} ${trees}`));
+			cleanerWayLines(view.connectivity).forEach((l) => T(l));
 		}
+		gap();
+		T(panelPair('Today', `${inr(view.swap.nowKg)}`, 'Better', `${inr(view.swap.swapKg)}`, 'kg'));
+		const trees = view.swap.treesSaved === 1 ? 'tree' : 'trees';
+		T(panelRule(`saves ${inr(view.swap.savedKg)} kg/yr  ~${view.swap.treesSaved} ${trees}`));
+		// the profile seal (Chladni resonance)
+		// ops.push({ t: 'img', id: 'stamp' });
+		// T(view.archetype.name.toUpperCase(), { align: 'center', bold: true });
+		// if (view.archetype.subtitle) T(view.archetype.subtitle, { align: 'center' });
+		gap();
+		T(ruleStr('-'));
+		gap();
 	}
-	// the profile seal (Chladni resonance)
-	// ops.push({ t: 'img', id: 'stamp' });
-	// T(view.archetype.name.toUpperCase(), { align: 'center', bold: true });
-	// if (view.archetype.subtitle) T(view.archetype.subtitle, { align: 'center' });
-	gap();
-	T(ruleStr('-'));
-	gap();
+
 
 	// by the way — parking as real-estate: a footprint diagram + an itemized
 	// "land you use free" panel, then the city's live car-registration odometer.
@@ -236,7 +239,7 @@ export function buildReceiptOps(view: ReceiptView): PrintOp[] {
 	ops.push({ t: 'img', id: 'car' });
 	T(`one car = ${view.parking.areaM2} m² wasted public space`, { align: 'center' });
 	gap();
-	T(panelRow(`Land ~${view.parking.valueLabel} · rent paid ₹0`));
+	T(panelRow(`Land ~${view.parking.valueLabel}`));
 	// T(panelRule('Paid for by everyone else!'));
 	gap();
 	deck(

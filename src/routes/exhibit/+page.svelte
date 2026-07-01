@@ -15,8 +15,21 @@
 		PROMPTS,
 		pickRandomFunQuestion
 	} from '$lib/exhibit/questions';
+	import { playClick } from '$lib/exhibit/sound';
 	import { answers, resetAnswers, setAnswer } from '$lib/exhibit/store.svelte';
 	import type { FunQuestion } from '$lib/exhibit/types';
+
+	// One delegated listener so every button (TactileButton, route cards, the
+	// clear-pins button) and on-screen keyboard key clicks, without threading a
+	// handler through each component.
+	$effect(() => {
+		function onDown(e: PointerEvent) {
+			const el = e.target as Element | null;
+			if (el?.closest('button:not([disabled]), .hg-button')) playClick();
+		}
+		document.addEventListener('pointerdown', onDown, true);
+		return () => document.removeEventListener('pointerdown', onDown, true);
+	});
 
 	// -1 = welcome / name entry, 1..5 = questions
 	let step = $state(-1);

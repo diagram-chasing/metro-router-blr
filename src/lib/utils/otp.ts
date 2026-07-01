@@ -9,7 +9,7 @@
 import pkg from '@mapbox/polyline';
 const { decode: decodePoly } = pkg;
 
-const OTP_PORT = 8000;
+const OTP_PORT = 8080;
 function otpEndpoint(): string {
 	const host = typeof window === 'undefined' ? 'localhost' : window.location.hostname;
 	return `http://${host}:${OTP_PORT}/otp/gtfs/v1`;

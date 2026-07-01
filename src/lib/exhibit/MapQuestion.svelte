@@ -135,17 +135,17 @@
 		<div class="flex shrink-0 items-center" aria-hidden="true">
 			<span
 				class="h-[14px] w-[14px] rounded-full border-2 transition-colors duration-200 {originPick
-					? 'border-[#0a53d6] bg-[#0a53d6]'
+					? 'border-black bg-black'
 					: 'border-[#9a9a8c] bg-transparent'}"
 			></span>
 			<span
 				class="h-[3px] w-9 transition-colors duration-200 {originPick && destinationPick
-					? 'bg-[#0a53d6]'
+					? 'bg-black'
 					: 'bg-[#9a9a8c]'}"
 			></span>
 			<span
 				class="h-[14px] w-[14px] rounded-full border-2 transition-colors duration-200 {destinationPick
-					? 'border-[#0a53d6] bg-[#0a53d6]'
+					? 'border-black bg-black'
 					: 'border-[#9a9a8c] bg-transparent'}"
 			></span>
 		</div>
@@ -211,7 +211,7 @@
 	<!-- Route options float over the right edge once routes are ready, so the map
 	     stays clean and full-bleed while the visitor is still dropping pins. -->
 	{#if candidates.length > 0}
-		<div class="absolute right-4 top-4 bottom-4 flex w-[clamp(300px,28vw,380px)]">
+		<div class="absolute bottom-4 right-4 top-4 flex w-[250px]">
 			<RouteOptions
 				{candidates}
 				selectedId={answers.chosenRouteId}
